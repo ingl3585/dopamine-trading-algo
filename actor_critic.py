@@ -16,6 +16,7 @@ import sys
 import traceback
 import logging
 from datetime import datetime
+import threading
 
 logging.basicConfig(
     level=logging.INFO,
@@ -181,46 +182,48 @@ class RLAgent:
             return False
 
     def safe_recv(self, max_length=4096):
-        """Safely receive a message with length prefix"""
+        """Safely receive a message with length prefix. Also handle raw PING heartbeats."""
         try:
             if not self.feature_conn:
                 return None
-                
-            # First get the 4-byte length prefix
+
+            # get exactly 4 bytes
             length_bytes = self.feature_conn.recv(4, socket.MSG_WAITALL)
             if not length_bytes or len(length_bytes) != 4:
                 return None
-                
-            # Convert length with proper endianness (little-endian)
+
+            # if NT sent a raw PING, reply with PONG on the signal socket
+            if length_bytes == b'PING':
+                if self.signal_conn:
+                    self.signal_conn.sendall(b'PONG')
+                return None
+
+            # otherwise unpack the 4-byte little-endian length
             length = struct.unpack('<I', length_bytes)[0]
-            
-            # Validate length
             if length <= 0 or length > max_length:
-                logger.warning(f"Invalid message length: {length} bytes (max {max_length})")
-                # Discard any remaining data
+                # bad length — drain and bail
                 while True:
                     chunk = self.feature_conn.recv(4096)
                     if not chunk or len(chunk) < 4096:
                         break
                 return None
-            
-            # Receive the actual message
+
+            # now read the JSON payload
             message = self.feature_conn.recv(length, socket.MSG_WAITALL)
             if not message or len(message) != length:
-                logger.warning(f"Incomplete message. Expected {length}, got {len(message) if message else 0} bytes")
                 return None
-                
+
             return message
+
         except socket.timeout:
             return None
         except ConnectionResetError:
-            logger.warning("Connection reset by peer")
             self.feature_conn = None
             return None
         except Exception as e:
-            logger.error(f"Receive error: {str(e)[:200]}")
+            logger.error(f"Receive error: {e}")
             return None
-
+        
     def send_signal(self, signal, max_length=4096):
         """Send a signal with proper framing and validation"""
         try:
@@ -330,6 +333,19 @@ class RLAgent:
             key in signal and validator(signal[key])
             for key, validator in required.items()
         )
+    
+    def _heartbeat_listener(self):
+        """Continuously read raw PINGs on the feature socket and reply PONG."""
+        while True:
+            try:
+                # read exactly 4 bytes
+                data = self.feature_conn.recv(4, socket.MSG_WAITALL)
+                if data == b'PING':
+                    # reply right back on signal_conn
+                    self.signal_conn.sendall(b'PONG')
+            except Exception:
+                # any error (socket closed, etc.) just break out
+                break
         
     def print_model_status(self):
         total_params = 0
@@ -557,14 +573,14 @@ def main():
         logger.error("Failed to setup TCP - falling back to file I/O")
         config.USE_ZMQ = False
     else:
-        # give NT a beat
         time.sleep(10)
         if not agent.perform_handshake():
             logger.error("Handshake failed - falling back to file I/O")
             config.USE_ZMQ = False
         else:
             config.USE_ZMQ = True
-    
+            threading.Thread(target=agent._heartbeat_listener, daemon=True).start()
+
     # Only then proceed with training
     if config.USE_ZMQ:
         df = safe_read_csv(config.FEATURE_FILE)
@@ -614,20 +630,17 @@ def main():
                     
                     try:
                         message = agent.safe_recv()
-                        if message == b'PING':
-                            agent.feature_conn.sendall(b'PONG')
-                            continue
-
                         if not message:
                             time.sleep(config.POLL_INTERVAL)
                             continue
                                 
                         try:
                             data = json.loads(message.decode('utf-8'))
-                            features = np.array(data['features'], dtype=np.float32).reshape(1, -1)
                         except json.JSONDecodeError:
                             logger.warning("Invalid JSON received")
                             continue
+
+                        features = np.array(data['features'], dtype=np.float32).reshape(1, -1)
                         
                     except Exception as e:
                         logger.error(f"Feature receive error: {e}")
