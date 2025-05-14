@@ -4236,3 +4236,32 @@
 2025-05-14 16:31:20,007 - INFO - TCP servers ready on ports 5556 and 5557
 2025-05-14 16:31:30,008 - INFO - Waiting for NinjaScript to connect and send READY...
 2025-05-14 16:31:47,330 - INFO - Handshake completed successfully
+2025-05-14 16:55:14,904 - INFO - Epoch 1/1 complete - Avg loss: 0.0921 - Buffer: 10000 samples
+2025-05-14 16:57:17,996 - ERROR - Error saving model: I/O operation on closed file.
+2025-05-14 16:57:18,008 - INFO - Training completed in 1530.57 seconds
+2025-05-14 16:57:18,108 - INFO - Starting initial training with 28153 samples
+2025-05-14 17:12:48,647 - INFO - Using device: cpu
+2025-05-14 17:12:51,981 - INFO - Loaded model from C:\Users\ingle\OneDrive\Desktop\Actor_Critic_ML_NT\actor_critic_model.pth
+2025-05-14 17:14:44,541 - ERROR - Error loading replay buffer: 
+2025-05-14 17:14:44,558 - INFO - Model Architecture:
+2025-05-14 17:14:44,611 - INFO -   feature_extractor.lstm.weight_ih_l0: 3072 params (mean=-0.0004, std=0.0449)
+2025-05-14 17:14:44,617 - INFO -   feature_extractor.lstm.weight_hh_l0: 65536 params (mean=-0.0002, std=0.0444)
+2025-05-14 17:14:44,618 - INFO -   feature_extractor.lstm.bias_ih_l0: 512 params (mean=0.0010, std=0.0451)
+2025-05-14 17:14:44,618 - INFO -   feature_extractor.lstm.bias_hh_l0: 512 params (mean=-0.0013, std=0.0443)
+2025-05-14 17:14:44,620 - INFO -   feature_extractor.lstm.weight_ih_l1: 65536 params (mean=-0.0034, std=0.0748)
+2025-05-14 17:14:44,621 - INFO -   feature_extractor.lstm.weight_hh_l1: 65536 params (mean=-0.0022, std=0.0670)
+2025-05-14 17:14:44,622 - INFO -   feature_extractor.lstm.bias_ih_l1: 512 params (mean=-0.0629, std=0.0707)
+2025-05-14 17:14:44,622 - INFO -   feature_extractor.lstm.bias_hh_l1: 512 params (mean=-0.0637, std=0.0714)
+2025-05-14 17:14:44,627 - INFO -   actor.0.weight: 16384 params (mean=0.0001, std=0.0569)
+2025-05-14 17:14:44,627 - INFO -   actor.0.bias: 128 params (mean=-0.0180, std=0.0553)
+2025-05-14 17:14:44,629 - INFO -   actor.2.weight: 384 params (mean=0.0048, std=0.0456)
+2025-05-14 17:14:44,629 - INFO -   actor.2.bias: 3 params (mean=-0.0618, std=0.0545)
+2025-05-14 17:14:44,630 - INFO -   critic.0.weight: 16384 params (mean=0.0000, std=0.0522)
+2025-05-14 17:14:44,631 - INFO -   critic.0.bias: 128 params (mean=0.1042, std=0.1489)
+2025-05-14 17:14:44,631 - INFO -   critic.2.weight: 128 params (mean=0.0481, std=0.0547)
+2025-05-14 17:14:44,642 - INFO -   critic.2.bias: 1 params (mean=0.1921, std=nan)
+2025-05-14 17:14:44,643 - INFO - Total trainable parameters: 235268
+2025-05-14 17:14:44,643 - INFO - Replay buffer: 0/64 samples
+2025-05-14 17:15:14,664 - INFO - TCP servers ready on ports 5556 and 5557
+2025-05-14 17:15:24,665 - INFO - Waiting for NinjaScript to connect and send READY...
+2025-05-14 17:15:24,668 - INFO - Handshake completed successfully

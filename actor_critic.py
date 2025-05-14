@@ -142,17 +142,23 @@ class RLAgent:
                 logger.info("Initializing new model")
 
     def save_model(self):
+        success = True
         try:
             torch.save(self.model.state_dict(), self.config.MODEL_PATH)
-            
+        except Exception as e:
+            logger.error(f"Error saving model weights: {e}")
+            success = False
+
+        try:
             buffer_path = self.config.MODEL_PATH.replace(".pth", "_buffer.npy")
             np.save(buffer_path, np.array(self.replay_buffer, dtype=object))
-            
-            logger.info(f"Model and replay buffer saved")
-            return True
         except Exception as e:
-            logger.error(f"Error saving model: {e}")
-            return False
+            logger.error(f"Error saving replay buffer: {e}")
+            success = False
+
+        if success:
+            logger.info("Model and replay buffer saved")
+        return success
 
     def setup_tcp_communication(self):
         try:
@@ -608,24 +614,21 @@ def main():
                     
                     try:
                         message = agent.safe_recv()
-                        if message:
-                            if message == b'PING':
-                                # Handle heartbeat
-                                if agent.feature_conn:
-                                    agent.feature_conn.sendall(b'PONG')
-                                continue
+                        if message == b'PING':
+                            agent.feature_conn.sendall(b'PONG')
+                            continue
+
+                        if not message:
+                            time.sleep(config.POLL_INTERVAL)
+                            continue
                                 
-                            if agent.validate_message(message):
-                                try:
-                                    data = json.loads(message.decode('utf-8'))
-                                    features = np.array(data['features'], dtype=np.float32).reshape(1, -1)
-                                    
-                                    if features.shape[1] != config.INPUT_DIM:
-                                        logger.error(f"Feature dimension mismatch. Expected {config.INPUT_DIM}, got {features.shape[1]}")
-                                        continue
-                                except json.JSONDecodeError:
-                                    logger.warning("Invalid JSON received")
-                                    continue
+                        try:
+                            data = json.loads(message.decode('utf-8'))
+                            features = np.array(data['features'], dtype=np.float32).reshape(1, -1)
+                        except json.JSONDecodeError:
+                            logger.warning("Invalid JSON received")
+                            continue
+                        
                     except Exception as e:
                         logger.error(f"Feature receive error: {e}")
                         continue
