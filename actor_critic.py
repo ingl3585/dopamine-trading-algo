@@ -549,8 +549,8 @@ def main():
     agent = RLAgent(config)
     utils = MarketUtils()
 
-    print("Waiting 30s for NinjaTrader to start…")
-    time.sleep(30)
+    print("Waiting 5s for NinjaTrader to start…")
+    time.sleep(5)
 
     # First setup communication
     if not agent.setup_tcp_communication():
