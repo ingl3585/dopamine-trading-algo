@@ -4,6 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import numpy as np
+import socket
+import struct
 import time
 import os
 import random
@@ -13,8 +15,8 @@ import json
 import sys
 import traceback
 import logging
+from datetime import datetime
 
-# Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -25,53 +27,50 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Try to import arch_model for volatility forecasting
 try:
     from arch import arch_model
     has_arch = True
 except ImportError:
-    logger.warning("arch package not found. Using simple volatility estimation instead.")
+    logger.warning("arch package not found. Using simple volatility estimation.")
     has_arch = False
 
-# Try to import GaussianHMM for regime detection
 try:
     from hmmlearn.hmm import GaussianHMM
     has_hmm = True
 except ImportError:
-    logger.warning("hmmlearn package not found. Using simple regime detection instead.")
+    logger.warning("hmmlearn package not found. Using simple regime detection.")
     has_hmm = False
 
-# ------------------------- Configuration -------------------------
 class Config:
-    # Paths
     FEATURE_FILE = "C:\\Users\\ingle\\OneDrive\\Desktop\\Actor_Critic_ML_NT\\features.csv"
     SIGNAL_FILE = "C:\\Users\\ingle\\OneDrive\\Desktop\\Actor_Critic_ML_NT\\signal.txt"
     MODEL_PATH = "C:\\Users\\ingle\\OneDrive\\Desktop\\Actor_Critic_ML_NT\\actor_critic_model.pth"
     
-    # Network Architecture
-    INPUT_DIM = 6  # Close, FastEMA, SlowEMA, RSI, ATR, Volume
+    INPUT_DIM = 6
     HIDDEN_DIM = 128
-    ACTION_DIM = 3  # [Long, Flat, Short]
+    ACTION_DIM = 3
     
-    # Training Parameters
     LOOKBACK = 20
     BATCH_SIZE = 64
     GAMMA = 0.99
     ENTROPY_COEF = 0.01
     LR = 0.0005
+    TRAIN_INTERVAL = 300
     
-    # Communication
-    FEATURE_PORT = 5556  # For receiving features from NT
-    SIGNAL_PORT = 5557   # For sending signals to NT
-    USE_ZMQ = True
-    POLL_INTERVAL = 0.1  # Seconds
+    TCP_HOST = "localhost"
+    FEATURE_PORT = 5556
+    SIGNAL_PORT = 5557
+    SOCKET_TIMEOUT = 5.0
+    RECV_BUFFER_SIZE = 4096
+
+    USE_ZMQ = False
+    POLL_INTERVAL = 0.1
+    MAX_MSG_SIZE = 4096
     
-    # Trading Parameters
     BASE_SIZE = 5
     CONSERVATIVE_SIZE = 2
     MIN_SIZE = 1
 
-# ------------------------- Enhanced Bayesian LSTM -------------------------
 class BayesianLSTM(nn.Module):
     def __init__(self, input_dim, hidden_dim):
         super().__init__()
@@ -82,7 +81,6 @@ class BayesianLSTM(nn.Module):
         lstm_out, _ = self.lstm(x)
         return self.dropout(lstm_out[:, -1, :])
 
-# ------------------------- Actor-Critic Network -------------------------
 class ActorCritic(nn.Module):
     def __init__(self, input_dim, hidden_dim, action_dim):
         super().__init__()
@@ -105,7 +103,6 @@ class ActorCritic(nn.Module):
         value = self.critic(features)
         return probs, value
 
-# ------------------------- RL Agent with Experience Replay -------------------------
 class RLAgent:
     def __init__(self, config):
         self.config = config
@@ -114,70 +111,278 @@ class RLAgent:
         
         self.model = ActorCritic(config.INPUT_DIM, config.HIDDEN_DIM, config.ACTION_DIM).to(self.device)
         self.optimizer = optim.AdamW(self.model.parameters(), lr=config.LR)
-        self.replay_buffer = deque(maxlen=5000)
+        self.replay_buffer = deque(maxlen=10000)
         self.loss_fn = nn.SmoothL1Loss()
+        self.last_train_time = 0
+        self.last_save_time = 0
+        self.feature_conn = None
+        self.signal_conn  = None
+
         
-        if os.path.exists(config.MODEL_PATH):
+        self.load_model()
+        self.print_model_status()
+
+    def load_model(self):
+        if os.path.exists(self.config.MODEL_PATH):
             try:
-                self.model.load_state_dict(torch.load(config.MODEL_PATH, map_location=self.device))
-                logger.info("Loaded existing model")
+                state_dict = torch.load(self.config.MODEL_PATH, map_location=self.device)
+                self.model.load_state_dict(state_dict)
+                logger.info(f"Loaded model from {self.config.MODEL_PATH}")
+                
+                buffer_path = self.config.MODEL_PATH.replace(".pth", "_buffer.npy")
+                if os.path.exists(buffer_path):
+                    try:
+                        buffer_data = np.load(buffer_path, allow_pickle=True)
+                        self.replay_buffer = deque(buffer_data, maxlen=10000)
+                        logger.info(f"Loaded replay buffer with {len(self.replay_buffer)} samples")
+                    except Exception as e:
+                        logger.error(f"Error loading replay buffer: {e}")
             except Exception as e:
                 logger.error(f"Error loading model: {e}")
-        
-        self.setup_zmq_communication()
+                logger.info("Initializing new model")
 
-    def setup_zmq_communication(self):
-        if self.config.USE_ZMQ:
-            try:
-                self.context = zmq.Context()
+    def save_model(self):
+        try:
+            torch.save(self.model.state_dict(), self.config.MODEL_PATH)
+            
+            buffer_path = self.config.MODEL_PATH.replace(".pth", "_buffer.npy")
+            np.save(buffer_path, np.array(self.replay_buffer, dtype=object))
+            
+            logger.info(f"Model and replay buffer saved")
+            return True
+        except Exception as e:
+            logger.error(f"Error saving model: {e}")
+            return False
+
+    def setup_tcp_communication(self):
+        try:
+            # Feature socket
+            self.feature_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.feature_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.feature_socket.bind((self.config.TCP_HOST, self.config.FEATURE_PORT))
+            self.feature_socket.listen(1)
+            
+            # Signal socket
+            self.signal_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.signal_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.signal_socket.bind((self.config.TCP_HOST, self.config.SIGNAL_PORT))
+            self.signal_socket.listen(1)
+            
+            logger.info(f"TCP servers ready on ports {self.config.FEATURE_PORT} and {self.config.SIGNAL_PORT}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to setup TCP: {str(e)}")
+            return False
+
+    def safe_recv(self, max_length=4096):
+        """Safely receive a message with length prefix"""
+        try:
+            if not self.feature_conn:
+                return None
                 
-                # Feature receiver (PULL)
-                self.feature_socket = self.context.socket(zmq.PULL)
-                self.feature_socket.bind(f"tcp://*:{self.config.FEATURE_PORT}")
+            # First get the 4-byte length prefix
+            length_bytes = self.feature_conn.recv(4, socket.MSG_WAITALL)
+            if not length_bytes or len(length_bytes) != 4:
+                return None
                 
-                # Signal publisher (PUB)
-                self.signal_socket = self.context.socket(zmq.PUB)
-                self.signal_socket.bind(f"tcp://*:{self.config.SIGNAL_PORT}")
+            # Convert length with proper endianness (little-endian)
+            length = struct.unpack('<I', length_bytes)[0]
+            
+            # Validate length
+            if length <= 0 or length > max_length:
+                logger.warning(f"Invalid message length: {length} bytes (max {max_length})")
+                # Discard any remaining data
+                while True:
+                    chunk = self.feature_conn.recv(4096)
+                    if not chunk or len(chunk) < 4096:
+                        break
+                return None
+            
+            # Receive the actual message
+            message = self.feature_conn.recv(length, socket.MSG_WAITALL)
+            if not message or len(message) != length:
+                logger.warning(f"Incomplete message. Expected {length}, got {len(message) if message else 0} bytes")
+                return None
                 
-                logger.info(f"ZMQ server started - Features: {self.config.FEATURE_PORT}, Signals: {self.config.SIGNAL_PORT}")
-            except Exception as e:
-                logger.error(f"ZMQ setup error: {e}")
-                self.config.USE_ZMQ = False
+            return message
+        except socket.timeout:
+            return None
+        except ConnectionResetError:
+            logger.warning("Connection reset by peer")
+            self.feature_conn = None
+            return None
+        except Exception as e:
+            logger.error(f"Receive error: {str(e)[:200]}")
+            return None
+
+    def send_signal(self, signal, max_length=4096):
+        """Send a signal with proper framing and validation"""
+        try:
+            # Validate signal structure first
+            if not self.validate_signal(signal):
+                logger.error("Invalid signal structure")
+                return False
+                
+            if not self.signal_conn:
+                return False
+                
+            # Convert to JSON and check size
+            signal_str = json.dumps(signal, separators=(',', ':'))  # Compact JSON
+            if len(signal_str) > max_length:
+                logger.error(f"Signal too large: {len(signal_str)} bytes")
+                return False
+                
+            # Send with length prefix
+            msg = signal_str.encode('utf-8')
+            length = struct.pack('<I', len(msg))
+            self.signal_conn.sendall(length + msg)
+            return True
+            
+        except socket.timeout:
+            logger.warning("Signal send timeout")
+            return False
+        except BrokenPipeError:
+            logger.warning("Signal connection broken")
+            self.signal_conn = None
+            return False
+        except Exception as e:
+            logger.error(f"Signal send error: {str(e)[:200]}")
+            return False
+
+    def perform_handshake(self, timeout=30):
+        """Simplified handshake - waits for NinjaScript's READY first"""
+        logger.info("Waiting for NinjaScript to connect and send READY...")
+        
+        try:
+            # Accept connections if not already connected
+            if not self.feature_conn or not self.signal_conn:
+                # Accept feature connection with timeout
+                self.feature_socket.settimeout(timeout)
+                self.feature_conn, _ = self.feature_socket.accept()
+                
+                # Accept signal connection with timeout
+                self.signal_socket.settimeout(timeout)
+                self.signal_conn, _ = self.signal_socket.accept()
+            
+            # Wait for READY from NinjaScript (feature socket)
+            ready_msg = self.feature_conn.recv(5)  # Should be "READY"
+            if ready_msg != b'READY':
+                logger.error(f"Unexpected handshake message: {ready_msg}")
+                return False
+                
+            # Send our READY response (signal socket)
+            self.signal_conn.sendall(b'READY')
+            logger.info("Handshake completed successfully")
+            return True
+            
+        except socket.timeout:
+            logger.error("Handshake timed out waiting for NinjaScript")
+            return False
+        except Exception as e:
+            logger.error(f"Handshake error: {str(e)}")
+            return False
+
+    def verify_connection(self):
+        """Verify the connection is alive"""
+        try:
+            if not self.signal_conn or not self.feature_conn:
+                return False
+                
+            # Send ping
+            self.signal_conn.sendall(b'PING')
+            
+            # Wait for pong
+            start = time.time()
+            while time.time() - start < 1.0:
+                try:
+                    msg = self.feature_conn.recv(4, socket.MSG_WAITALL)
+                    return msg == b'PONG'
+                except socket.timeout:
+                    continue
+                    
+            return False
+        except Exception as e:
+            logger.error(f"Connection verification failed: {e}")
+            return False
+
+    def validate_signal(self, signal):
+        """Validate signal structure and values"""
+        if not isinstance(signal, dict):
+            return False
+        
+        required = {
+            'action': lambda x: x in [0, 1, 2],
+            'confidence': lambda x: 0 <= x <= 1,
+            'size': lambda x: x >= 1,
+            'regime': lambda x: x in [0, 1],
+            'volatility': lambda x: x >= 0,
+            'value_uncertainty': lambda x: x >= 0,
+            'timestamp': lambda x: x > 0
+        }
+        
+        return all(
+            key in signal and validator(signal[key])
+            for key, validator in required.items()
+        )
+        
+    def print_model_status(self):
+        total_params = 0
+        logger.info("Model Architecture:")
+        for name, param in self.model.named_parameters():
+            if param.requires_grad:
+                param_count = param.numel()
+                total_params += param_count
+                logger.info(f"  {name}: {param_count} params (mean={param.data.mean():.4f}, std={param.data.std():.4f})")
+        logger.info(f"Total trainable parameters: {total_params}")
+        logger.info(f"Replay buffer: {len(self.replay_buffer)}/{self.config.BATCH_SIZE} samples")
 
     def train(self, df, epochs=1):
         try:
-            logger.info(f"Training on {len(df)} samples, {epochs} epochs")
+            start_time = time.time()
             
-            # Skip first row which might be header
             if isinstance(df.iloc[0, 1], str):
-                logger.info("Skipping header row")
                 df = df.iloc[1:]
             
-            # Ensure all data is numeric
             data = df.iloc[:, 1:].apply(pd.to_numeric, errors='coerce').fillna(0).values
-            data = torch.tensor(data, dtype=torch.float32)
-            
             if len(data) <= self.config.LOOKBACK:
-                logger.warning(f"Not enough data for training: {len(data)} samples")
+                logger.warning(f"Insufficient data for training: {len(data)} samples")
                 return
                 
-            sequences = data.unfold(0, self.config.LOOKBACK, 1).transpose(1, 2)
+            data_tensor = torch.tensor(data, dtype=torch.float32)
+            sequences = data_tensor.unfold(0, self.config.LOOKBACK, 1).transpose(1, 2)
             
-            for i in range(len(sequences) - 1):
-                state = sequences[i].unsqueeze(0)
-                next_state = sequences[i+1].unsqueeze(0)
-                price_change = (next_state[0, -1, 0] - state[0, -1, 0]).item()
-                atr = state[0, -1, 4].item() if state.shape[2] > 4 else 0.01
-                reward = price_change / (atr + 1e-6)
-                self.replay_buffer.append((state, None, reward, next_state, False))
+            for epoch in range(epochs):
+                epoch_loss = 0
+                num_batches = 0
                 
-                if len(self.replay_buffer) >= self.config.BATCH_SIZE:
-                    self._update_model()
+                for i in range(len(sequences) - 1):
+                    state = sequences[i].unsqueeze(0)
+                    next_state = sequences[i+1].unsqueeze(0)
+                    
+                    price_change = (next_state[0, -1, 0] - state[0, -1, 0]).item()
+                    atr = state[0, -1, 4].item() if state.shape[2] > 4 else 0.01
+                    reward = price_change / (atr + 1e-6)
+                    
+                    self.replay_buffer.append((state, None, reward, next_state, False))
+                    
+                    if len(self.replay_buffer) >= self.config.BATCH_SIZE:
+                        loss = self._update_model()
+                        epoch_loss += loss
+                        num_batches += 1
+                
+                if num_batches > 0:
+                    avg_loss = epoch_loss / num_batches
+                    logger.info(f"Epoch {epoch+1}/{epochs} complete - Avg loss: {avg_loss:.4f} - Buffer: {len(self.replay_buffer)} samples")
             
-            logger.info(f"Training complete. Buffer size: {len(self.replay_buffer)}")
+            if time.time() - self.last_save_time > 3600:
+                if self.save_model():
+                    self.last_save_time = time.time()
+            
+            logger.info(f"Training completed in {time.time()-start_time:.2f} seconds")
+            
         except Exception as e:
             logger.error(f"Training error: {traceback.format_exc()}")
-    
+
     def _update_model(self):
         batch = random.sample(self.replay_buffer, self.config.BATCH_SIZE)
         states, actions, rewards, next_states, dones = zip(*batch)
@@ -206,14 +411,21 @@ class RLAgent:
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
         self.optimizer.step()
         
-        if random.random() < 0.01:
-            try:
-                torch.save(self.model.state_dict(), self.config.MODEL_PATH)
-            except Exception as e:
-                logger.error(f"Error saving model: {e}")
+        return loss.item()
 
     def predict(self, state_np):
         with torch.no_grad():
+            if not isinstance(state_np, np.ndarray):
+                raise ValueError("Input must be numpy array")
+                
+            if np.isnan(state_np).any() or np.isinf(state_np).any():
+                logger.warning("Invalid state (NaN/Inf values)")
+                return 1, 0.5, 0.0
+                
+            if state_np.size != self.config.INPUT_DIM * self.config.LOOKBACK:
+                logger.warning(f"Invalid shape: {state_np.shape}")
+                return 1, 0.5, 0.0
+                
             state = torch.tensor(state_np, dtype=torch.float32).unsqueeze(0).to(self.device)
             
             probs_list = []
@@ -230,31 +442,33 @@ class RLAgent:
             
             return action, confidence, value_uncertainty
 
-# ------------------------- Market Analysis Utilities -------------------------
 class MarketUtils:
     @staticmethod
     def detect_regime(prices, window=50):
         try:
-            if has_hmm and len(prices) > window:
-                returns = np.diff(np.log(prices))
-                features = np.column_stack([
-                    returns,
-                    pd.Series(returns).rolling(5).std().fillna(0).values,
-                    pd.Series(prices).pct_change().rolling(10).mean().fillna(0).values
-                ])[1:]
+            if len(prices) < 20:
+                return 0
                 
-                if len(features) > 10:  # Need sufficient data
-                    model = GaussianHMM(n_components=2, covariance_type="diag", n_iter=100)
-                    model.fit(features)
-                    return model.predict(features)[-1]
+            if has_hmm and len(prices) > window:
+                try:
+                    returns = np.diff(np.log(prices))
+                    features = np.column_stack([
+                        returns,
+                        pd.Series(returns).rolling(5).std().fillna(0).values,
+                        pd.Series(prices).pct_change().rolling(10).mean().fillna(0).values
+                    ])[1:]
+                    
+                    if len(features) > 10:
+                        model = GaussianHMM(n_components=2, covariance_type="diag", n_iter=100)
+                        model.fit(features)
+                        return model.predict(features)[-1]
+                except Exception as e:
+                    logger.warning(f"HMM regime detection failed: {e}")
             
-            # Simple alternative: trend detection using moving average
-            if len(prices) > 20:
-                ma_short = np.mean(prices[-10:])
-                ma_long = np.mean(prices[-20:])
-                return 0 if ma_short > ma_long else 1  # 0=Trending, 1=Choppy
+            ma_short = np.mean(prices[-10:])
+            ma_long = np.mean(prices[-20:])
+            return 0 if ma_short > ma_long else 1
             
-            return 0  # Default to trending
         except Exception as e:
             logger.error(f"Regime detection error: {e}")
             return 0
@@ -263,7 +477,7 @@ class MarketUtils:
     def forecast_volatility(prices, window=14):
         try:
             if len(prices) < window + 1:
-                return 0.01  # Default low volatility
+                return 0.01
                 
             returns = 100 * pd.Series(prices).pct_change().dropna()
             
@@ -272,99 +486,102 @@ class MarketUtils:
                     model = arch_model(returns, vol='Garch', p=1, q=1)
                     res = model.fit(disp='off')
                     return np.sqrt(res.forecast(horizon=1).variance.values[-1, 0])
-                except:
-                    pass  # Fall through to simple method
+                except Exception as e:
+                    logger.warning(f"GARCH failed: {e}")
             
-            # Simple alternative
             return returns.ewm(span=window).std().iloc[-1] if not returns.empty else 0.01
+            
         except Exception as e:
             logger.error(f"Volatility forecasting error: {e}")
-            return 0.01  # Default value
+            return 0.01
 
-# ------------------------- CSV Safe Reading -------------------------
-def safe_read_csv(file_path, retry_count=3, delay=1):
-    """Safely read CSV with retries and proper error handling"""
-    for attempt in range(retry_count):
+def safe_read_csv(file_path, max_retries=3):
+    for attempt in range(max_retries):
         try:
-            # First check if file exists and is not empty
             if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-                logger.warning(f"File {file_path} doesn't exist or is empty")
                 return None
                 
-            # Try to read with pandas
             df = pd.read_csv(file_path, header=None)
-            
-            # Validate data
             if len(df) == 0:
-                logger.warning("CSV file is empty")
                 return None
-            
+                
+            numeric_df = df.iloc[:, 1:].apply(pd.to_numeric, errors='coerce')
+            if numeric_df.isna().any().any():
+                logger.warning(f"CSV contains non-numeric data in attempt {attempt+1}")
+                if attempt == max_retries - 1:
+                    df = df.dropna()
+                    if len(df) == 0:
+                        return None
+                    return df
+                continue
+                
             return df
-        except pd.errors.EmptyDataError:
-            logger.warning("CSV file is empty")
-            return None
-        except pd.errors.ParserError as e:
-            logger.warning(f"CSV parsing error (attempt {attempt+1}/{retry_count}): {e}")
             
-            # Try to fix the file if it's the last attempt
-            if attempt == retry_count - 1:
-                try:
-                    # Read raw file and fix potential issues
-                    with open(file_path, 'r') as f:
-                        lines = f.readlines()
-                    
-                    # Check for consistent columns
-                    if lines:
-                        first_line_cols = len(lines[0].strip().split(','))
-                        fixed_lines = [lines[0]]  # Keep header
-                        
-                        for line in lines[1:]:
-                            cols = line.strip().split(',')
-                            if len(cols) == first_line_cols:
-                                fixed_lines.append(line)
-                            else:
-                                logger.warning(f"Skipping inconsistent line: {line.strip()}")
-                        
-                        # Write fixed file
-                        backup_path = file_path + ".bak"
-                        os.rename(file_path, backup_path)
-                        with open(file_path, 'w') as f:
-                            f.writelines(fixed_lines)
-                        
-                        logger.info(f"Fixed CSV file. Backup saved to {backup_path}")
-                        return pd.read_csv(file_path, header=None)
-                except Exception as fix_e:
-                    logger.error(f"Failed to fix CSV: {fix_e}")
         except Exception as e:
-            logger.error(f"Error reading CSV: {e}")
-            time.sleep(delay)
+            logger.warning(f"CSV read error (attempt {attempt+1}): {e}")
+            time.sleep(1)
     
     return None
 
-# ------------------------- Main Trading Loop -------------------------
+def clean_feature_file(file_path, max_lines=10000, max_size_mb=10):
+    try:
+        if os.path.getsize(file_path) > max_size_mb * 1024 * 1024:
+            with open(file_path, 'r') as f:
+                lines = f.readlines()
+            
+            keep_lines = max(max_lines, 1000)
+            new_lines = [lines[0]] + lines[-keep_lines:]
+            
+            with open(file_path, 'w') as f:
+                f.writelines(new_lines)
+            logger.info(f"Trimmed feature file to {len(new_lines)} lines")
+    except Exception as e:
+        logger.error(f"File cleaning error: {e}")
+
 def main():
     config = Config()
     agent = RLAgent(config)
     utils = MarketUtils()
+
+    print("Waiting 30s for NinjaTrader to start…")
+    time.sleep(30)
+
+    # First setup communication
+    if not agent.setup_tcp_communication():
+        logger.error("Failed to setup TCP - falling back to file I/O")
+        config.USE_ZMQ = False
+    else:
+        # give NT a beat
+        time.sleep(10)
+        if not agent.perform_handshake():
+            logger.error("Handshake failed - falling back to file I/O")
+            config.USE_ZMQ = False
+        else:
+            config.USE_ZMQ = True
     
-    # Initialize the feature file if it doesn't exist or is invalid
-    feature_path = config.FEATURE_FILE
+    # Only then proceed with training
+    if config.USE_ZMQ:
+        df = safe_read_csv(config.FEATURE_FILE)
+        if df is not None:
+            agent.train(df)
+    
     try:
-        if not os.path.exists(feature_path):
-            with open(feature_path, 'w') as f:
+        if not os.path.exists(config.FEATURE_FILE):
+            with open(config.FEATURE_FILE, 'w') as f:
                 f.write("Time,Close,FastEMA,SlowEMA,RSI,ATR,Volume\n")
-            logger.info(f"Created new features file: {feature_path}")
+            logger.info("Initialized feature file")
     except Exception as e:
-        logger.error(f"Error creating feature file: {e}")
+        logger.error(f"Feature file initialization failed: {e}")
+        sys.exit(1)
     
-    # Initial training if data exists
     df = safe_read_csv(config.FEATURE_FILE)
     if df is not None and len(df) > config.LOOKBACK + 1:
-        logger.info("Starting initial training...")
-        agent.train(df, epochs=1)
+        logger.info(f"Starting initial training with {len(df)} samples")
+        agent.train(df, epochs=3)
     
-    logger.info("Starting trading loop...")
+    logger.info("Starting main trading loop...")
     last_features_hash = None
+    last_clean_time = time.time()
     
     try:
         while True:
@@ -372,20 +589,49 @@ def main():
                 features = None
                 
                 if config.USE_ZMQ:
+                    # Handle incoming connections if not connected
+                    if not agent.feature_conn:
+                        try:
+                            agent.feature_conn, _ = agent.feature_socket.accept()
+                            agent.feature_conn.settimeout(config.SOCKET_TIMEOUT)
+                            logger.info("Accepted feature connection")
+                        except socket.timeout:
+                            pass
+                            
+                    if not agent.signal_conn:
+                        try:
+                            agent.signal_conn, _ = agent.signal_socket.accept()
+                            agent.signal_conn.settimeout(config.SOCKET_TIMEOUT)
+                            logger.info("Accepted signal connection")
+                        except socket.timeout:
+                            pass
+                    
                     try:
-                        message = agent.feature_socket.recv_string(flags=zmq.NOBLOCK)
-                        data = json.loads(message)
-                        features = np.array(data['features'], dtype=np.float32).reshape(1, -1)
-                    except zmq.Again:
-                        time.sleep(config.POLL_INTERVAL)
-                        continue
-                    except json.JSONDecodeError:
-                        logger.warning("Invalid JSON received")
+                        message = agent.safe_recv()
+                        if message:
+                            if message == b'PING':
+                                # Handle heartbeat
+                                if agent.feature_conn:
+                                    agent.feature_conn.sendall(b'PONG')
+                                continue
+                                
+                            if agent.validate_message(message):
+                                try:
+                                    data = json.loads(message.decode('utf-8'))
+                                    features = np.array(data['features'], dtype=np.float32).reshape(1, -1)
+                                    
+                                    if features.shape[1] != config.INPUT_DIM:
+                                        logger.error(f"Feature dimension mismatch. Expected {config.INPUT_DIM}, got {features.shape[1]}")
+                                        continue
+                                except json.JSONDecodeError:
+                                    logger.warning("Invalid JSON received")
+                                    continue
+                    except Exception as e:
+                        logger.error(f"Feature receive error: {e}")
                         continue
                 else:
                     df = safe_read_csv(config.FEATURE_FILE)
                     if df is not None and len(df) >= config.LOOKBACK:
-                        # Extract required columns (skip timestamp)
                         numeric_data = df.iloc[-config.LOOKBACK:, 1:].apply(pd.to_numeric, errors='coerce')
                         features = numeric_data.fillna(0).values
                 
@@ -393,32 +639,19 @@ def main():
                     time.sleep(config.POLL_INTERVAL)
                     continue
                 
-                # Check if features are new using hash
                 current_hash = hash(features.tobytes())
-                if last_features_hash is not None and current_hash == last_features_hash:
+                if last_features_hash == current_hash:
                     time.sleep(config.POLL_INTERVAL)
                     continue
-                    
                 last_features_hash = current_hash
                 
-                # Ensure proper dimensions for predict method
-                if features.shape[0] == 1:  # Single row
-                    # Create lookback window of identical rows if necessary
-                    if config.LOOKBACK > 1:
-                        features_expanded = np.repeat(features, config.LOOKBACK, axis=0)
-                        action, confidence, value_uncertainty = agent.predict(features_expanded)
-                    else:
-                        action, confidence, value_uncertainty = agent.predict(features)
+                if features.shape[0] == 1 and config.LOOKBACK > 1:
+                    features_expanded = np.repeat(features, config.LOOKBACK, axis=0)
+                    action, confidence, value_uncertainty = agent.predict(features_expanded)
                 else:
                     action, confidence, value_uncertainty = agent.predict(features)
                 
-                # Extract close prices for analysis
-                if features.shape[0] == 1:
-                    # Use single price if only one row
-                    close_prices = np.array([features[0, 0]])
-                else:
-                    close_prices = features[:, 0]  # First column is Close price
-                
+                close_prices = features[:, 0] if features.shape[0] > 1 else np.array([features[0, 0]])
                 regime = utils.detect_regime(close_prices)
                 volatility = utils.forecast_volatility(close_prices)
                 
@@ -436,36 +669,61 @@ def main():
                     'timestamp': int(time.time())
                 }
                 
-                if config.USE_ZMQ:
-                    agent.signal_socket.send_json(signal)
+                if config.USE_ZMQ and agent.signal_conn:
+                    agent.send_signal(signal)
                 else:
                     with open(config.SIGNAL_FILE, 'w') as f:
                         json.dump(signal, f)
                 
-                logger.info(f"Action: {['Long', 'Flat', 'Short'][action]} | "
-                           f"Confidence: {confidence:.1%} | "
-                           f"Size: {size} | "
-                           f"Regime: {['Trending', 'Choppy'][regime]} | "
-                           f"Volatility: {volatility:.4f} | "
-                           f"Uncertainty: {value_uncertainty:.4f}")
+                logger.info(
+                    f"Decision: {['Long', 'Flat', 'Short'][action]} | "
+                    f"Confidence: {confidence:.1%} | Size: {size} | "
+                    f"Regime: {['Trending', 'Choppy'][regime]} | "
+                    f"Volatility: {volatility:.4f}"
+                )
                 
-                # To this more aggressive training schedule:
-                if len(agent.replay_buffer) >= config.BATCH_SIZE or (time.time() % 300 < config.POLL_INTERVAL):  # Train every 5 minutes or when buffer is full
+                current_time = time.time()
+                
+                if (len(agent.replay_buffer) >= config.BATCH_SIZE or 
+                    current_time - agent.last_train_time > config.TRAIN_INTERVAL):
                     df = safe_read_csv(config.FEATURE_FILE)
                     if df is not None and len(df) > config.LOOKBACK + 1:
-                        logger.info(f"Starting training with {len(df)} samples...")
-                        agent.train(df, epochs=3)  # Increased epochs
-            
+                        logger.info(f"Starting training with {len(df)} samples")
+                        agent.train(df, epochs=2)
+                        agent.last_train_time = current_time
+                
+                if current_time - last_clean_time > 3600:
+                    clean_feature_file(config.FEATURE_FILE)
+                    last_clean_time = current_time
+                
+                if random.random() < 0.05:
+                    agent.print_model_status()
+
+                if random.random() < 0.01:  # 1% chance to log message sizes
+                    msg_size = len(json.dumps(signal))
+                    logger.info(f"Current message size: {msg_size} bytes")
+                    if msg_size > 2000:  # Warning threshold
+                        logger.warning(f"Large message detected: {msg_size} bytes")
+                
             except Exception as e:
                 logger.error(f"Main loop error: {traceback.format_exc()}")
                 time.sleep(5)
     
     except KeyboardInterrupt:
-        logger.info("Shutting down gracefully...")
-        if config.USE_ZMQ:
+        logger.info("Shutdown initiated...")
+        agent.save_model()
+        
+        # Close sockets
+        if hasattr(agent, 'feature_conn') and agent.feature_conn:
+            agent.feature_conn.close()
+        if hasattr(agent, 'signal_conn') and agent.signal_conn:
+            agent.signal_conn.close()
+        if hasattr(agent, 'feature_socket') and agent.feature_socket:
             agent.feature_socket.close()
+        if hasattr(agent, 'signal_socket') and agent.signal_socket:
             agent.signal_socket.close()
-            agent.context.term()
+        
+        logger.info("Shutdown complete")
         sys.exit(0)
 
 if __name__ == "__main__":
