@@ -180,48 +180,57 @@ class RLAgent:
     def train(self, df, epochs=1):
         try:
             start_time = time.time()
-            
+
             if isinstance(df.iloc[0, 1], str):
                 df = df.iloc[1:]
-            
+
             data = df.iloc[:, 1:-1].apply(pd.to_numeric, errors="coerce").fillna(0).values
             if len(data) <= self.config.LOOKBACK:
                 log.warning(f"Insufficient data for training: {len(data)} samples")
                 return
-                
+
             data_tensor = torch.tensor(data, dtype=torch.float32)
-            sequences = data_tensor.unfold(0, self.config.LOOKBACK, 1).transpose(1, 2)
-            
+            sequences   = data_tensor.unfold(0, self.config.LOOKBACK, 1).transpose(1, 2)
+            total_seq   = len(sequences) - 1
+            bar_len     = 30  # characters in the progress bar
+            log.info(f"Starting training: {total_seq} sequences × {epochs} epoch(s)")
+
             for epoch in range(epochs):
-                epoch_loss = 0
-                num_batches = 0
-                
-                for i in range(len(sequences) - 1):
-                    state = sequences[i].unsqueeze(0)
-                    next_state = sequences[i+1].unsqueeze(0)
-                    
+                epoch_loss, num_batches, bar_tick = 0, 0, 0
+
+                for i in range(total_seq - 1):
+                    state      = sequences[i].unsqueeze(0)
+                    next_state = sequences[i + 1].unsqueeze(0)
+
                     price_change = (next_state[0, -1, 0] - state[0, -1, 0]).item()
-                    atr = state[0, -1, 4].item() if state.shape[2] > 4 else 0.01
-                    reward = price_change / (atr + 1e-6)
-                    
+                    atr          = state[0, -1, 4].item() if state.shape[2] > 4 else 0.01
+                    reward       = price_change / (atr + 1e-6)
+
                     self.replay_buffer.append((state, None, reward, next_state, False))
-                    
+
                     if len(self.replay_buffer) >= self.config.BATCH_SIZE:
-                        loss = self._update_model()
-                        epoch_loss += loss
+                        epoch_loss += self._update_model()
                         num_batches += 1
-                
-                if num_batches > 0:
+
+                    # progress bar update every 2 %
+                    pct = (i + 1) / total_seq
+                    if pct >= bar_tick / bar_len:
+                        filled = "=" * bar_tick + ">" + " " * (bar_len - bar_tick - 1)
+                        print(f"\rEpoch {epoch+1}/{epochs} [{filled}] {pct*100:.0f}% ", end="", flush=True)
+                        bar_tick += 1
+
+                print()  # move to next line after bar completes
+                if num_batches:
                     avg_loss = epoch_loss / num_batches
-                    log.info(f"Epoch {epoch+1}/{epochs} complete - Avg loss: {avg_loss:.4f} - Buffer: {len(self.replay_buffer)} samples")
-            
+                    log.info(f"Epoch {epoch+1}/{epochs} complete - avg_loss {avg_loss:.4f}")
+
             if time.time() - self.last_save_time > 3600:
                 if self.save_model():
                     self.last_save_time = time.time()
-            
-            log.info(f"Training completed in {time.time()-start_time:.2f} seconds")
-            
-        except Exception as e:
+
+            log.info(f"Training finished in {time.time() - start_time:.1f} seconds")
+
+        except Exception:
             log.error(f"Training error: {traceback.format_exc()}")
 
     def _update_model(self):
@@ -382,6 +391,7 @@ def main():
             return  
 
         if not trained: 
+            log.info("Initial backfill training...")
             df = pd.DataFrame(rows, columns=[
                 "ts","close","fastEma","slowEma","rsi","atr","vol","reward"
             ])
