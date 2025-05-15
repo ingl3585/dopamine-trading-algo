@@ -74,9 +74,9 @@ class IO:
             except: pass
 
 class Config:
-    FEATURE_FILE = "C:\\Users\\ingle\\OneDrive\\Desktop\\Actor_Critic_ML_NT\\features.csv"
-    MODEL_PATH = "C:\\Users\\ingle\\OneDrive\\Desktop\\Actor_Critic_ML_NT\\actor_critic_model.pth"
-    
+    FEATURE_FILE = r"C:\\Users\\ingle\\OneDrive\\Desktop\\Actor_Critic_ML_NT\\features.csv"
+    MODEL_PATH   = r"C:\\Users\\ingle\\OneDrive\\Desktop\\Actor_Critic_ML_NT\\actor_critic_model.pth"
+
     INPUT_DIM   = 6
     HIDDEN_DIM  = 128
     ACTION_DIM  = 3
@@ -361,16 +361,38 @@ def main():
     agent  = RLAgent(cfg)
     io     = IO()
 
+    os.makedirs(os.path.dirname(cfg.FEATURE_FILE), exist_ok=True)
+    rows, last_price = [], None
+
     def handle_feat(feat):
+        nonlocal rows, last_price
+
+        close  = feat[0]
+        atr    = feat[4] if len(feat) > 4 else 0.01
+        reward = 0.0 if last_price is None else (close - last_price) / (atr + 1e-6)
+        last_price = close
+        rows.append([time.time(), *feat, reward])
+
         action, conf = agent.predict_single(feat)
         sig = {
             "action": action,
             "confidence": conf,
-            "size": max(cfg.MIN_SIZE, int(conf * (cfg.BASE_SIZE if action!=1 else cfg.CONS_SIZE))),
+            "size": max(cfg.MIN_SIZE,
+                        int(conf * (cfg.BASE_SIZE if action != 1 else cfg.CONS_SIZE))),
             "timestamp": int(time.time())
         }
         io.send_signal(sig)
         log.info("Sent signal %s", sig)
+
+        if len(rows) >= cfg.BATCH_SIZE:
+            df = pd.DataFrame(rows,
+                            columns=['ts','close','fastEma','slowEma','rsi','atr','vol','reward'])
+            agent.train(df, epochs=1)
+            agent.save_model()
+
+            header = not os.path.exists(cfg.FEATURE_FILE)
+            df.to_csv(cfg.FEATURE_FILE, mode='a', header=header, index=False)
+            rows.clear()
 
     io.on_features = handle_feat
 
@@ -380,6 +402,14 @@ def main():
     except KeyboardInterrupt:
         io.close()
         log.info("Session terminated by user")
+    finally:
+        if rows:
+            df = pd.DataFrame(rows,
+                            columns=['ts','close','fastEma','slowEma','rsi','atr','vol','reward'])
+            header = not os.path.exists(cfg.FEATURE_FILE)
+            df.to_csv(cfg.FEATURE_FILE, mode='a', header=header, index=False)
+            agent.train(df, epochs=1)
+            agent.save_model()
 
 if __name__ == "__main__":
     main()
