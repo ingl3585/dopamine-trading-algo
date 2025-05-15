@@ -198,6 +198,7 @@ class RLAgent:
             for epoch in range(epochs):
                 epoch_loss, num_batches, bar_tick = 0, 0, 0
 
+                print(f"\rEpoch {epoch+1}/{epochs} [{' '*bar_len}] 0% ", end="", flush=True)
                 for i in range(total_seq - 1):
                     state      = sequences[i].unsqueeze(0)
                     next_state = sequences[i + 1].unsqueeze(0)
@@ -219,6 +220,7 @@ class RLAgent:
                         print(f"\rEpoch {epoch+1}/{epochs} [{filled}] {pct*100:.0f}% ", end="", flush=True)
                         bar_tick += 1
 
+                print(f"\rEpoch {epoch+1}/{epochs} [{'='*bar_len}] 100% ", end="", flush=True)
                 print()  # move to next line after bar completes
                 if num_batches:
                     avg_loss = epoch_loss / num_batches
