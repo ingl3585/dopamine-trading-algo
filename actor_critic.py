@@ -52,14 +52,19 @@ class IO:
         while True:
             try:
                 hdr = stream.recv(4, socket.MSG_WAITALL)
-                if not hdr: break
+                if not hdr:
+                    break
                 n = struct.unpack('<I', hdr)[0]
                 data = stream.recv(n, socket.MSG_WAITALL)
-                if len(data) != n: continue
-                feat = json.loads(data.decode())['features']
-                self.on_features(feat)
+                if len(data) != n:
+                    continue
+                msg  = json.loads(data.decode())
+                feat = msg["features"]
+                live = msg.get("live", 0)
+                self.on_features(feat, live)
             except Exception as e:
-                log.warning("recv error: %s", e); break
+                log.warning("recv error: %s", e)
+                break
 
     def send_signal(self, sig: dict):
         try:
@@ -179,7 +184,7 @@ class RLAgent:
             if isinstance(df.iloc[0, 1], str):
                 df = df.iloc[1:]
             
-            data = df.iloc[:, 1:].apply(pd.to_numeric, errors='coerce').fillna(0).values
+            data = df.iloc[:, 1:-1].apply(pd.to_numeric, errors="coerce").fillna(0).values
             if len(data) <= self.config.LOOKBACK:
                 log.warning(f"Insufficient data for training: {len(data)} samples")
                 return
@@ -362,16 +367,29 @@ def main():
     io     = IO()
 
     os.makedirs(os.path.dirname(cfg.FEATURE_FILE), exist_ok=True)
-    rows, last_price = [], None
+    rows, last_price, trained = [], None, False
 
-    def handle_feat(feat):
-        nonlocal rows, last_price
+    def handle_feat(feat, live):
+        nonlocal rows, last_price, trained
 
-        close  = feat[0]
-        atr    = feat[4] if len(feat) > 4 else 0.01
+        close = feat[0]
+        atr   = feat[4] if len(feat) > 4 else 0.01
         reward = 0.0 if last_price is None else (close - last_price) / (atr + 1e-6)
         last_price = close
         rows.append([time.time(), *feat, reward])
+
+        if live == 0:
+            return  
+
+        if not trained: 
+            df = pd.DataFrame(rows, columns=[
+                "ts","close","fastEma","slowEma","rsi","atr","vol","reward"
+            ])
+            agent.train(df, epochs=3)
+            agent.save_model()
+            rows.clear()
+            trained = True
+            return    
 
         action, conf = agent.predict_single(feat)
         sig = {
@@ -385,13 +403,13 @@ def main():
         log.info("Sent signal %s", sig)
 
         if len(rows) >= cfg.BATCH_SIZE:
-            df = pd.DataFrame(rows,
-                            columns=['ts','close','fastEma','slowEma','rsi','atr','vol','reward'])
+            df = pd.DataFrame(rows, columns=[
+                "ts", "close", "fastEma", "slowEma", "rsi", "atr", "vol", "reward"
+            ])
             agent.train(df, epochs=1)
             agent.save_model()
-
             header = not os.path.exists(cfg.FEATURE_FILE)
-            df.to_csv(cfg.FEATURE_FILE, mode='a', header=header, index=False)
+            df.to_csv(cfg.FEATURE_FILE, mode="a", header=header, index=False)
             rows.clear()
 
     io.on_features = handle_feat
