@@ -36,6 +36,7 @@ HOST, FEAT_PORT, SIG_PORT = "localhost", 5556, 5557
 
 class IO:
     def __init__(self):
+        self.on_features = lambda *args: None
         self._feat_srv = socket.socket(); self._feat_srv.bind((HOST, FEAT_PORT)); self._feat_srv.listen(1)
         self._sig_srv  = socket.socket(); self._sig_srv.bind((HOST, SIG_PORT));  self._sig_srv.listen(1)
         log.info("Waiting for NinjaTrader...")
@@ -44,7 +45,6 @@ class IO:
         self.ssock, _ = self._sig_srv.accept()
         log.info("NinjaTrader connected")
 
-        self.on_features = lambda feat: None     # callback placeholder
         threading.Thread(target=self._reader, daemon=True).start()
 
     def _reader(self):
@@ -92,9 +92,11 @@ class Config:
     ENTROPY_COEF= 0.01
     LR          = 5e-4
 
-    BASE_SIZE = 5
-    CONS_SIZE = 2
-    MIN_SIZE  = 1
+    BASE_SIZE   = 5
+    CONS_SIZE   = 2
+    MIN_SIZE    = 1
+
+    TEMPERATURE = 2.0 
 
 class BayesianLSTM(nn.Module):
     def __init__(self, input_dim, hidden_dim):
@@ -131,6 +133,7 @@ class ActorCritic(nn.Module):
 class RLAgent:
     def __init__(self, config: Config):
         self.config = config
+        self.temp   = config.TEMPERATURE
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         log.info("device %s", self.device)
 
@@ -268,12 +271,12 @@ class RLAgent:
     def predict_single(self, feat_vec):
         state = np.repeat(np.asarray(feat_vec, np.float32)
                           .reshape(1, -1), self.config.LOOKBACK, 0)
-
         with torch.no_grad():
-            probs, _ = self.model(torch.tensor(state)
-                                  .unsqueeze(0).to(self.device))
-            action   = int(torch.argmax(probs))
-            conf     = float(probs[0, action])
+            probs, _ = self.model(torch.tensor(state).unsqueeze(0).to(self.device),
+                                  temperature=self.temp)
+            log.info(f"p=%s{probs.cpu().numpy().round(3)}")
+            action = int(torch.argmax(probs))
+            conf   = float(probs[0, action])
         return action, conf
 
 class MarketUtils:
@@ -379,49 +382,62 @@ def main():
 
     os.makedirs(os.path.dirname(cfg.FEATURE_FILE), exist_ok=True)
     rows, last_price, trained = [], None, False
+    last_sent_ts = -1 
 
     def handle_feat(feat, live):
-        nonlocal rows, last_price, trained
+        nonlocal rows, last_price, trained, last_sent_ts
 
-        close = feat[0]
-        atr   = feat[4] if len(feat) > 4 else 0.01
+        close  = feat[0]
+        atr    = feat[4] if len(feat) > 4 else 0.01
         reward = 0.0 if last_price is None else (close - last_price) / (atr + 1e-6)
         last_price = close
         rows.append([time.time(), *feat, reward])
 
+        # 1) Just collect rows while we’re still in historical playback
         if live == 0:
-            return  
+            return
 
-        if not trained: 
-            log.info("Initial backfill training...")
+        # 2) Run the first back‑fill training once realtime starts
+        if not trained:
+            log.info("Initial backfill training…")
             df = pd.DataFrame(rows, columns=[
-                "ts","close","fastEma","slowEma","rsi","atr","vol","reward"
-            ])
+                "ts","close","fastEma","slowEma","rsi","atr","vol","reward"])
             agent.train(df, epochs=3)
             agent.save_model()
             rows.clear()
             trained = True
-            return    
+            return
 
+        # 3) From here on we’re in realtime → make a fresh prediction
         action, conf = agent.predict_single(feat)
+        if action == 1:
+            reward -= 0.01  # small penalty for HOLD
+        rows[-1][-1] = reward  # update reward we just logged
+
+        now_ts = int(time.time())
+        if now_ts == last_sent_ts:
+            return
+        last_sent_ts = now_ts
+
         sig = {
             "action": action,
             "confidence": conf,
             "size": max(cfg.MIN_SIZE,
                         int(conf * (cfg.BASE_SIZE if action != 1 else cfg.CONS_SIZE))),
-            "timestamp": int(time.time())
+            "timestamp": now_ts
         }
         io.send_signal(sig)
         log.info("Sent signal %s", sig)
 
         if len(rows) >= cfg.BATCH_SIZE:
             df = pd.DataFrame(rows, columns=[
-                "ts", "close", "fastEma", "slowEma", "rsi", "atr", "vol", "reward"
-            ])
+                "ts","close","fastEma","slowEma","rsi","atr","vol","reward"])
             agent.train(df, epochs=1)
             agent.save_model()
-            header = not os.path.exists(cfg.FEATURE_FILE)
-            df.to_csv(cfg.FEATURE_FILE, mode="a", header=header, index=False)
+            df.to_csv(cfg.FEATURE_FILE,
+                    mode="a",
+                    header=not os.path.exists(cfg.FEATURE_FILE),
+                    index=False)
             rows.clear()
 
     io.on_features = handle_feat
