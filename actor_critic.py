@@ -96,7 +96,7 @@ class Config:
     CONS_SIZE   = 2
     MIN_SIZE    = 1
 
-    TEMPERATURE = 2.0 
+    TEMPERATURE = 0.75
 
 class BayesianLSTM(nn.Module):
     def __init__(self, input_dim, hidden_dim):
@@ -203,20 +203,21 @@ class RLAgent:
 
                 print(f"\rEpoch {epoch+1}/{epochs} [{' '*bar_len}] 0% ", end="", flush=True)
                 for i in range(total_seq - 1):
-                    state      = sequences[i].unsqueeze(0)
+                    state = sequences[i    ].unsqueeze(0)
                     next_state = sequences[i + 1].unsqueeze(0)
 
+                    # reward first …
                     price_change = (next_state[0, -1, 0] - state[0, -1, 0]).item()
-                    atr          = state[0, -1, 4].item() if state.shape[2] > 4 else 0.01
-                    reward       = price_change / (atr + 1e-6)
+                    atr = state[0, -1, 4].item() if state.shape[2] > 4 else 0.01
+                    reward = price_change / (atr + 1e-6)
 
-                    self.replay_buffer.append((state, None, reward, next_state, False))
+                    # … then push **one** tuple with a dummy HOLD action (=1)
+                    self.replay_buffer.append((state, 1, reward, next_state, False))
 
                     if len(self.replay_buffer) >= self.config.BATCH_SIZE:
                         epoch_loss += self._update_model()
                         num_batches += 1
 
-                    # progress bar update every 2 %
                     pct = (i + 1) / total_seq
                     if pct >= bar_tick / bar_len:
                         filled = "=" * bar_tick + ">" + " " * (bar_len - bar_tick - 1)
@@ -240,32 +241,31 @@ class RLAgent:
 
     def _update_model(self):
         batch = random.sample(self.replay_buffer, self.config.BATCH_SIZE)
-        states, actions, rewards, next_states, dones = zip(*batch)
-        
-        states = torch.cat(states).to(self.device)
+        states, actions, rewards, next_states, _ = zip(*batch)
+
+        states      = torch.cat(states).to(self.device)
         next_states = torch.cat(next_states).to(self.device)
-        rewards = torch.tensor(rewards, dtype=torch.float32).to(self.device)
-        
+        actions     = torch.tensor(actions, dtype=torch.int64, device=self.device)
+        rewards     = torch.tensor(rewards, dtype=torch.float32, device=self.device)
+
         with torch.no_grad():
             _, next_values = self.model(next_states)
             targets = rewards + self.config.GAMMA * next_values.squeeze()
-        
-        _, current_values = self.model(states)
-        critic_loss = self.loss_fn(current_values.squeeze(), targets)
-        
-        probs, _ = self.model(states, temperature=0.5)
-        dist = torch.distributions.Categorical(probs)
-        entropy = dist.entropy().mean()
-        advantage = targets - current_values.detach()
-        actor_loss = -(dist.log_prob(torch.argmax(probs, dim=-1)) * advantage).mean()
-        
-        loss = actor_loss + 0.5 * critic_loss - self.config.ENTROPY_COEF * entropy
-        
+
+        probs, values = self.model(states, temperature=0.5)
+        dist       = torch.distributions.Categorical(probs)
+        entropy    = dist.entropy().mean()
+        advantage  = targets - values.squeeze()
+        advantage  = (advantage - advantage.mean()) / (advantage.std() + 1e-8)  # normalise
+
+        actor_loss  = -(dist.log_prob(actions) * advantage.detach()).mean()
+        critic_loss = self.loss_fn(values.squeeze(), targets)
+        loss        = actor_loss + 0.5 * critic_loss - self.config.ENTROPY_COEF * entropy
+
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
         self.optimizer.step()
-        
         return loss.item()
 
     def predict_single(self, feat_vec):
@@ -274,7 +274,7 @@ class RLAgent:
         with torch.no_grad():
             probs, _ = self.model(torch.tensor(state).unsqueeze(0).to(self.device),
                                   temperature=self.temp)
-            log.info(f"p=%s{probs.cpu().numpy().round(3)}")
+            log.info("p=%s", np.round(probs.cpu().numpy(), 3))
             action = int(torch.argmax(probs))
             conf   = float(probs[0, action])
         return action, conf
@@ -393,26 +393,29 @@ def main():
         last_price = close
         rows.append([time.time(), *feat, reward])
 
-        # 1) Just collect rows while we’re still in historical playback
         if live == 0:
             return
 
-        # 2) Run the first back‑fill training once realtime starts
         if not trained:
             log.info("Initial backfill training…")
             df = pd.DataFrame(rows, columns=[
-                "ts","close","fastEma","slowEma","rsi","atr","vol","reward"])
+                "ts", "close", "fastEma", "slowEma", "rsi", "atr", "vol", "reward"])
             agent.train(df, epochs=3)
             agent.save_model()
             rows.clear()
             trained = True
             return
 
-        # 3) From here on we’re in realtime → make a fresh prediction
         action, conf = agent.predict_single(feat)
         if action == 1:
-            reward -= 0.01  # small penalty for HOLD
-        rows[-1][-1] = reward  # update reward we just logged
+            reward -= 0.01
+        rows[-1][-1] = reward
+
+        state      = torch.tensor(np.repeat(np.asarray(feat, np.float32)
+                            .reshape(1, -1), cfg.LOOKBACK, 0)).unsqueeze(0)
+        next_state = state.clone()
+
+        agent.replay_buffer.append((state, action, reward, next_state, False))
 
         now_ts = int(time.time())
         if now_ts == last_sent_ts:
@@ -431,7 +434,7 @@ def main():
 
         if len(rows) >= cfg.BATCH_SIZE:
             df = pd.DataFrame(rows, columns=[
-                "ts","close","fastEma","slowEma","rsi","atr","vol","reward"])
+                "ts", "close", "fastEma", "slowEma", "rsi", "atr", "vol", "reward"])
             agent.train(df, epochs=1)
             agent.save_model()
             df.to_csv(cfg.FEATURE_FILE,
