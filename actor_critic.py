@@ -1,11 +1,3 @@
-#!/usr/bin/env python
-# ───────────────────────────────────────────────────────────────
-#  actor_critic.py  –  simplified sockets, full ML intact
-#  * list‑ens on 5556 (features) and 5557 (signals)
-#  * one background thread to read feature packets
-#  * send_signal() pushes JSON back to Ninja
-#  * rest of the file = original RL agent / training code
-# ───────────────────────────────────────────────────────────────
 import socket, struct, json, threading, time, logging
 import os, sys, random, traceback
 from collections import deque
@@ -18,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-# ───── logging ─────
+# Logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)s  %(message)s",
@@ -43,11 +35,10 @@ except ImportError:
 HOST, FEAT_PORT, SIG_PORT = "localhost", 5556, 5557
 
 class IO:
-    """Two‑socket helper: receives feature vectors, sends signals."""
     def __init__(self):
         self._feat_srv = socket.socket(); self._feat_srv.bind((HOST, FEAT_PORT)); self._feat_srv.listen(1)
         self._sig_srv  = socket.socket(); self._sig_srv.bind((HOST, SIG_PORT));  self._sig_srv.listen(1)
-        log.info("waiting for NinjaTrader …")
+        log.info("Waiting for NinjaTrader...")
 
         self.fsock, _ = self._feat_srv.accept()
         self.ssock, _ = self._sig_srv.accept()
@@ -76,6 +67,11 @@ class IO:
             self.ssock.sendall(struct.pack('<I', len(blob)) + blob)
         except Exception as e:
             log.warning("send error: %s", e)
+
+    def close(self):
+        for s in (self.fsock, self.ssock, self._feat_srv, self._sig_srv):
+            try: s.close()
+            except: pass
 
 class Config:
     FEATURE_FILE = "C:\\Users\\ingle\\OneDrive\\Desktop\\Actor_Critic_ML_NT\\features.csv"
@@ -254,7 +250,6 @@ class RLAgent:
         return loss.item()
 
     def predict_single(self, feat_vec):
-        """feat_vec: list[float] length==6 (latest bar only)."""
         state = np.repeat(np.asarray(feat_vec, np.float32)
                           .reshape(1, -1), self.config.LOOKBACK, 0)
 
@@ -366,7 +361,6 @@ def main():
     agent  = RLAgent(cfg)
     io     = IO()
 
-    # — callback executed every time NT sends a feature block —
     def handle_feat(feat):
         action, conf = agent.predict_single(feat)
         sig = {
@@ -376,15 +370,16 @@ def main():
             "timestamp": int(time.time())
         }
         io.send_signal(sig)
-        log.info("sent signal %s", sig)
+        log.info("Sent signal %s", sig)
 
     io.on_features = handle_feat
 
-    # keep the script running
-    while True: time.sleep(3600)
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        io.close()
+        log.info("Session terminated by user")
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        log.info("terminated by user")
+    main()
