@@ -47,11 +47,11 @@ class IO:
     def __init__(self):
         self._feat_srv = socket.socket(); self._feat_srv.bind((HOST, FEAT_PORT)); self._feat_srv.listen(1)
         self._sig_srv  = socket.socket(); self._sig_srv.bind((HOST, SIG_PORT));  self._sig_srv.listen(1)
-        log.info("▲ waiting for NinjaTrader …")
+        log.info("waiting for NinjaTrader …")
 
         self.fsock, _ = self._feat_srv.accept()
         self.ssock, _ = self._sig_srv.accept()
-        log.info("✔ NinjaTrader connected")
+        log.info("NinjaTrader connected")
 
         self.on_features = lambda feat: None     # callback placeholder
         threading.Thread(target=self._reader, daemon=True).start()
@@ -151,13 +151,13 @@ class RLAgent:
             self.model.load_state_dict(
                 torch.load(self.config.MODEL_PATH, map_location=self.device)
             )
-            log.info("✓ model loaded from %s", self.config.MODEL_PATH)
+            log.info("model loaded from %s", self.config.MODEL_PATH)
 
             buf_path = self.config.MODEL_PATH.replace(".pth", "_buffer.npy")
             if os.path.exists(buf_path):
                 self.replay_buffer = deque(np.load(buf_path, allow_pickle=True),
                                            maxlen=10_000)
-                log.info("✓ replay buffer loaded  (%d samples)",
+                log.info("replay buffer loaded  (%d samples)",
                          len(self.replay_buffer))
         except Exception as e:
             log.error("model load failed: %s", e)
@@ -167,7 +167,7 @@ class RLAgent:
             torch.save(self.model.state_dict(), self.config.MODEL_PATH)
             np.save(self.config.MODEL_PATH.replace(".pth", "_buffer.npy"),
                     np.array(self.replay_buffer, dtype=object))
-            log.info("✓ model + buffer saved")
+            log.info("model + buffer saved")
         except Exception as e:
             log.error("save error: %s", e)
         
