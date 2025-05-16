@@ -1,3 +1,5 @@
+# actor_critic.py
+
 import socket, struct, json, threading, time, logging
 import os, sys, random, traceback
 from collections import deque
@@ -113,18 +115,24 @@ class ActorCritic(nn.Module):
         super().__init__()
         self.feature_extractor = BayesianLSTM(input_dim, hidden_dim)
         
+        # Implement Dropout for regularization
+        self.dropout = nn.Dropout(0.2)
+        
         self.actor = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
+            nn.Dropout(0.2),
             nn.Linear(hidden_dim, action_dim))
         
         self.critic = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
+            nn.Dropout(0.2),
             nn.Linear(hidden_dim, 1))
         
     def forward(self, x, temperature=1.0):
         features = self.feature_extractor(x)
+        features = self.dropout(features)
         logits = self.actor(features) / temperature
         probs = F.softmax(logits, dim=-1)
         value = self.critic(features)
@@ -206,12 +214,10 @@ class RLAgent:
                     state = sequences[i    ].unsqueeze(0)
                     next_state = sequences[i + 1].unsqueeze(0)
 
-                    # reward first …
                     price_change = (next_state[0, -1, 0] - state[0, -1, 0]).item()
                     atr = state[0, -1, 4].item() if state.shape[2] > 4 else 0.01
                     reward = price_change / (atr + 1e-6)
 
-                    # … then push **one** tuple with a dummy HOLD action (=1)
                     self.replay_buffer.append((state, 1, reward, next_state, False))
 
                     if len(self.replay_buffer) >= self.config.BATCH_SIZE:
@@ -225,7 +231,7 @@ class RLAgent:
                         bar_tick += 1
 
                 print(f"\rEpoch {epoch+1}/{epochs} [{'='*bar_len}] 100% ", end="", flush=True)
-                print()  # move to next line after bar completes
+                print()
                 if num_batches:
                     avg_loss = epoch_loss / num_batches
                     log.info(f"Epoch {epoch+1}/{epochs} complete - avg_loss {avg_loss:.4f}")
@@ -243,24 +249,29 @@ class RLAgent:
         batch = random.sample(self.replay_buffer, self.config.BATCH_SIZE)
         states, actions, rewards, next_states, _ = zip(*batch)
 
-        states      = torch.cat(states).to(self.device)
+        states = torch.cat(states).to(self.device)
         next_states = torch.cat(next_states).to(self.device)
-        actions     = torch.tensor(actions, dtype=torch.int64, device=self.device)
-        rewards     = torch.tensor(rewards, dtype=torch.float32, device=self.device)
+        actions = torch.tensor(actions, dtype=torch.int64, device=self.device)
+        rewards = torch.tensor(rewards, dtype=torch.float32, device=self.device)
 
         with torch.no_grad():
             _, next_values = self.model(next_states)
             targets = rewards + self.config.GAMMA * next_values.squeeze()
 
         probs, values = self.model(states, temperature=0.5)
-        dist       = torch.distributions.Categorical(probs)
-        entropy    = dist.entropy().mean()
-        advantage  = targets - values.squeeze()
-        advantage  = (advantage - advantage.mean()) / (advantage.std() + 1e-8)  # normalise
+        dist = torch.distributions.Categorical(probs)
+        entropy = dist.entropy().mean()
+        advantage = targets - values.squeeze()
+        advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)  # normalize
 
-        actor_loss  = -(dist.log_prob(actions) * advantage.detach()).mean()
+        actor_loss = -(dist.log_prob(actions) * advantage.detach()).mean()
         critic_loss = self.loss_fn(values.squeeze(), targets)
-        loss        = actor_loss + 0.5 * critic_loss - self.config.ENTROPY_COEF * entropy
+        
+        l2_reg = 0.0
+        for param in self.model.parameters():
+            l2_reg += torch.norm(param)
+        
+        loss = actor_loss + 0.5 * critic_loss - self.config.ENTROPY_COEF * 1.5 * entropy + 0.001 * l2_reg
 
         self.optimizer.zero_grad()
         loss.backward()
@@ -278,6 +289,37 @@ class RLAgent:
             action = int(torch.argmax(probs))
             conf   = float(probs[0, action])
         return action, conf
+    
+    def calculate_improved_reward(self, price_change, atr, state_data=None):
+        base_reward = price_change / (atr + 1e-6)
+        consistency_reward = 0
+        
+        if hasattr(self, 'recent_rewards'):
+            if len(self.recent_rewards) >= 10:
+                win_rate = sum(1 for r in self.recent_rewards if r > 0) / len(self.recent_rewards)
+                consistency_reward = 0.2 * (1.0 - 2.0 * abs(win_rate - 0.65))
+                
+            self.recent_rewards.append(base_reward)
+            if len(self.recent_rewards) > 50:
+                self.recent_rewards.pop(0)
+        else:
+            self.recent_rewards = [base_reward]
+        
+        volatility_reward = 0
+        if state_data is not None and hasattr(self, 'prev_volatility'):
+            current_volatility = state_data[0, -1, 4].item()
+            vol_change = abs(current_volatility - self.prev_volatility)
+
+            if vol_change > 0.0005:
+                volatility_reward = 0.1 * min(base_reward, 1.0)
+                
+            self.prev_volatility = current_volatility
+        else:
+            self.prev_volatility = atr if state_data is None else state_data[0, -1, 4].item()
+        
+        total_reward = base_reward + consistency_reward + volatility_reward
+        
+        return total_reward
 
 class MarketUtils:
     @staticmethod
@@ -387,9 +429,10 @@ def main():
     def handle_feat(feat, live):
         nonlocal rows, last_price, trained, last_sent_ts
 
-        close  = feat[0]
-        atr    = feat[4] if len(feat) > 4 else 0.01
-        reward = 0.0 if last_price is None else (close - last_price) / (atr + 1e-6)
+        close = feat[0]
+        atr = feat[4] if len(feat) > 4 else 0.01
+        price_change = 0.0 if last_price is None else close - last_price
+        reward = 0.0 if last_price is None else agent.calculate_improved_reward(price_change, atr)
         last_price = close
         rows.append([time.time(), *feat, reward])
 
@@ -430,6 +473,7 @@ def main():
             "timestamp": now_ts
         }
         io.send_signal(sig)
+
         log.info("Sent signal %s", sig)
 
         if len(rows) >= cfg.BATCH_SIZE:
