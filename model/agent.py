@@ -72,6 +72,7 @@ class RLAgent:
             for epoch in range(epochs):
                 epoch_loss, num_batches, bar_tick = 0, 0, 0
 
+                print(f"\rEpoch {epoch+1}/{epochs} [{' ' * bar_len}] 0% ", end="", flush=True)
                 for i in range(total_seq - 1):
                     state = sequences[i].unsqueeze(0)
                     next_state = sequences[i + 1].unsqueeze(0)
@@ -86,6 +87,14 @@ class RLAgent:
                         epoch_loss += self._update_model()
                         num_batches += 1
 
+                    pct = (i + 1) / total_seq
+                    if pct >= bar_tick / bar_len:
+                        filled = "=" * bar_tick + ">" + " " * (bar_len - bar_tick - 1)
+                        print(f"\rEpoch {epoch+1}/{epochs} [{filled}] {pct*100:.0f}% ", end="", flush=True)
+                        bar_tick += 1
+
+                print(f"\rEpoch {epoch+1}/{epochs} [{'=' * bar_len}] 100% ", end="", flush=True)
+                print()
                 if num_batches:
                     avg_loss = epoch_loss / num_batches
                     log.info(f"Epoch {epoch+1}/{epochs} complete - avg_loss {avg_loss:.4f}")
@@ -163,7 +172,7 @@ class RLAgent:
             self.prev_volatility = atr if state_data is None else state_data[0, -1, 2].item()
 
         return base_reward + consistency_reward + volatility_reward
-    
+
     def push_sample(self, feat, action, reward):
         state = torch.tensor(np.repeat(np.asarray(feat, np.float32).reshape(1, -1), self.config.LOOKBACK, 0)).unsqueeze(0)
         self.replay_buffer.append((state, action, reward, state.clone(), False))

@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 def main():
     cfg    = Config()
     agent  = RLAgent(cfg)
-    tcp    = TCPBridge()
+    tcp = TCPBridge("localhost", 5556, 5557)
 
     os.makedirs(os.path.dirname(cfg.FEATURE_FILE), exist_ok=True)
     rows, last_price, trained = [], None, False
