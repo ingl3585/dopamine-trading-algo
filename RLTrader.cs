@@ -1,3 +1,5 @@
+// RLTrader.cs
+
 using System;
 using System.IO;
 using System.Net.Sockets;
@@ -20,18 +22,7 @@ namespace NinjaTrader.NinjaScript.Strategies
     public class RLTrader : Strategy
     {
         // Indicators & parameters
-        private EMA fastEma, slowEma;
-        private RSI rsi;
         private ATR atr;
-
-        [NinjaScriptProperty, Display(Name = "Fast EMA", Order = 1, GroupName = "Parameters")]
-        [Range(1, int.MaxValue)] public int FastPeriod { get; set; } = 9;
-
-        [NinjaScriptProperty, Display(Name = "Slow EMA", Order = 2, GroupName = "Parameters")]
-        [Range(1, int.MaxValue)] public int SlowPeriod { get; set; } = 21;
-
-        [NinjaScriptProperty, Display(Name = "RSI Period", Order = 3, GroupName = "Parameters")]
-        [Range(1, int.MaxValue)] public int RsiPeriod { get; set; } = 14;
 
         [NinjaScriptProperty, Display(Name = "Risk %", Order = 4, GroupName = "Risk")]
         [Range(0.001, 0.1)] public double RiskPercent { get; set; } = 0.01;
@@ -60,8 +51,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             public long   Timestamp;
         }
 
-        private int BarsRequiredToTrade
-            => Math.Max(FastPeriod, Math.Max(SlowPeriod, Math.Max(RsiPeriod, 14)));
+        private int BarsRequiredToTrade => 14;
 
         protected override void OnStateChange()
         {
@@ -75,14 +65,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             else if (State == State.DataLoaded)
             {
-                fastEma = EMA(FastPeriod);
-                slowEma = EMA(SlowPeriod);
-                rsi     = RSI(RsiPeriod, 3);
                 atr     = ATR(14);
 				
-				AddChartIndicator(fastEma); 
-			    AddChartIndicator(slowEma);
-			    AddChartIndicator(rsi);
 			    AddChartIndicator(atr); 
             }
 			else if (State == State.Historical && !socketsStarted) 
@@ -176,9 +160,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    if (sendSock == null || !sendSock.Connected) return;
 		
-		    string payload =
-		        $"{{\"features\":[{Close[0]:F6},{fastEma[0]:F6},{slowEma[0]:F6}," +
-		        $"{rsi[0]:F6},{atr[0]:F6},{Volume[0]:F0}],\"live\":{(State == State.Realtime ? 1 : 0)}}}";
+		    double volMean = SMA(Volume, 20)[0];
+		    double volStd  = StdDev(Volume, 20)[0];
+		    double normVol = volStd == 0 ? 0 : (Volume[0] - volMean) / volStd;
+		
+		    string payload = $"{{\"features\":[{Close[0]:F6},{normVol:F6},{atr[0]:F6}],\"live\":{(State == State.Realtime ? 1 : 0)}}}";
 		
 		    try
 		    {
@@ -203,19 +189,22 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        return;
 		    lastSignalTime = DateTimeOffset.FromUnixTimeSeconds(sig.Timestamp).UtcDateTime;
 		
-		    int baseQty = Math.Max(1, sig.Size);
-		    int tgtQty  = sig.Action == 0 ?  baseQty :
-		                  sig.Action == 2 ? -baseQty : 0;
-		
-			int diff = tgtQty - currentTargetPosition;
+			int baseQty = Math.Max(1, sig.Size);
+			int rawAdjustment = sig.Action == 0 ? baseQty :
+			                    sig.Action == 2 ? -baseQty : 0;
+			
+			int proposedQty = currentTargetPosition + rawAdjustment;
+			int cappedQty = Math.Max(-10, Math.Min(10, proposedQty));
+			int diff = cappedQty - currentTargetPosition;
+						
 			if (diff == 0) return;
 			
 			if (currentTargetPosition != 0 && Math.Sign(diff) != Math.Sign(currentTargetPosition))
 			{
 			    ExitLong(); ExitShort();
-			    diff = tgtQty;
+			    diff = cappedQty;
 			}
-		
+			
 			if (diff > 0)
 			{
 			    EnterLong(diff, "RL_Add");
@@ -225,9 +214,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 			    EnterShort(-diff, "RL_Add");
 			}
 			
-			currentTargetPosition = tgtQty;
-		
-		    Print($"Target={tgtQty}  Curr={currentTargetPosition}  Adj={diff}  conf={sig.Confidence:P0}");
+			currentTargetPosition = cappedQty;
+			Print($"Target={cappedQty}  Curr={currentTargetPosition}  Adj={diff}  conf={sig.Confidence:P0}");
 		}
     }
 }
