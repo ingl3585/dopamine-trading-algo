@@ -4,5 +4,4 @@
 *.npy
 *.csv
 *.log
-*.txt
 __pycache__
