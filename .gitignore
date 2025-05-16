@@ -1,6 +1,10 @@
+# .gitignore
+
+features/
+rl/
 *.pth
 *.npy
 *.csv
 *.log
-*.txt
+*.md
 __pycache__

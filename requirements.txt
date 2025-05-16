@@ -1,0 +1,10 @@
+# requirements.txt
+
+# To run : pip install -r requirements.txt
+
+numpy
+pandas
+torch
+scikit-learn
+hmmlearn
+arch
