@@ -48,4 +48,4 @@ def clean_feature_file(file_path, max_lines=10000, max_size_mb=10):
                 f.writelines(new_lines)
             log.info(f"Trimmed feature file to {len(new_lines)} lines")
     except Exception as e:
-        log.error(f"File cleaning error: {e}")
+        log.warning(f"File cleaning error: {e}")

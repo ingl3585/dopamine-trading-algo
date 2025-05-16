@@ -1,6 +1,10 @@
 # utils/tcp_bridge.py
 
-import socket, struct, json, threading, logging
+import socket
+import struct
+import json
+import threading
+import logging
 
 log = logging.getLogger(__name__)
 
@@ -17,7 +21,7 @@ class TCPBridge:
         self._sig_srv.bind((host, sig_port))
         self._sig_srv.listen(1)
 
-        log.info("Waiting for NinjaTrader...")
+        log.info("Waiting for NinjaTrader")
         self.fsock, _ = self._feat_srv.accept()
         self.ssock, _ = self._sig_srv.accept()
         log.info("NinjaTrader connected")
@@ -43,7 +47,7 @@ class TCPBridge:
                     live = msg.get("live", 0)
                     self.on_features(feat, live)
             except Exception as e:
-                log.warning("recv error: %s", e)
+                log.warning("Recv error: %s", e)
                 break
 
     def send_signal(self, sig: dict):
@@ -51,7 +55,7 @@ class TCPBridge:
             blob = json.dumps(sig, separators=(',', ':')).encode()
             self.ssock.sendall(struct.pack('<I', len(blob)) + blob)
         except Exception as e:
-            log.warning("send error: %s", e)
+            log.warning("Send error: %s", e)
 
     def close(self):
         for s in (self.fsock, self.ssock, self._feat_srv, self._sig_srv):

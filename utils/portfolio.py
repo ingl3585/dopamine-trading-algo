@@ -16,11 +16,11 @@ class Portfolio:
             return self.position + size <= self.max_position
         elif action == 2:  # Sell
             return self.position - size >= -self.max_position
-        return False
+        return False # Hold
 
     def adjust_size(self, action, size):
-        if action == 1:
+        if action == 1: # Buy
             return min(size, self.max_position - self.position)
-        elif action == 2:
+        elif action == 2: # Sell
             return min(size, self.max_position + self.position)
-        return 0
+        return 0 # Hold

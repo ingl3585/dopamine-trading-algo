@@ -1,3 +1,5 @@
+// NinjaScript - RLTrader
+
 using System;
 using System.Globalization;
 using System.IO;
@@ -127,6 +129,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 	                        Confidence = Convert.ToDouble(dict["confidence"]),
 	                        Timestamp = Convert.ToInt64(dict["timestamp"])
 	                    };
+						Print(string.Format("Signal received → action={0}, confidence={1:F3}, size={2}, timestamp={3}",
+						    latestSignal.Action,
+						    latestSignal.Confidence,
+						    latestSignal.Size,
+						    latestSignal.Timestamp));
                     }
                 }
                 catch (Exception ex)
@@ -179,6 +186,18 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    {
 		        Print($"Flat/No Action: conf={sigCopy.Confidence:F2}");
 		    }
+			try
+				{
+					string posJson = $"{{\"position\":{Position.Quantity}}}";
+					byte[] posData = Encoding.UTF8.GetBytes(posJson);
+					byte[] posHeader = BitConverter.GetBytes(posData.Length);
+					sendSock?.GetStream().Write(posHeader, 0, 4);
+					sendSock?.GetStream().Write(posData, 0, posData.Length);
+				}
+				catch (Exception ex)
+				{
+				    Print($"Position send error: {ex.Message}");
+				}
 		}
 
         protected override void OnMarketData(MarketDataEventArgs e)

@@ -10,14 +10,14 @@ try:
     from arch import arch_model
     has_arch = True
 except ImportError:
-    log.warning("arch package not found. Using simple volatility estimation.")
+    log.warning("Arch package not found. Using simple volatility estimation.")
     has_arch = False
 
 try:
     from hmmlearn.hmm import GaussianHMM
     has_hmm = True
 except ImportError:
-    log.warning("hmmlearn package not found. Using simple regime detection.")
+    log.warning("HmmLearn package not found. Using simple regime detection.")
     has_hmm = False
 
 class MarketUtils:
@@ -48,7 +48,7 @@ class MarketUtils:
             return 0 if ma_short > ma_long else 1
 
         except Exception as e:
-            log.error(f"Regime detection error: {e}")
+            log.warning(f"Regime detection error: {e}")
             return 0
 
     @staticmethod
@@ -70,5 +70,5 @@ class MarketUtils:
             return returns.ewm(span=window).std().iloc[-1] if not returns.empty else 0.01
 
         except Exception as e:
-            log.error(f"Volatility forecasting error: {e}")
+            log.warning(f"Volatility forecasting error: {e}")
             return 0.01

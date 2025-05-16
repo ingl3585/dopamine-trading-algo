@@ -10,7 +10,6 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 
 from model.base import ActorCritic
@@ -36,23 +35,23 @@ class RLAgent:
             return
         try:
             self.model.load_state_dict(torch.load(self.config.MODEL_PATH, map_location=self.device))
-            log.info("model loaded from %s", self.config.MODEL_PATH)
+            log.info("Model loaded from %s", self.config.MODEL_PATH)
 
             buf_path = self.config.MODEL_PATH.replace(".pth", "_buffer.npy")
             if os.path.exists(buf_path):
                 self.replay_buffer = deque(np.load(buf_path, allow_pickle=True), maxlen=10_000)
-                log.info("replay buffer loaded  (%d samples)", len(self.replay_buffer))
+                log.info("Replay buffer loaded  (%d samples)", len(self.replay_buffer))
         except Exception as e:
-            log.error("model load failed: %s", e)
+            log.warning("Model load failed: %s", e)
 
     def save_model(self):
         try:
             os.makedirs(os.path.dirname(self.config.MODEL_PATH), exist_ok=True)
             torch.save(self.model.state_dict(), self.config.MODEL_PATH)
             np.save(self.config.MODEL_PATH.replace(".pth", "_buffer.npy"), np.array(self.replay_buffer, dtype=object))
-            log.info("model + buffer saved")
+            log.info("Model and buffer saved")
         except Exception as e:
-            log.error("save error: %s", e)
+            log.warning("Save error: %s", e)
 
     def train(self, df, epochs=1):
         try:
@@ -73,7 +72,7 @@ class RLAgent:
             for epoch in range(epochs):
                 epoch_loss, num_batches, bar_tick = 0, 0, 0
 
-                print(f"\rEpoch {epoch+1}/{epochs} [{' ' * bar_len}] 0% ", end="", flush=True)
+                log.info(f"\rEpoch {epoch+1}/{epochs} [{' ' * bar_len}] 0% ", end="", flush=True)
                 for i in range(total_seq - 1):
                     state = sequences[i].unsqueeze(0)
                     next_state = sequences[i + 1].unsqueeze(0)
@@ -91,21 +90,21 @@ class RLAgent:
                     pct = (i + 1) / total_seq
                     if pct >= bar_tick / bar_len:
                         filled = "=" * bar_tick + ">" + " " * (bar_len - bar_tick - 1)
-                        print(f"\rEpoch {epoch+1}/{epochs} [{filled}] {pct*100:.0f}% ", end="", flush=True)
+                        log.info(f"\rEpoch {epoch+1}/{epochs} [{filled}] {pct*100:.0f}% ", end="", flush=True)
                         bar_tick += 1
 
-                print(f"\rEpoch {epoch+1}/{epochs} [{'=' * bar_len}] 100% ", end="", flush=True)
-                print()
+                log.info(f"\rEpoch {epoch+1}/{epochs} [{'=' * bar_len}] 100% ", end="", flush=True)
+                log.info()
                 if num_batches:
                     avg_loss = epoch_loss / num_batches
-                    log.info(f"Epoch {epoch+1}/{epochs} complete - avg_loss {avg_loss:.4f}")
+                    log.info(f"Epoch {epoch+1}/{epochs} complete - Average loss: {avg_loss:.4f}")
 
             if time.time() - self.last_save_time > 3600:
                 self.save_model()
                 self.last_save_time = time.time()
 
         except Exception as e:
-            log.error(f"Training error: {e}")
+            log.warning(f"Training error: {e}")
 
     def _update_model(self):
         batch = random.sample(self.replay_buffer, self.config.BATCH_SIZE)

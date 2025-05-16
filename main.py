@@ -41,7 +41,7 @@ def main():
     last_sent_ts = -1 
 
     def handle_feat(feat, live):
-        # log.info(f"Received features: {feat} | live={live}")
+        log.debug(f"Received features: {feat} | live={live}")
         nonlocal rows, last_price, trained, last_sent_ts
 
         close = feat[0]
@@ -50,7 +50,7 @@ def main():
         reward = 0.0 if last_price is None else agent.calculate_improved_reward(price_change, atr)
         last_price = close
         lwpe = feat[3] if len(feat) > 3 else 0.5
-        # log.info(f"LWPE = {lwpe:.4f}")
+        log.debug(f"LWPE = {lwpe:.4f}")
         rows.append([time.time(), *feat, reward])
 
         if live == 0:

@@ -5,19 +5,20 @@ import threading
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
+import logging
+
+log = logging.getLogger(__name__)
 
 class TickProcessor:
     def __init__(self, host='localhost', tick_port=5558, output_port=5559):
         self.buffer = []
         self.host = host
         
-        # Configure tick socket
         self.tick_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.tick_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.tick_sock.bind((host, tick_port))
         self.tick_sock.listen(5)
 
-        # Configure output socket
         self.output_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.output_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.output_sock.bind((host, output_port))
@@ -55,11 +56,11 @@ class TickProcessor:
                     conn.sendall(f"{lwpe:.4f}\n".encode())
                     
             except Exception as e:
-                print(f"Client error: {e}")
+                log.warning(f"Client error: {e}")
                 break
 
     def process_tick(self, tick):
-        # print(f"[tick] {tick}")
+        log.debug(f"[tick] {tick}")
         parts = tick.split(',', 3)
         if len(parts) != 4: return
         
@@ -85,7 +86,6 @@ class TickProcessor:
             df['price'] = pd.to_numeric(df['price'], errors='coerce')
             df = df.dropna(subset=['price'])
             
-            # Resample with forward fill
             resampled = df['price'].resample('10ms').ohlc().ffill()
             resampled['mid'] = (resampled['high'] + resampled['low']) / 2
 
@@ -94,28 +94,23 @@ class TickProcessor:
             
             merged = pd.merge_asof(df, resampled, left_index=True, right_index=True, direction='nearest')
             
-            # Confirm column exists
             if 'price' not in merged.columns:
-                print("Merge failed, missing price — returning fallback LWPE")
+                log.warning("Merge failed, missing price — returning fallback LWPE")
                 return 0.5
             
-            # Calculate pressure
             merged['buy_pressure'] = np.where(merged['price'] > merged['mid'], merged['volume'], 0)
             merged['sell_pressure'] = np.where(merged['price'] < merged['mid'], merged['volume'], 0)
             
-            # Entropy calculation
             merged['total_pressure'] = merged[['buy_pressure', 'sell_pressure']].sum(axis=1)
             merged['p_buy'] = merged['buy_pressure'] / merged['total_pressure'].replace(0, 1e-6)
             merged['p_buy'] = merged['p_buy'].clip(1e-6, 1 - 1e-6)
             merged['entropy'] = -merged['p_buy'] * np.log2(merged['p_buy']) - (1 - merged['p_buy']) * np.log2(1 - merged['p_buy'])
             
-            # Liquidity estimation
             liquidity = merged['volume'].rolling('100ms').mean().fillna(0)
             
-            # Final LWPE
             lwpe = merged['entropy'].iloc[-1] * (1 + liquidity.iloc[-1])
             return np.nan_to_num(lwpe, nan=0.5)
             
         except Exception as e:
-            print(f"LWPE error: {e}")
+            log.warning(f"LWPE error: {e}")
             return 0.5
