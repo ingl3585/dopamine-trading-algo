@@ -57,12 +57,13 @@ def main():
             return
 
         if not trained or args.reset:
-            log.info("Initial backfill training…")
+            log.info("Initial backfill training")
             df = pd.DataFrame(rows, columns=["ts", "close", "volume", "atr", "lwpe", "reward"])
             agent.train(df, epochs=3)
             agent.save_model()
             rows.clear()
             trained = True
+            args.reset = False
             return
 
         action, conf = agent.predict_single(feat)
