@@ -49,6 +49,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 Calculate = Calculate.OnBarClose;
 			    AddPlot(Brushes.Blue, "LWPE");
 			    IsOverlay = false;
+				EntriesPerDirection = 10;
+				EntryHandling = EntryHandling.AllEntries;
             }
             else if (State == State.DataLoaded)
             {
