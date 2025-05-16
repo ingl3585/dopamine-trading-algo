@@ -72,7 +72,7 @@ class RLAgent:
             for epoch in range(epochs):
                 epoch_loss, num_batches, bar_tick = 0, 0, 0
 
-                log.info(f"\rEpoch {epoch+1}/{epochs} [{' ' * bar_len}] 0% ", end="", flush=True)
+                print(f"\rEpoch {epoch+1}/{epochs} [{' ' * bar_len}] 0% ", end="", flush=True)
                 for i in range(total_seq - 1):
                     state = sequences[i].unsqueeze(0)
                     next_state = sequences[i + 1].unsqueeze(0)
@@ -90,14 +90,14 @@ class RLAgent:
                     pct = (i + 1) / total_seq
                     if pct >= bar_tick / bar_len:
                         filled = "=" * bar_tick + ">" + " " * (bar_len - bar_tick - 1)
-                        log.info(f"\rEpoch {epoch+1}/{epochs} [{filled}] {pct*100:.0f}% ", end="", flush=True)
+                        print(f"\rEpoch {epoch+1}/{epochs} [{filled}] {pct*100:.0f}% ", end="", flush=True)
                         bar_tick += 1
 
-                log.info(f"\rEpoch {epoch+1}/{epochs} [{'=' * bar_len}] 100% ", end="", flush=True)
-                log.info()
+                print(f"\rEpoch {epoch+1}/{epochs} [{'=' * bar_len}] 100% ", end="", flush=True)
+                print()
                 if num_batches:
                     avg_loss = epoch_loss / num_batches
-                    log.info(f"Epoch {epoch+1}/{epochs} complete - Average loss: {avg_loss:.4f}")
+                    print(f"Epoch {epoch+1}/{epochs} complete - Average loss: {avg_loss:.4f}")
 
             if time.time() - self.last_save_time > 3600:
                 self.save_model()
