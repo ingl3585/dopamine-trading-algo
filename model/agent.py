@@ -47,6 +47,7 @@ class RLAgent:
 
     def save_model(self):
         try:
+            os.makedirs(os.path.dirname(self.config.MODEL_PATH), exist_ok=True)
             torch.save(self.model.state_dict(), self.config.MODEL_PATH)
             np.save(self.config.MODEL_PATH.replace(".pth", "_buffer.npy"), np.array(self.replay_buffer, dtype=object))
             log.info("model + buffer saved")
@@ -78,7 +79,7 @@ class RLAgent:
                     next_state = sequences[i + 1].unsqueeze(0)
 
                     price_change = (next_state[0, -1, 0] - state[0, -1, 0]).item()
-                    atr = state[0, -1, 4].item() if state.shape[2] > 4 else 0.01
+                    atr = state[0, -1, 2].item() if state.shape[2] > 2 else 0.01
                     reward = price_change / (atr + 1e-6)
 
                     self.replay_buffer.append((state, 1, reward, next_state, False))
