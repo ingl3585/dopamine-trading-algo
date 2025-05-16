@@ -1,5 +1,7 @@
 # .gitignore
 
+features/
+rl/
 *.pth
 *.npy
 *.csv

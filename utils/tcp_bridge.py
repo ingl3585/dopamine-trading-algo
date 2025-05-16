@@ -1,7 +1,5 @@
 # utils/tcp_bridge.py
 
-# utils/tcp_bridge.py
-
 import socket, struct, json, threading, logging
 
 log = logging.getLogger(__name__)
@@ -9,6 +7,7 @@ log = logging.getLogger(__name__)
 class TCPBridge:
     def __init__(self, host: str, feat_port: int, sig_port: int):
         self.on_features = lambda *args: None
+        self._current_position = 0 
 
         self._feat_srv = socket.socket()
         self._feat_srv.bind((host, feat_port))
@@ -37,9 +36,12 @@ class TCPBridge:
                 if len(data) != n:
                     continue
                 msg = json.loads(data.decode())
-                feat = msg["features"]
-                live = msg.get("live", 0)
-                self.on_features(feat, live)
+                if "position" in msg:
+                    self._current_position = msg["position"]
+                elif "features" in msg:
+                    feat = msg["features"]
+                    live = msg.get("live", 0)
+                    self.on_features(feat, live)
             except Exception as e:
                 log.warning("recv error: %s", e)
                 break

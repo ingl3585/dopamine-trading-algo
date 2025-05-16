@@ -4,6 +4,7 @@ from config import Config
 from model.agent import RLAgent
 from utils.tcp_bridge import TCPBridge
 from utils.tick_processor import TickProcessor
+from utils.portfolio import Portfolio
 
 import os, time, logging
 import pandas as pd
@@ -24,6 +25,7 @@ def main():
     parser.add_argument("--reset", action="store_true", help="Force full model retraining")
     args = parser.parse_args()
     cfg    = Config()
+    portfolio = Portfolio(cfg.MAX_SIZE)
 
     tick_processor = TickProcessor(host="localhost")
     tick_thread = threading.Thread(target=tick_processor.accept_connections, daemon=True)
@@ -75,11 +77,15 @@ def main():
             return
         last_sent_ts = now_ts
 
+        current_pos = portfolio.get_current_position()
+        portfolio.update_position(current_pos)
+        desired_size = int(conf * cfg.BASE_SIZE)
+        adjusted_size = portfolio.adjust_size(action, desired_size)
+
         sig = {
             "action": action,
             "confidence": conf,
-            "size": max(cfg.MIN_SIZE,
-                        int(conf * (cfg.BASE_SIZE if action != 1 else cfg.CONS_SIZE))),
+            "size": max(cfg.MIN_SIZE, adjusted_size) if adjusted_size > 0 else 0,
             "timestamp": now_ts
         }
         tcp.send_signal(sig)

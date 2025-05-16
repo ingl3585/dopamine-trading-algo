@@ -14,8 +14,8 @@ class Config:
     ENTROPY_COEF= 0.01
     LR          = 5e-4
 
-    BASE_SIZE   = 5
-    CONS_SIZE   = 2
+    BASE_SIZE   = 4
+    MAX_SIZE    = 10
     MIN_SIZE    = 1
 
     TEMPERATURE = 0.75
