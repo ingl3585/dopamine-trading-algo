@@ -13,6 +13,7 @@ using System.Web.Script.Serialization;
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using NinjaTrader.NinjaScript.Indicators;
+using System.Windows.Media;
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
@@ -27,6 +28,10 @@ namespace NinjaTrader.NinjaScript.Strategies
         private SignalData latestSignal;
         private DateTime lastSignalTime = DateTime.MinValue;
         private int currentTargetPosition = 0;
+		private bool socketsStarted = false;
+		private readonly object signalLock = new object();
+		double lwpeCopy;
+		private Series<double> lwpeSeries;
 
         [NinjaScriptProperty, Range(0.001, 0.1)]
         public double RiskPercent { get; set; } = 0.01;
@@ -40,12 +45,28 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 Name = "RLTrader";
                 Calculate = Calculate.OnBarClose;
+			    AddPlot(Brushes.Blue, "LWPE");
+			    IsOverlay = false;
             }
             else if (State == State.DataLoaded)
             {
                 atr = ATR(14);
+				lwpeSeries = new Series<double>(this);
+				
                 AddChartIndicator(atr);
             }
+			else if (State == State.Historical && !socketsStarted) 
+			{
+			    StartSockets();
+			    socketsStarted = true;
+			    Print("Sockets started in Historical state");
+			}
+			else if (State == State.Realtime && !socketsStarted)
+			{
+			    StartSockets();
+			    socketsStarted = true;
+			    Print("Sockets started in Realtime state");
+			}
             else if (State == State.Terminated)
             {
                 running = false;
@@ -97,15 +118,15 @@ namespace NinjaTrader.NinjaScript.Strategies
                     while (read < n) read += stream.Read(buf, read, n - read);
 
                     var dict = ser.Deserialize<Dictionary<string, object>>(Encoding.UTF8.GetString(buf));
-                    lock (latestSignal)
-                    {
-                        latestSignal = new SignalData
-                        {
-                            Action = Convert.ToInt32(dict["action"]),
-                            Size = Convert.ToInt32(dict["size"]),
-                            Confidence = Convert.ToDouble(dict["confidence"]),
-                            Timestamp = Convert.ToInt64(dict["timestamp"])
-                        };
+                    lock (signalLock)
+					{
+					    latestSignal = new SignalData
+	                    {
+	                        Action = Convert.ToInt32(dict["action"]),
+	                        Size = Convert.ToInt32(dict["size"]),
+	                        Confidence = Convert.ToDouble(dict["confidence"]),
+	                        Timestamp = Convert.ToInt64(dict["timestamp"])
+	                    };
                     }
                 }
                 catch (Exception ex)
@@ -114,9 +135,56 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
             }
         }
+		
+		protected override void OnBarUpdate()
+		{
+			// Print($"[BAR] OnBarUpdate fired - CurrentBar={CurrentBar}, State={State}");
+			
+			SendFeatureVector();
+			
+		    lock (lwpeLock)
+		    {
+		        Values[0][0] = currentLWPE;
+		    }
+
+		    if (CurrentBar < 20 || State != State.Realtime)
+		        return;
+		
+		    SignalData sigCopy = null;
+		    lock (signalLock)
+		    {
+		        sigCopy = latestSignal;
+		    }
+		
+		    if (sigCopy == null || sigCopy.Timestamp == 0)
+		        return;
+		
+		    // Avoid duplicate execution
+		    if (sigCopy.Timestamp == lastSignalTime.Ticks)
+		        return;
+		
+		    lastSignalTime = new DateTime(sigCopy.Timestamp * TimeSpan.TicksPerSecond);
+		
+		    if (sigCopy.Action == 1)  // BUY
+		    {
+		        Print($"Long: size={sigCopy.Size} conf={sigCopy.Confidence:F2}");
+		        EnterLong(sigCopy.Size);
+		    }
+		    else if (sigCopy.Action == 2)  // SELL
+		    {
+		        Print($"Short: size={sigCopy.Size} conf={sigCopy.Confidence:F2}");
+		        EnterShort(sigCopy.Size);
+		    }
+		    else
+		    {
+		        Print($"Flat/No Action: conf={sigCopy.Confidence:F2}");
+		    }
+		}
 
         protected override void OnMarketData(MarketDataEventArgs e)
         {
+			// Print($"[TICK] {e.MarketDataType} {e.Price} {e.Volume}");
+
             if (e.MarketDataType == MarketDataType.Bid ||
                 e.MarketDataType == MarketDataType.Ask ||
                 e.MarketDataType == MarketDataType.Last)
@@ -178,6 +246,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }}",
                 Close[0], normVol, atr[0], lwpeCopy,
                 State == State.Realtime ? 1 : 0);
+			
+			// Print($"[feature] Close={Close[0]:F2}, normVol={normVol:F4}, ATR={atr[0]:F4}, LWPE={lwpeCopy:F4}, live={(State == State.Realtime ? 1 : 0)}");
 
             try
             {

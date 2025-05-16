@@ -8,6 +8,7 @@ from utils.tick_processor import TickProcessor
 import os, time, logging
 import pandas as pd
 import threading
+import argparse
 
 logging.basicConfig(
     level=logging.INFO,
@@ -18,6 +19,10 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 def main():
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--reset", action="store_true", help="Force full model retraining")
+    args = parser.parse_args()
     cfg    = Config()
 
     tick_processor = TickProcessor(host="localhost")
@@ -49,7 +54,7 @@ def main():
         if live == 0:
             return
 
-        if not trained:
+        if not trained or args.reset:
             log.info("Initial backfill training…")
             df = pd.DataFrame(rows, columns=["ts", "close", "volume", "atr", "lwpe", "reward"])
             agent.train(df, epochs=3)
