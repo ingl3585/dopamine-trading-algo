@@ -49,6 +49,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private SignalData latestSignal;
         private DateTime   lastSignalTime = DateTime.MinValue;
 		private bool socketsStarted = false;
+		private int currentTargetPosition = 0;
 
         // Small POCO for incoming signal
         private class SignalData
@@ -193,7 +194,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    SignalData sig;
 		    lock (sigLock) sig = latestSignal;
+			
 		    if (sig == null) return;
+			
+			Print($"Received signal: Action={sig.Action}, Size={sig.Size}, Conf={sig.Confidence:F2}, Timestamp={sig.Timestamp}");
 		
 		    if (DateTimeOffset.FromUnixTimeSeconds(sig.Timestamp).UtcDateTime <= lastSignalTime)
 		        return;
@@ -203,25 +207,27 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    int tgtQty  = sig.Action == 0 ?  baseQty :
 		                  sig.Action == 2 ? -baseQty : 0;
 		
-		    int diff = tgtQty - Position.Quantity;
-		    if (diff == 0) return;
+			int diff = tgtQty - currentTargetPosition;
+			if (diff == 0) return;
+			
+			if (currentTargetPosition != 0 && Math.Sign(diff) != Math.Sign(currentTargetPosition))
+			{
+			    ExitLong(); ExitShort();
+			    diff = tgtQty;
+			}
 		
-		    if (Position.Quantity != 0 && Math.Sign(diff) != Math.Sign(Position.Quantity))
-		    {
-		        ExitLong(); ExitShort();
-		        diff = tgtQty;
-		    }
+			if (diff > 0)
+			{
+			    EnterLong(diff, "RL_Add");
+			}
+			else if (diff < 0)
+			{
+			    EnterShort(-diff, "RL_Add");
+			}
+			
+			currentTargetPosition = tgtQty;
 		
-		    if (diff > 0)
-		    {
-		        EnterLong (diff,  "RL_Add");
-		    }
-		    else if (diff < 0)
-		    {
-		        EnterShort(-diff, "RL_Add");
-		    }
-		
-		    Print($"Target={tgtQty}  Curr={Position.Quantity}  Adj={diff}  conf={sig.Confidence:P0}");
+		    Print($"Target={tgtQty}  Curr={currentTargetPosition}  Adj={diff}  conf={sig.Confidence:P0}");
 		}
     }
 }
