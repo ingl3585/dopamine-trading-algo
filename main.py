@@ -78,17 +78,25 @@ def main():
             return
         last_sent_ts = now_ts
 
-        current_pos = portfolio.get_current_position()
-        portfolio.update_position(current_pos)
+        portfolio.update_position(tcp._current_position)
         desired_size = int(conf * cfg.BASE_SIZE)
         adjusted_size = portfolio.adjust_size(action, desired_size)
+        if adjusted_size <= 0:
+            action = 0  # Hold
+            conf = 0.0
 
         sig = {
             "action": action,
             "confidence": conf,
-            "size": max(cfg.MIN_SIZE, adjusted_size) if adjusted_size > 0 else 0,
+            "size": 0,
             "timestamp": now_ts
         }
+
+        if portfolio.can_execute(action, adjusted_size):
+            sig["size"] = max(cfg.MIN_SIZE, adjusted_size) if adjusted_size > 0 else 0
+        else:
+            log.info("Position cap reached, skipping trade")
+
         tcp.send_signal(sig)
         log.info("Sent signal %s", sig)
 

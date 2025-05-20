@@ -11,7 +11,7 @@ class Config:
 
     BATCH_SIZE  = 64
     GAMMA       = 0.99
-    ENTROPY_COEF= 0.01
+    ENTROPY_COEF= 0.05
     LR          = 5e-4
 
     BASE_SIZE   = 4
