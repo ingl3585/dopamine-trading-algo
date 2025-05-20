@@ -38,6 +38,7 @@ def main():
         raise RuntimeError("Tick processor failed to start")
     
     tcp = TCPBridge("localhost", 5556, 5557)
+    log.info("TCP bridge established, waiting for first feature...")
     agent  = RLAgent(cfg)
 
     os.makedirs(os.path.dirname(cfg.FEATURE_FILE), exist_ok=True)
@@ -49,8 +50,8 @@ def main():
     MAX_HISTORY = 100
 
     def handle_feat(feat, live):
-        log.debug(f"Received features: {feat} | live={live}")
-        nonlocal rows, last_price, trained, last_sent_ts, price_history
+        log.info(f"Feature received: close={feat[0]:.2f}, volume={feat[1]:.2f}, atr={feat[2]:.4f}")
+        nonlocal rows, last_price, trained, last_sent_ts, price_history, prev_lwpe
 
         close = feat[0]
         atr = feat[2] if len(feat) > 2 else 0.01
@@ -76,9 +77,11 @@ def main():
         if live == 0:
             return
 
+        log.info("Checking if model needs initial training...")
         if not trained or args.reset:
             log.info("Initial backfill training")
             df = pd.DataFrame(rows, columns=["ts", "close", "volume", "atr", "lwpe", "delta_lwpe", "volatility", "regime", "reward"])
+            log.info(f"Starting model training with {len(df)} samples")
             agent.train(df, epochs=3)
             agent.save_model()
             rows.clear()
@@ -106,6 +109,7 @@ def main():
         last_sent_ts = now_ts
 
         portfolio.update_position(tcp._current_position)
+        log.info(f"Updated position from NinjaTrader: {tcp._current_position}")
         desired_size = int(conf * cfg.BASE_SIZE)
         adjusted_size = portfolio.adjust_size(action, desired_size)
         if adjusted_size <= 0:
@@ -119,6 +123,7 @@ def main():
             "timestamp": now_ts
         }
 
+        log.info(f"[Position Check] Current pos: {portfolio.position}, Action: {action}, Desired size: {desired_size}, Adjusted size: {adjusted_size}")
         if portfolio.can_execute(action, adjusted_size):
             sig["size"] = max(cfg.MIN_SIZE, adjusted_size) if adjusted_size > 0 else 0
         else:
@@ -129,6 +134,7 @@ def main():
 
         if len(rows) >= cfg.BATCH_SIZE:
             df = pd.DataFrame(rows, columns=["ts", "close", "volume", "atr", "lwpe", "delta_lwpe", "volatility", "regime", "reward"])
+            log.info(f"Starting model training with {len(df)} samples")
             agent.train(df, epochs=1)
             agent.save_model()
             df.to_csv(cfg.FEATURE_FILE,
@@ -138,6 +144,7 @@ def main():
             rows.clear()
 
     tcp.on_features = handle_feat
+    log.info("Feature handler assigned and ready to receive data")
 
     try:
         while True:
@@ -150,6 +157,7 @@ def main():
             df = pd.DataFrame(rows, columns=["ts", "close", "volume", "atr", "lwpe", "delta_lwpe", "volatility", "regime", "reward"])
             header = not os.path.exists(cfg.FEATURE_FILE)
             df.to_csv(cfg.FEATURE_FILE, mode='a', header=header, index=False)
+            log.info(f"Starting model training with {len(df)} samples")
             agent.train(df, epochs=1)
             agent.save_model()
 

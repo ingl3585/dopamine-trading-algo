@@ -55,6 +55,8 @@ class RLAgent:
 
     def train(self, df, epochs=1):
         try:
+            log.info(f"Training called with {len(df)} rows for {epochs} epochs")
+
             if isinstance(df.iloc[0, 1], str):
                 df = df.iloc[1:]
 
