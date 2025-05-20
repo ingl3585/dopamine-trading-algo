@@ -7,7 +7,10 @@ from utils.tick_processor import TickProcessor
 from utils.portfolio import Portfolio
 from utils.market import MarketUtils
 
-import os, time, logging
+import os
+import time
+import logging
+import numpy as np
 import pandas as pd
 import threading
 import argparse
@@ -84,6 +87,14 @@ def main():
             return
 
         action, conf = agent.predict_single(full_feat)
+        
+        vol_damp = np.clip(np.log1p(volatility), 0, 1.0)
+        regime_scale = {0: 1.0, 1: 0.5}.get(regime, 1.0)
+        scaled_conf = conf * regime_scale * (1.0 - 0.7 * vol_damp)
+
+        log.info(f"Raw conf={conf:.3f}, regime={regime}, volatility={volatility:.4f}, scaled_conf={scaled_conf:.3f}")
+        conf = max(0.0, min(1.0, scaled_conf))
+
         if action == 1:
             reward -= 0.01
         rows[-1][-1] = reward
