@@ -50,7 +50,7 @@ def main():
     MAX_HISTORY = 100
 
     def handle_feat(feat, live):
-        log.info(f"Feature received: close={feat[0]:.2f}, volume={feat[1]:.2f}, atr={feat[2]:.4f}")
+        log.debug(f"Feature received: close={feat[0]:.2f}, volume={feat[1]:.2f}, atr={feat[2]:.4f}")
         nonlocal rows, last_price, trained, last_sent_ts, price_history, prev_lwpe
 
         close = feat[0]
