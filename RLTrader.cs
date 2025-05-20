@@ -34,6 +34,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private readonly object signalLock = new object();
 		double lwpeCopy;
 		private Series<double> lwpeSeries;
+		private int lastSentPos = int.MinValue;
 
         [NinjaScriptProperty, Range(0.001, 0.1)]
         public double RiskPercent { get; set; } = 0.01;
@@ -188,18 +189,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    {
 		        Print($"Flat/No Action: conf={sigCopy.Confidence:F2}");
 		    }
-			try
-				{
-					string posJson = $"{{\"position\":{Position.Quantity}}}";
-					byte[] posData = Encoding.UTF8.GetBytes(posJson);
-					byte[] posHeader = BitConverter.GetBytes(posData.Length);
-					sendSock?.GetStream().Write(posHeader, 0, 4);
-					sendSock?.GetStream().Write(posData, 0, posData.Length);
-				}
-				catch (Exception ex)
-				{
-				    Print($"Position send error: {ex.Message}");
-				}
 		}
 
         protected override void OnMarketData(MarketDataEventArgs e)
@@ -215,6 +204,26 @@ namespace NinjaTrader.NinjaScript.Strategies
                 tickSock?.GetStream().Write(Encoding.UTF8.GetBytes(tickStr), 0, tickStr.Length);
             }
         }
+		
+		protected override void OnPositionUpdate(Position position, double averagePrice, int quantity, MarketPosition marketPosition)
+		{
+		    if (quantity == lastSentPos) return;
+		
+		    lastSentPos = quantity;
+		    try
+		    {
+		        string posJson = $"{{\"position\":{quantity}}}";
+		        byte[] posData = Encoding.UTF8.GetBytes(posJson);
+		        byte[] posHeader = BitConverter.GetBytes(posData.Length);
+		        sendSock?.GetStream().Write(posHeader, 0, 4);
+		        sendSock?.GetStream().Write(posData, 0, posData.Length);
+		        Print($"[Position Sync] Sent updated position: {quantity}");
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"[Position Sync Error] {ex.Message}");
+		    }
+		}
 
         private void LwpeLoop()
         {

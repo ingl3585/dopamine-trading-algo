@@ -112,7 +112,12 @@ def main():
         log.info(f"Updated position from NinjaTrader: {tcp._current_position}")
         desired_size = int(conf * cfg.BASE_SIZE)
         adjusted_size = portfolio.adjust_size(action, desired_size)
-        if adjusted_size <= 0:
+
+        if action == 0:
+            log.info("Hold action — no trade attempted")
+            adjusted_size = 0
+        elif adjusted_size <= 0:
+            log.info("Adjusted size is zero — likely already at position limit in this direction")
             action = 0
             conf = 0.0
 
@@ -124,13 +129,15 @@ def main():
         }
 
         log.info(f"[Position Check] Current pos: {portfolio.position}, Action: {action}, Desired size: {desired_size}, Adjusted size: {adjusted_size}")
-        if portfolio.can_execute(action, adjusted_size):
-            sig["size"] = max(cfg.MIN_SIZE, adjusted_size) if adjusted_size > 0 else 0
+        if action != 0 and portfolio.can_execute(action, adjusted_size):
+            sig["size"] = max(cfg.MIN_SIZE, adjusted_size)
+            tcp.send_signal(sig)
+            log.info("Sent trade signal %s", sig)
+        elif action == 0:
+            tcp.send_signal(sig)
+            log.info("Sent hold signal %s", sig)
         else:
-            log.info("Position cap reached, skipping trade")
-
-        tcp.send_signal(sig)
-        log.info("Sent signal %s", sig)
+            log.info("Position cap reached or bounds exceeded, skipping trade")
 
         if len(rows) >= cfg.BATCH_SIZE:
             df = pd.DataFrame(rows, columns=["ts", "close", "volume", "atr", "lwpe", "delta_lwpe", "volatility", "regime", "reward"])
