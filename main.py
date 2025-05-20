@@ -86,8 +86,8 @@ def main():
             args.reset = False
             return
 
-        action, conf = agent.predict_single(full_feat)
-        
+        action, conf = agent.predict_signal(full_feat)
+
         vol_damp = np.clip(np.log1p(volatility), 0, 1.0)
         regime_scale = {0: 1.0, 1: 0.5}.get(regime, 1.0)
         scaled_conf = conf * regime_scale * (1.0 - 0.7 * vol_damp)

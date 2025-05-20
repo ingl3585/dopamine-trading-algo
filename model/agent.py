@@ -138,7 +138,7 @@ class RLAgent:
 
         return loss.item()
 
-    def predict_single(self, feat_vec):
+    def predict_signal(self, feat_vec):
         state = np.repeat(np.asarray(feat_vec, np.float32).reshape(1, -1), self.config.LOOKBACK, 0)
         with torch.no_grad():
             probs, _ = self.model(torch.tensor(state).unsqueeze(0).to(self.device), temperature=self.temp)
