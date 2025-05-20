@@ -5,6 +5,7 @@ from model.agent import RLAgent
 from utils.tcp_bridge import TCPBridge
 from utils.tick_processor import TickProcessor
 from utils.portfolio import Portfolio
+from utils.market import MarketUtils
 
 import os, time, logging
 import pandas as pd
@@ -40,25 +41,41 @@ def main():
     rows, last_price, trained = [], None, False
     last_sent_ts = -1 
 
+    prev_lwpe = None
+    price_history = []
+    MAX_HISTORY = 100
+
     def handle_feat(feat, live):
         log.debug(f"Received features: {feat} | live={live}")
-        nonlocal rows, last_price, trained, last_sent_ts
+        nonlocal rows, last_price, trained, last_sent_ts, price_history
 
         close = feat[0]
         atr = feat[2] if len(feat) > 2 else 0.01
+        lwpe = feat[3] if len(feat) > 3 else 0.5
+        delta_lwpe = 0.0 if prev_lwpe is None else lwpe - prev_lwpe
+        prev_lwpe = lwpe
+
+        price_history.append(close)
+        if len(price_history) > MAX_HISTORY:
+            price_history = price_history[-MAX_HISTORY:]
+
+        regime = MarketUtils.detect_regime(price_history)
+        volatility = MarketUtils.forecast_volatility(price_history)
+
         price_change = 0.0 if last_price is None else close - last_price
         reward = 0.0 if last_price is None else agent.calculate_improved_reward(price_change, atr)
         last_price = close
-        lwpe = feat[3] if len(feat) > 3 else 0.5
-        log.debug(f"LWPE = {lwpe:.4f}")
-        rows.append([time.time(), *feat, reward])
+
+        log.debug(f"LWPE = {lwpe:.4f}, Regime = {regime}, Volatility = {volatility:.4f}")
+        full_feat = [close, feat[1], atr, lwpe, delta_lwpe, volatility, regime]
+        rows.append([time.time(), *full_feat, reward])
 
         if live == 0:
             return
 
         if not trained or args.reset:
             log.info("Initial backfill training")
-            df = pd.DataFrame(rows, columns=["ts", "close", "volume", "atr", "lwpe", "reward"])
+            df = pd.DataFrame(rows, columns=["ts", "close", "volume", "atr", "lwpe", "delta_lwpe", "volatility", "regime", "reward"])
             agent.train(df, epochs=3)
             agent.save_model()
             rows.clear()
@@ -66,12 +83,11 @@ def main():
             args.reset = False
             return
 
-        action, conf = agent.predict_single(feat)
+        action, conf = agent.predict_single(full_feat)
         if action == 1:
             reward -= 0.01
         rows[-1][-1] = reward
-
-        agent.push_sample(feat, action, reward)
+        agent.push_sample(full_feat, action, reward)
 
         now_ts = int(time.time())
         if now_ts == last_sent_ts:
@@ -82,7 +98,7 @@ def main():
         desired_size = int(conf * cfg.BASE_SIZE)
         adjusted_size = portfolio.adjust_size(action, desired_size)
         if adjusted_size <= 0:
-            action = 0  # Hold
+            action = 0
             conf = 0.0
 
         sig = {
@@ -101,13 +117,13 @@ def main():
         log.info("Sent signal %s", sig)
 
         if len(rows) >= cfg.BATCH_SIZE:
-            df = pd.DataFrame(rows, columns=["ts", "close", "volume", "atr", "lwpe", "reward"])
+            df = pd.DataFrame(rows, columns=["ts", "close", "volume", "atr", "lwpe", "delta_lwpe", "volatility", "regime", "reward"])
             agent.train(df, epochs=1)
             agent.save_model()
             df.to_csv(cfg.FEATURE_FILE,
-                      mode="a",
-                      header=not os.path.exists(cfg.FEATURE_FILE),
-                      index=False)
+                    mode="a",
+                    header=not os.path.exists(cfg.FEATURE_FILE),
+                    index=False)
             rows.clear()
 
     tcp.on_features = handle_feat
@@ -120,7 +136,7 @@ def main():
         log.info("Session terminated by user")
     finally:
         if rows:
-            df = pd.DataFrame(rows, columns=["ts", "close", "volume", "atr", "lwpe", "reward"])
+            df = pd.DataFrame(rows, columns=["ts", "close", "volume", "atr", "lwpe", "delta_lwpe", "volatility", "regime", "reward"])
             header = not os.path.exists(cfg.FEATURE_FILE)
             df.to_csv(cfg.FEATURE_FILE, mode='a', header=header, index=False)
             agent.train(df, epochs=1)
