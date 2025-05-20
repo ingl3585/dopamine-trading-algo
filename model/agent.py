@@ -142,7 +142,8 @@ class RLAgent:
         state = np.repeat(np.asarray(feat_vec, np.float32).reshape(1, -1), self.config.LOOKBACK, 0)
         with torch.no_grad():
             probs, _ = self.model(torch.tensor(state).unsqueeze(0).to(self.device), temperature=self.temp)
-            action = int(torch.argmax(probs))
+            dist = torch.distributions.Categorical(probs)
+            action = int(dist.sample())
             conf = float(probs[0, action])
         return action, conf
 
