@@ -16,7 +16,7 @@ class FeatureProcessor:
         atr = feat[2] if len(feat) > 2 else 0.01
 
         price_change = 0.0 if self.last_price is None else close - self.last_price
-        reward = 0.0 if self.last_price is None else self.rewarder.compute(price_change, atr)
+        reward = 0.0 if self.last_price is None else self.rewarder.compute_reward(price_change, atr)
         self.last_price = close
 
         action, conf = self.agent.predict_single(feat)
@@ -26,4 +26,3 @@ class FeatureProcessor:
         row = [time.time(), *feat, reward]
 
         return row, action, conf, close
-

@@ -1,12 +1,14 @@
 # handlers/live_feature_handler.py
 
 from model.trainer import Trainer
+from model.reward import RewardCalculator
 from services.feature_processor import FeatureProcessor
 from handlers.live_signal_handler import LiveSignalHandler
 
 class LiveFeatureHandler:
     def __init__(self, cfg, agent, portfolio, logger, tcp, args):
-        self.processor = FeatureProcessor(agent)
+        self.rewarder = RewardCalculator()
+        self.processor = FeatureProcessor(agent, self.rewarder)
         self.trainer = Trainer(cfg, agent, logger, args)
         self.dispatcher = LiveSignalHandler(cfg, agent, portfolio, tcp, logger)
 
