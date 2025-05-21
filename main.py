@@ -9,6 +9,7 @@ setup_logging()
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    
     parser.add_argument("--reset", action="store_true", help="Force full model retraining")
     return parser.parse_args()
 
