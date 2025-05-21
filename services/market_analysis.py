@@ -1,8 +1,8 @@
-# utils/market.py
+# services/market_analysis.py
 
+import logging
 import numpy as np
 import pandas as pd
-import logging
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ except ImportError:
     log.warning("HmmLearn package not found. Using simple regime detection.")
     has_hmm = False
 
-class MarketUtils:
+class MarketAnalysis:
     @staticmethod
     def detect_regime(prices, window=50):
         try:
