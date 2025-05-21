@@ -5,13 +5,13 @@ import logging
 
 from services.portfolio import Portfolio
 from model.agent import RLAgent
-from utils.feature_writer import FeatureWriter
+from utils.feature_logger import FeatureLogger
 from services.tcp_bridge import TCPBridge
 
 log = logging.getLogger(__name__)
 
 class LiveSignalHandler:
-    def __init__(self, cfg, agent: RLAgent, portfolio: Portfolio, tcp: TCPBridge, logger: FeatureWriter):
+    def __init__(self, cfg, agent: RLAgent, portfolio: Portfolio, tcp: TCPBridge, logger: FeatureLogger):
         self.cfg = cfg
         self.agent = agent
         self.portfolio = portfolio

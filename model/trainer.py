@@ -6,12 +6,12 @@ import pandas as pd
 
 from argparse import Namespace
 from model.agent import RLAgent
-from utils.feature_writer import FeatureWriter
+from utils.feature_logger import FeatureLogger
 
 log = logging.getLogger(__name__)
 
 class Trainer:
-    def __init__(self, cfg, agent: RLAgent, logger: FeatureWriter, args: Namespace):
+    def __init__(self, cfg, agent: RLAgent, logger: FeatureLogger, args: Namespace):
         self.cfg = cfg
         self.agent = agent
         self.logger = logger

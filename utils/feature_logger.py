@@ -6,7 +6,7 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
-class FeatureWriter:
+class FeatureLogger:
     def __init__(self, file_path, batch_size):
         self.file_path = file_path
         self.batch_size = batch_size
