@@ -24,6 +24,9 @@ class LiveFeatureHandler:
             self.trainer.perform_initial_training()
             return
 
+        if not self.trainer.is_ready_for_trading():
+            return
+
         self.dispatcher.dispatch_signal(action, conf)
 
         if self.trainer.should_train_batch():
