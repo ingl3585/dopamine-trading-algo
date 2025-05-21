@@ -55,8 +55,6 @@ class RLAgent:
 
     def train(self, df, epochs=1):
         try:
-            log.info(f"Training called with {len(df)} rows for {epochs} epochs")
-
             if isinstance(df.iloc[0, 1], str):
                 df = df.iloc[1:]
 
@@ -140,12 +138,11 @@ class RLAgent:
 
         return loss.item()
 
-    def predict_signal(self, feat_vec):
+    def predict_single(self, feat_vec):
         state = np.repeat(np.asarray(feat_vec, np.float32).reshape(1, -1), self.config.LOOKBACK, 0)
         with torch.no_grad():
             probs, _ = self.model(torch.tensor(state).unsqueeze(0).to(self.device), temperature=self.temp)
-            dist = torch.distributions.Categorical(probs)
-            action = int(dist.sample())
+            action = int(torch.argmax(probs))
             conf = float(probs[0, action])
         return action, conf
 
@@ -165,20 +162,14 @@ class RLAgent:
             self.recent_rewards = [base_reward]
 
         volatility_reward = 0
-        if state_data is not None:
-            try:
-                lwpe_val = state_data[0, -1, 3].item()
-                delta_lwpe = state_data[0, -1, 4].item()
-
-                if abs(delta_lwpe) > 0.1:
-                    direction_match = (delta_lwpe > 0 and base_reward > 0) or (delta_lwpe < 0 and base_reward < 0)
-                    lwpe_reward = 0.1 if direction_match else -0.05
-                else:
-                    lwpe_reward = 0.0
-
-                base_reward += lwpe_reward
-            except Exception:
-                pass
+        if state_data is not None and hasattr(self, 'prev_volatility'):
+            current_volatility = state_data[0, -1, 2].item()
+            vol_change = abs(current_volatility - self.prev_volatility)
+            if vol_change > 0.0005:
+                volatility_reward = 0.1 * min(base_reward, 1.0)
+            self.prev_volatility = current_volatility
+        else:
+            self.prev_volatility = atr if state_data is None else state_data[0, -1, 2].item()
 
         return base_reward + consistency_reward + volatility_reward
 

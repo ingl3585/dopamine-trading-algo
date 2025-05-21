@@ -60,7 +60,6 @@ class TickProcessor:
                 break
 
     def process_tick(self, tick):
-        log.debug(f"[tick] {tick}")
         parts = tick.split(',', 3)
         if len(parts) != 4: return
         
