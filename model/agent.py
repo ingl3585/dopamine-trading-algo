@@ -4,7 +4,6 @@ import os
 import time
 import random
 import logging
-from collections import deque
 
 import numpy as np
 import pandas as pd
@@ -12,6 +11,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
+from collections import deque
 from model.base import ActorCritic
 
 log = logging.getLogger(__name__)
@@ -142,37 +142,9 @@ class RLAgent:
         state = np.repeat(np.asarray(feat_vec, np.float32).reshape(1, -1), self.config.LOOKBACK, 0)
         with torch.no_grad():
             probs, _ = self.model(torch.tensor(state).unsqueeze(0).to(self.device), temperature=self.temp)
-            dist = torch.distributions.Categorical(probs)
-            action = int(dist.sample())
+            action = int(torch.argmax(probs))
             conf = float(probs[0, action])
         return action, conf
-
-    def calculate_improved_reward(self, price_change, atr, state_data=None):
-        base_reward = price_change / (atr + 1e-6)
-        consistency_reward = 0
-
-        if hasattr(self, 'recent_rewards'):
-            if len(self.recent_rewards) >= 10:
-                win_rate = sum(1 for r in self.recent_rewards if r > 0) / len(self.recent_rewards)
-                consistency_reward = 0.2 * (1.0 - 2.0 * abs(win_rate - 0.65))
-
-            self.recent_rewards.append(base_reward)
-            if len(self.recent_rewards) > 50:
-                self.recent_rewards.pop(0)
-        else:
-            self.recent_rewards = [base_reward]
-
-        volatility_reward = 0
-        if state_data is not None and hasattr(self, 'prev_volatility'):
-            current_volatility = state_data[0, -1, 2].item()
-            vol_change = abs(current_volatility - self.prev_volatility)
-            if vol_change > 0.0005:
-                volatility_reward = 0.1 * min(base_reward, 1.0)
-            self.prev_volatility = current_volatility
-        else:
-            self.prev_volatility = atr if state_data is None else state_data[0, -1, 2].item()
-
-        return base_reward + consistency_reward + volatility_reward
 
     def push_sample(self, feat, action, reward):
         state = torch.tensor(np.repeat(np.asarray(feat, np.float32).reshape(1, -1), self.config.LOOKBACK, 0)).unsqueeze(0)
