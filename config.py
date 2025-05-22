@@ -14,9 +14,9 @@ class Config:
     ENTROPY_COEF= 0.05
     LR          = 1e-4
 
-    # FIXED: Increase BASE_SIZE for more size variation
-    BASE_SIZE   = 10    # INCREASED from 6 to 10
-    MAX_SIZE    = 15    # INCREASED proportionally 
-    MIN_SIZE    = 1     
+    # CONSERVATIVE: Smaller position sizes with better position awareness
+    BASE_SIZE   = 6     # Reduced from 15 to 6 (max single trade)
+    MAX_SIZE    = 10    # This is your total position limit
+    MIN_SIZE    = 1     # Minimum trade size
 
     TEMPERATURE = 2.0
