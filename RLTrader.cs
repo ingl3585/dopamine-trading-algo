@@ -125,6 +125,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             IsOverlay = false;
             
             // Entry configuration
+			BarsRequiredToTrade = 5;
             EntriesPerDirection = 10;
             EntryHandling = EntryHandling.AllEntries;
             
@@ -283,10 +284,20 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
         
-        private bool IsReadyForTrading()
-        {
-            return CurrentBar >= 20 && State == State.Realtime;
-        }
+		private bool IsReadyForTrading()
+		{
+		    bool barReady = CurrentBar >= BarsRequiredToTrade;
+		    bool stateReady = State == State.Realtime || State == State.Historical;
+		    
+		    // Optional: Add debug logging (remove after testing)
+		    if (!barReady && CurrentBar % 5 == 0) // Log every 5 bars to avoid spam
+		        Print($"Warming up: {CurrentBar}/{BarsRequiredToTrade} bars ready");
+		    
+		    if (barReady && !stateReady)
+		        Print($"Bars ready but state not ready: {State}");
+		    
+		    return barReady && stateReady;
+		}
         
 		private void ProcessLatestSignal()
 		{

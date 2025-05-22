@@ -11,12 +11,12 @@ class Config:
 
     BATCH_SIZE  = 32
     GAMMA       = 0.95
-    ENTROPY_COEF= 0.05  # INCREASED: More exploration for varied outputs
+    ENTROPY_COEF= 0.05
     LR          = 1e-4
 
-    # IMPROVED: More varied trade sizing
-    BASE_SIZE   = 6     
-    MAX_SIZE    = 12    
+    # FIXED: Increase BASE_SIZE for more size variation
+    BASE_SIZE   = 10    # INCREASED from 6 to 10
+    MAX_SIZE    = 15    # INCREASED proportionally 
     MIN_SIZE    = 1     
 
-    TEMPERATURE = 2.0   # INCREASED: Much higher for more exploration and varied confidence
+    TEMPERATURE = 2.0

@@ -34,8 +34,28 @@ class Portfolio:
     def calculate_trade_size(self, action, confidence, base_size, min_size):
         if action == 0:
             return 0
-            
-        desired = int(confidence * base_size)
+        
+        # IMPROVED: Use continuous scaling instead of floor()
+        # Map confidence to size range more smoothly
+        
+        # Define confidence thresholds for size tiers
+        if confidence >= 0.8:
+            # Very high confidence: 80-100% of base_size
+            size_multiplier = 0.8 + (confidence - 0.8) * 1.0  # 0.8-1.0 range
+        elif confidence >= 0.6:
+            # High confidence: 60-80% of base_size  
+            size_multiplier = 0.6 + (confidence - 0.6) * 1.0  # 0.6-0.8 range
+        elif confidence >= 0.4:
+            # Medium confidence: 40-60% of base_size
+            size_multiplier = 0.4 + (confidence - 0.4) * 1.0  # 0.4-0.6 range
+        else:
+            # Low confidence: 20-40% of base_size
+            size_multiplier = 0.2 + confidence * 0.5  # 0.2-0.4 range
+        
+        # Calculate desired size with rounding instead of floor
+        desired = round(size_multiplier * base_size)
+        
+        # Apply position limits
         adjusted = self.adjust_size(action, desired)
         
         if not self.trade_makes_sense(action, adjusted):
@@ -43,7 +63,11 @@ class Portfolio:
             return 0
         
         final_size = max(min_size, adjusted) if adjusted > 0 else 0
-        log.debug(f"Trade calc: action={action}, conf={confidence:.2f}, desired={desired}, adjusted={adjusted}, final={final_size}")
+        
+        # DEBUG: Log the size calculation
+        log.debug(f"Size calc: conf={confidence:.3f}, multiplier={size_multiplier:.3f}, "
+                f"desired={desired}, adjusted={adjusted}, final={final_size}")
+        
         return final_size
 
     def trade_makes_sense(self, action, size):

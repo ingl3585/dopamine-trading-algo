@@ -209,10 +209,19 @@ class RLAgent:
                     0.3 * value_confidence
                 )
                 
-                # IMPROVED: Add controlled randomness for variation
-                noise_factor = 0.15  # 15% noise
-                noise = np.random.uniform(-noise_factor, noise_factor)
-                confidence = combined_confidence + noise
+                if combined_confidence > 0.7:
+                    # High confidence trades: 0.7-0.9
+                    confidence = 0.7 + (combined_confidence - 0.7) * 0.67  # Maps 0.7-1.0 to 0.7-0.9
+                elif combined_confidence > 0.5:
+                    # Medium confidence trades: 0.4-0.7  
+                    confidence = 0.4 + (combined_confidence - 0.5) * 1.5   # Maps 0.5-0.7 to 0.4-0.7
+                else:
+                    # Low confidence trades: 0.2-0.4
+                    confidence = 0.2 + combined_confidence * 0.4           # Maps 0.0-0.5 to 0.2-0.4
+
+                # Add controlled randomness for natural variation
+                noise = np.random.uniform(-0.1, 0.1)  # ±10% noise
+                confidence = np.clip(confidence + noise, 0.25, 0.85)
                 
                 # IMPROVED: Map to realistic trading confidence range
                 # Use sigmoid-like function for smooth mapping
