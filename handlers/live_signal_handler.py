@@ -17,7 +17,6 @@ class LiveSignalHandler:
         self.last_signal_time = 0
 
     def dispatch_signal(self, action: int, confidence: float):
-        # Simple: just use the position NT sends (now with correct sign!)
         self.portfolio.update_position(self.tcp._current_position)
         
         # Get position info

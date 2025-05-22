@@ -18,9 +18,6 @@ class LiveFeatureHandler:
         self.step_counter = 0
 
     def handle_live_feature(self, feat, live):
-        """
-        Handle incoming feature vector with improved learning
-        """
         self.step_counter += 1
         
         # Process features and get prediction
