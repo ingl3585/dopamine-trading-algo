@@ -37,9 +37,6 @@ namespace NinjaTrader.NinjaScript.Strategies
         private volatile bool running;
         private bool socketsStarted = false;
 		
-		// Manual position tracking
-		private int manualPosition = 0;
-        
         // Signal handling
         private SignalData latestSignal;
 		private long lastProcessedTimestamp = 0;
@@ -380,29 +377,51 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        return;
 		    }
 		
+		    int currentPos = GetCurrentPosition();
+		    Print($"[EXECUTE] Current position: {currentPos}");
+		
 		    switch (signal.Action)
 		    {
 		        case 1: // BUY
 		            EnterLong(signal.Size, "RL_LONG");
-		            manualPosition += signal.Size;
-		            Print($"[EXECUTE] LONG - Manual position now: {manualPosition}");
-		            
-		            // ADD THIS: Send immediate position update
-		            SendPositionUpdate();
+		            Print($"[EXECUTE] LONG order submitted - Size: {signal.Size}, From position: {currentPos}");
 		            break;
 		            
 		        case 2: // SELL
 		            EnterShort(signal.Size, "RL_SHORT");
-		            manualPosition -= signal.Size;
-		            Print($"[EXECUTE] SHORT - Manual position now: {manualPosition}");
-		            
-		            // ADD THIS: Send immediate position update  
-		            SendPositionUpdate();
+		            Print($"[EXECUTE] SHORT order submitted - Size: {signal.Size}, From position: {currentPos}");
 		            break;
 		            
 		        default: // HOLD
 		            Print($"[EXECUTE] HOLD signal - confidence={signal.Confidence:F3}");
 		            break;
+		    }
+		}
+		
+		protected override void OnExecutionUpdate(Execution execution, string executionId, double price, int quantity, MarketPosition marketPosition, string orderId, DateTime time)
+		{
+		    // Send immediate position update when orders fill
+		    if (execution.Order != null && execution.Order.Name.StartsWith("RL_"))
+		    {
+		        Print($"[FILL] {execution.Order.Name}: {quantity} @ {price:F2}");
+		        
+		        // Send updated position immediately after fill
+		        Core.Globals.RandomDispatcher.BeginInvoke(new Action(() =>
+		        {
+		            SendPositionUpdate();
+		        }));
+		    }
+		}
+		
+		protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice, int quantity, int filled, double averageFillPrice, OrderState orderState, DateTime time, ErrorCode error, string comment)
+		{
+		    if (order.Name.StartsWith("RL_") && orderState == OrderState.Filled)
+		    {
+		        Print($"[ORDER] {order.Name} FILLED: {filled}/{quantity} @ {averageFillPrice:F2}");
+		    }
+		    else if (order.Name.StartsWith("RL_") && orderState == OrderState.Rejected)
+		    {
+		        Print($"[ORDER] {order.Name} REJECTED: {comment}");
 		    }
 		}
         
@@ -533,12 +552,37 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
-		        string positionJson = $"{{\"position\":{manualPosition}}}";
+		        // Use NinjaTrader's actual position
+		        int actualPosition = GetCurrentPosition();
+		        string positionJson = $"{{\"position\":{actualPosition}}}";
 		        TransmitData(sendSock, positionJson);
+		        
+		        // Optional: Log position updates occasionally
+		        if (CurrentBar % 10 == 0) // Every 10 bars
+		        {
+		            Print($"[POSITION] Current: {actualPosition}");
+		        }
 		    }
 		    catch (Exception ex)
 		    {
 		        Print($"Position update error: {ex.Message}");
+		    }
+		}
+		
+		private int GetCurrentPosition()
+		{
+		    // Handle NinjaTrader's position object safely
+		    if (Position == null)
+		        return 0;
+		        
+		    switch (Position.MarketPosition)
+		    {
+		        case MarketPosition.Long:
+		            return Position.Quantity;
+		        case MarketPosition.Short:
+		            return -Position.Quantity;
+		        default:
+		            return 0;
 		    }
 		}
         

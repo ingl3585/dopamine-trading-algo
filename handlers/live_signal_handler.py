@@ -21,17 +21,14 @@ class LiveSignalHandler:
         
         # Get position info
         risk_level = self.portfolio.get_risk_level()
-        position_util = self.portfolio.get_position_utilization()
         
         size = self.portfolio.calculate_trade_size(action, confidence, self.cfg.BASE_SIZE, self.cfg.MIN_SIZE)
 
         if size == 0:
-            log.info(f"Signal REJECTED: action={action}, conf={confidence:.3f}, "
-                    f"pos={self.portfolio.position}, util={position_util:.1%}, risk={risk_level}")
+            log.info(f"Signal rejected: {self.portfolio.get_trade_description(action, 0)}")
             return
 
         current_time = time.time()
-        
         if current_time - self.last_signal_time < 1.0:
             log.debug("Dispatch skipped: too close to last signal")
             return
@@ -41,7 +38,7 @@ class LiveSignalHandler:
         
         sig = {
             "action": action,
-            "confidence": round(confidence, 4),
+            "confidence": round(confidence, 3),
             "size": size,
             "timestamp": timestamp,
             "signal_id": self.signal_counter
@@ -52,14 +49,9 @@ class LiveSignalHandler:
             self.last_signal_time = current_time
             
             # Simple logging
-            action_name = "BUY" if action == 1 else ("SELL" if action == 2 else "HOLD")
+            action_name = "Long" if action == 1 else ("Short" if action == 2 else "Hold")
             
-            projected_pos = self.portfolio.position + (size if action == 1 else -size)
-            projected_util = abs(projected_pos) / self.portfolio.max_position if self.portfolio.max_position > 0 else 0
-            
-            log.info(f"✓ {action_name}: size={size}, conf={confidence:.3f}, "
-                    f"pos={self.portfolio.position}→{projected_pos}, "
-                    f"util={position_util:.1%}→{projected_util:.1%}, risk={risk_level}, id={self.signal_counter}")
+            log.info(f"{action_name}: size={size}, conf={confidence:.3f}, risk={risk_level}, id={self.signal_counter}")
                     
         except Exception as e:
             log.error(f"Failed to send signal: {e}")
