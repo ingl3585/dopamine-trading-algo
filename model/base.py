@@ -7,7 +7,6 @@ class ActorCritic(nn.Module):
     def __init__(self, input_dim, hidden_dim, action_dim):
         super().__init__()
         
-        # Simple feedforward network - no LSTM needed
         self.shared_layers = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.ReLU(),
@@ -17,14 +16,12 @@ class ActorCritic(nn.Module):
             nn.Dropout(0.2)
         )
         
-        # Actor head for action probabilities
         self.actor = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
             nn.Linear(hidden_dim // 2, action_dim)
         )
         
-        # Critic head for value estimation
         self.critic = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
@@ -32,10 +29,9 @@ class ActorCritic(nn.Module):
         )
 
     def forward(self, x, temperature=1.0):
-        # Handle both single vectors and batches
         if len(x.shape) == 1:
             x = x.unsqueeze(0)
-        elif len(x.shape) == 3:  # Remove sequence dimension if present
+        elif len(x.shape) == 3:
             x = x.squeeze(1) if x.shape[1] == 1 else x[:, -1, :]
             
         features = self.shared_layers(x)

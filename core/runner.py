@@ -15,7 +15,7 @@ class Runner:
         self.args = args
         self.cfg = Config()
         self.agent = RLAgent(self.cfg)
-        self.portfolio = Portfolio(self.cfg.MAX_SIZE)
+        self.portfolio = Portfolio(self.cfg)
         self.logger = FeatureLogger(self.cfg.FEATURE_FILE, self.cfg.BATCH_SIZE)
         self.tcp = TCPBridge("localhost", 5556, 5557)
         self.tick_processor = TickProcessor()

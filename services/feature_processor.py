@@ -17,38 +17,29 @@ class FeatureProcessor:
         self.last_action = None
 
     def process_and_predict(self, feat):
-        """
-        Process features and make prediction, handling rewards properly
-        """
         close = feat[0]
         atr = feat[2] if len(feat) > 2 else 0.01
 
-        # Calculate reward based on previous action and price change
         reward = 0.0
         if self.last_price is not None and self.last_action is not None:
             price_change = close - self.last_price
-            
-            # Calculate reward based on what action was taken
-            if self.last_action == 1:  # BUY action
+
+            if self.last_action == 1:
                 reward = self.rewarder.compute_reward(price_change, atr, self.last_action)
-            elif self.last_action == 2:  # SELL action  
+            elif self.last_action == 2:
                 reward = self.rewarder.compute_reward(-price_change, atr, self.last_action)
-            else:  # HOLD action
+            else:
                 reward = self.rewarder.compute_reward(0, atr, self.last_action)
             
-            # Add experience to agent for online learning
             if self.last_features is not None:
                 self.agent.add_experience(self.last_features, self.last_action, reward, feat)
 
-        # Make prediction for current state
         action, conf = self.agent.predict_single(feat)
         
-        # Store current state for next iteration
         self.last_price = close
         self.last_features = feat.copy()
         self.last_action = action
 
-        # Create row for logging
         row = [time.time(), *feat, reward]
 
         return row, action, conf, close

@@ -13,7 +13,6 @@ class MarketAnalysis:
             if len(prices) < window:
                 return 0
 
-            # Simple and robust: short MA vs long MA
             ma_short = np.mean(prices[-10:])
             ma_long = np.mean(prices[-window:])
             
@@ -34,10 +33,8 @@ class MarketAnalysis:
             if len(returns) < 5:
                 return 0.01
                 
-            # Simple exponential weighted volatility
             volatility = returns.ewm(span=window).std().iloc[-1]
             
-            # Ensure reasonable bounds
             return max(0.001, min(volatility, 0.1))
 
         except Exception as e:
@@ -55,7 +52,6 @@ class MarketAnalysis:
             
             momentum = (current_price - past_price) / past_price
             
-            # Normalize to reasonable range
             return np.clip(momentum, -0.1, 0.1)
             
         except Exception as e:

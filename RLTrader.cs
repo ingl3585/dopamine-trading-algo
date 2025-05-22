@@ -81,11 +81,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                         
                     case State.DataLoaded:
                         InitializeIndicators();
-                        // Don't log data loaded - too noisy
                         break;
                         
                     case State.Historical:
-                        // Don't log Historical state - too noisy
                         if (!socketsStarted)
                         {
                             InitializeSockets();
@@ -100,7 +98,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                         break;
                         
                     case State.Terminated:
-                        // Don't log termination unless it was active
                         Cleanup();
                         break;
                 }
@@ -133,8 +130,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             isTerminated = false;
             socketsStarted = false;
             running = false;
-            
-            // Don't log initialization - too noisy
         }
         
         private void InitializeIndicators()
@@ -148,7 +143,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             if (socketsStarted)
             {
-                return; // No logging for already initialized
+                return;
             }
             
             try
@@ -167,7 +162,6 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         private void Cleanup()
         {
-            // Use a local variable to ensure thread safety
             bool shouldCleanup = false;
             
             lock (signalLock)
@@ -181,10 +175,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             
             if (!shouldCleanup)
             {
-                return; // Already cleaned up
+                return;
             }
             
-            // Only print shutdown for the active trading instance
             if (socketsStarted)
             {
                 Print($"RLTrader shutting down");
@@ -192,7 +185,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             
             running = false;
             
-            // Wait for threads to complete
             if (recvThread?.IsAlive == true)
             {
                 recvThread.Join(1000);
@@ -203,7 +195,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 lwpeThread.Join(1000);
             }
             
-            // Close all connections
             DisposeSockets();
         }
         
@@ -218,9 +209,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             sendSock = new TcpClient(host, 5556);
             recvSock = new TcpClient(host, 5557);
             tickSock = new TcpClient(host, 5558);
-            lwpeSock = new TcpClient(host, 5559);
-            
-            // No connection logging - keep it clean
+            lwpeSock = new TcpClient(host, 5559);    
         }
         
         private void StartBackgroundThreads()
@@ -286,8 +275,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         
 		private bool IsReadyForTrading()
 		{
-		    Print($"[TEST] CurrentBar: {CurrentBar}, State: {State}");
-		    return true; // Bypass warmup for testing
+		    return true;
 		}
         
 		private void ProcessLatestSignal()
@@ -296,13 +284,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    
 		    if (signal == null)
 		    {
-		        Print($"[SIGNAL] No signal to process");
 		        return;
 		    }
 		    
 		    Print($"[SIGNAL] Processing signal: Action={signal.Action}, Size={signal.Size}, ID={signal.SignalId}");
 		    
-		    // Check for duplicates
 		    if (IsSignalAlreadyProcessed(signal))
 		    {
 		        Print($"[SIGNAL] BLOCKED - Already processed (signal_ts={signal.Timestamp}, last_ts={lastProcessedTimestamp})");
@@ -330,13 +316,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
-		        // Convert Unix timestamp to UTC DateTime
 		        var signalDateTime = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(signal.Timestamp);
 		        
-		        // Convert to local time for comparison
 		        var signalLocalTime = signalDateTime.ToLocalTime();
 		        
-		        // Use current time for validation
 		        var currentTime = DateTime.Now;
 		        
 		        var timeDiff = (currentTime - signalLocalTime).TotalSeconds;
@@ -346,8 +329,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        Print($"[TIMESTAMP] Time difference: {timeDiff:F1} seconds");
 		        Print($"[TIMESTAMP] Allowed window: ±120 seconds");
 		        
-		        // More lenient validation - signals should be recent
-		        bool isValid = Math.Abs(timeDiff) <= 120; // 2 minute window
+		        bool isValid = Math.Abs(timeDiff) <= 120;
 		        Print($"[TIMESTAMP] Validation result: {isValid}");
 		        
 		        return isValid;
@@ -400,12 +382,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		
 		protected override void OnExecutionUpdate(Execution execution, string executionId, double price, int quantity, MarketPosition marketPosition, string orderId, DateTime time)
 		{
-		    // Send immediate position update when orders fill
 		    if (execution.Order != null && execution.Order.Name.StartsWith("RL_"))
 		    {
 		        Print($"[FILL] {execution.Order.Name}: {quantity} @ {price:F2}");
 		        
-		        // Send updated position immediately after fill
 		        Core.Globals.RandomDispatcher.BeginInvoke(new Action(() =>
 		        {
 		            SendPositionUpdate();
@@ -427,10 +407,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         
 		private void UpdateLastSignalTime(SignalData signal)
 		{
-		    // Store the signal timestamp for duplicate prevention
 		    lastProcessedTimestamp = signal.Timestamp;
 		    
-		    // Use Time[0] for internal tracking
 		    lastSignalTime = Time[0];
 		}
         
@@ -552,16 +530,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
-		        // Use NinjaTrader's actual position
 		        int actualPosition = GetCurrentPosition();
 		        string positionJson = $"{{\"position\":{actualPosition}}}";
 		        TransmitData(sendSock, positionJson);
-		        
-		        // Optional: Log position updates occasionally
-		        if (CurrentBar % 10 == 0) // Every 10 bars
-		        {
-		            Print($"[POSITION] Current: {actualPosition}");
-		        }
 		    }
 		    catch (Exception ex)
 		    {
@@ -571,7 +542,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		
 		private int GetCurrentPosition()
 		{
-		    // Handle NinjaTrader's position object safely
 		    if (Position == null)
 		        return 0;
 		        
@@ -674,7 +644,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		              $"confidence={latestSignal.Confidence:F3}, " +
 		              $"size={latestSignal.Size}, " +
 		              $"timestamp={latestSignal.Timestamp}, " +
-		              $"id={latestSignal.SignalId}");  // ADD ID to logging
+		              $"id={latestSignal.SignalId}");
 		    }
 		}
         

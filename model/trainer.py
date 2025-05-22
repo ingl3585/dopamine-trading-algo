@@ -54,25 +54,16 @@ class Trainer:
             self.training_in_progress = False
 
     def should_train_batch(self):
-        """
-        Determine if we should do batch training
-        """
         return (len(self.logger.rows) >= self.cfg.BATCH_SIZE and 
                 not self.training_in_progress and
                 self.trained)
 
     def should_train_online(self):
-        """
-        Determine if we should do online training (more frequent)
-        """
         return (len(self.agent.experience_buffer) >= self.cfg.BATCH_SIZE and
                 not self.training_in_progress and
                 self.trained)
 
     def train_batch(self):
-        """
-        Train on logged batch data
-        """
         if self.training_in_progress:
             return
             
@@ -80,8 +71,7 @@ class Trainer:
             df = pd.DataFrame(self.logger.rows, columns=["ts", "close", "volume", "atr", "lwpe", "reward"])
             self.agent.train(df, epochs=1)
             
-            # Save periodically
-            if time.time() - self.last_save_time > 1800:  # Every 30 minutes
+            if time.time() - self.last_save_time > 1800:
                 self.agent.save_model()
                 self.last_save_time = time.time()
                 
@@ -92,9 +82,6 @@ class Trainer:
             log.error(f"Batch training failed: {e}")
 
     def train_online(self):
-        """
-        Perform online training on recent experiences
-        """
         if self.training_in_progress or not self.trained:
             return
             
@@ -105,7 +92,6 @@ class Trainer:
             if self.online_training_counter % 10 == 0:
                 log.debug(f"Online training step {self.online_training_counter}, loss: {loss:.4f}")
                 
-            # Save periodically during online training
             if self.online_training_counter % 100 == 0:
                 self.agent.save_model()
                 log.info(f"Model saved after {self.online_training_counter} online training steps")
