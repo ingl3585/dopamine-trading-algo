@@ -172,7 +172,7 @@ class RLAgent:
 
     def predict_single(self, feat_vec):
         """
-        Make a single prediction from feature vector with proper temperature scaling
+        Make a single prediction with improved confidence variation
         """
         try:
             # Convert to tensor and ensure correct shape
@@ -181,33 +181,56 @@ class RLAgent:
                 state = state.unsqueeze(0)
             
             with torch.no_grad():
-                probs, _ = self.model(state, temperature=self.temp)
+                probs, value = self.model(state, temperature=self.temp)
                 
-                # Sample from distribution instead of taking argmax for exploration
+                # IMPROVED: Use entropy-based confidence calculation
                 dist = torch.distributions.Categorical(probs)
                 action = int(dist.sample())
                 
-                # FIXED: Get more realistic confidence values
-                # Use the actual probability of the selected action
-                raw_confidence = float(probs[0, action])
+                # Calculate confidence based on probability distribution spread
+                entropy = float(dist.entropy())
+                max_entropy = np.log(probs.shape[1])  # Log of number of actions
                 
-                # Apply confidence calibration - reduce overconfidence
-                # Map probabilities to more realistic confidence range
-                if raw_confidence > 0.8:
-                    # Very high probabilities get reduced significantly
-                    confidence = 0.5 + (raw_confidence - 0.8) * 1.5  # Maps 0.8-1.0 to 0.5-0.8
-                elif raw_confidence > 0.6:
-                    # High probabilities get moderate reduction
-                    confidence = 0.3 + (raw_confidence - 0.6) * 1.0  # Maps 0.6-0.8 to 0.3-0.5
-                else:
-                    # Lower probabilities get minimal adjustment
-                    confidence = raw_confidence * 0.5  # Maps 0.0-0.6 to 0.0-0.3
+                # Convert entropy to confidence (higher entropy = lower confidence)
+                entropy_confidence = 1.0 - (entropy / max_entropy)
                 
-                # Ensure reasonable bounds
-                confidence = max(0.1, min(0.8, confidence))  # Clamp between 0.1 and 0.8
+                # Get action probability
+                action_prob = float(probs[0, action])
                 
-            return action, confidence
-            
+                # IMPROVED: Combine multiple confidence signals
+                # 1. Action probability (30%)
+                # 2. Entropy-based confidence (40%) 
+                # 3. Value prediction magnitude (30%)
+                value_confidence = min(1.0, abs(float(value[0])) / 2.0)  # Normalize value
+                
+                combined_confidence = (
+                    0.3 * action_prob + 
+                    0.4 * entropy_confidence + 
+                    0.3 * value_confidence
+                )
+                
+                # IMPROVED: Add controlled randomness for variation
+                noise_factor = 0.15  # 15% noise
+                noise = np.random.uniform(-noise_factor, noise_factor)
+                confidence = combined_confidence + noise
+                
+                # IMPROVED: Map to realistic trading confidence range
+                # Use sigmoid-like function for smooth mapping
+                confidence = 0.2 + 0.6 * (1 / (1 + np.exp(-4 * (confidence - 0.5))))
+                
+                # Final bounds
+                confidence = np.clip(confidence, 0.15, 0.85)
+                
+                # DEBUG: Log the confidence calculation occasionally
+                if np.random.random() < 0.1:  # 10% of the time
+                    log.debug(f"Confidence calc: action_prob={action_prob:.3f}, "
+                            f"entropy_conf={entropy_confidence:.3f}, "
+                            f"value_conf={value_confidence:.3f}, "
+                            f"combined={combined_confidence:.3f}, "
+                            f"final={confidence:.3f}")
+                    
+                return action, confidence
+                
         except Exception as e:
             log.warning(f"Prediction error: {e}")
             return 0, 0.33  # Default to HOLD with low confidence
