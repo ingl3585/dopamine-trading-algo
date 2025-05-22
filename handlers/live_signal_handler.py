@@ -1,24 +1,19 @@
-# Updated handlers/live_signal_handler.py
+# handlers/live_signal_handler.py
 
 import time
 import logging
 from datetime import datetime
 
-from services.portfolio import Portfolio
-from model.agent import RLAgent
-from utils.feature_logger import FeatureLogger
-from services.tcp_bridge import TCPBridge
-
 log = logging.getLogger(__name__)
 
 class LiveSignalHandler:
-    def __init__(self, cfg, agent: RLAgent, portfolio: Portfolio, tcp: TCPBridge, logger: FeatureLogger):
+    def __init__(self, cfg, agent, portfolio, tcp, logger):
         self.cfg = cfg
         self.agent = agent
         self.portfolio = portfolio
         self.tcp = tcp
         self.logger = logger
-        self.last_signal_time = 0  # Track last signal to prevent duplicates
+        self.signal_counter = 0  # Simple counter instead of complex timestamps
 
     def dispatch_signal(self, action: int, confidence: float):
         self.portfolio.update_position(self.tcp._current_position)
@@ -28,30 +23,20 @@ class LiveSignalHandler:
             log.debug("Dispatch skipped: size = 0")
             return
 
-        # Generate proper timestamp
-        current_time = time.time()
-        
-        # Prevent duplicate signals within 1 second
-        if current_time - self.last_signal_time < 1.0:
-            log.debug("Dispatch skipped: too close to last signal")
-            return
-        
-        # FIXED: Proper Unix to .NET DateTime ticks conversion
-        # Unix epoch in .NET ticks: 621355968000000000
-        # Ticks per second: 10,000,000
-        unix_timestamp_seconds = current_time
-        dotnet_ticks = int((unix_timestamp_seconds * 10_000_000) + 621_355_968_000_000_000)
+        # SIMPLIFIED: Use incrementing counter + basic timestamp
+        self.signal_counter += 1
+        current_time = int(time.time())  # Simple Unix timestamp in seconds
         
         sig = {
             "action": action,
-            "confidence": round(confidence, 4),  # Round confidence to prevent precision issues
+            "confidence": round(confidence, 4),
             "size": size,
-            "timestamp": dotnet_ticks  # Now using correct .NET ticks format
+            "timestamp": current_time,  # Simple Unix timestamp
+            "signal_id": self.signal_counter  # For duplicate prevention
         }
 
         try:
             self.tcp.send_signal(sig)
-            self.last_signal_time = current_time
             log.info("Sent signal %s", sig)
         except Exception as e:
             log.error(f"Failed to send signal: {e}")

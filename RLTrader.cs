@@ -287,20 +287,12 @@ namespace NinjaTrader.NinjaScript.Strategies
             return CurrentBar >= 20 && State == State.Realtime;
         }
         
-		// Updated ProcessLatestSignal method in RLTrader.cs
 		private void ProcessLatestSignal()
 		{
 		    var signal = GetLatestSignal();
 		    
 		    if (signal == null || IsSignalAlreadyProcessed(signal))
 		        return;
-		    
-		    // Add validation for reasonable timestamps
-		    if (!IsSignalTimestampValid(signal))
-		    {
-		        Print($"Invalid signal timestamp: {signal.Timestamp}");
-		        return;
-		    }
 		        
 		    ExecuteSignal(signal);
 		    UpdateLastSignalTime(signal);
@@ -316,28 +308,33 @@ namespace NinjaTrader.NinjaScript.Strategies
 		
 		private bool IsSignalTimestampValid(SignalData signal)
 		{
-		    // Convert timestamp to DateTime and check if it's reasonable
-		    var signalTime = new DateTime(signal.Timestamp);
-		    var now = DateTime.Now;
-		    
-		    // Signal should be within last 10 seconds and not in future
-		    return signalTime <= now && (now - signalTime).TotalSeconds <= 10;
+		    try
+		    {
+		        // Use platform time instead of DateTime.Now
+		        var platformNow = NinjaTrader.Core.Globals.Now;
+		        var signalTime = Time[0]; // Use current bar timestamp
+		        
+		        // For external signals, you could use a simple integer timestamp
+		        // and convert it to platform time for comparison
+		        var signalDateTime = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(signal.Timestamp);
+		        
+		        // Compare against bar time rather than system time
+		        var timeDiff = (Time[0] - signalDateTime).TotalSeconds;
+		        
+		        // More lenient validation for external signals
+		        return Math.Abs(timeDiff) <= 300; // 5 minute window
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Timestamp validation error: {ex.Message}");
+		        return false;
+		    }
 		}
 		
 		private bool IsSignalAlreadyProcessed(SignalData signal)
 		{
-		    // More robust signal duplicate detection
-		    if (signal.Timestamp == 0)
-		        return true;
-		    
-		    var signalTime = new DateTime(signal.Timestamp);
-		    
-		    // Check if we've already processed this exact timestamp
-		    if (signalTime <= lastSignalTime)
-		        return true;
-		    
-		    // Additional check: don't process signals that are too close together
-		    if ((signalTime - lastSignalTime).TotalSeconds < 1.0)
+		    // Simple approach: track last processed signal ID or timestamp
+		    if (signal.Timestamp <= lastProcessedTimestamp)
 		        return true;
 		        
 		    return false;
@@ -370,10 +367,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    }
 		}
         
-        private void UpdateLastSignalTime(SignalData signal)
-        {
-            lastSignalTime = new DateTime(signal.Timestamp * TimeSpan.TicksPerSecond);
-        }
+		private void UpdateLastSignalTime(SignalData signal)
+		{
+		    // Store the signal timestamp for duplicate prevention
+		    lastProcessedTimestamp = signal.Timestamp;
+		    
+		    // Use Time[0] for internal tracking
+		    lastSignalTime = Time[0];
+		}
         
         #endregion
         
