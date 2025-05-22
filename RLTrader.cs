@@ -118,9 +118,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             Name = "RLTrader";
             Description = "Reinforcement Learning Trading Strategy";
             Calculate = Calculate.OnBarClose;
-			
-			// Request 25,000 historical bars
-			BarsRequiredToTrade = 25000;
             
             // Chart configuration
             AddPlot(Brushes.Blue, "LWPE");
