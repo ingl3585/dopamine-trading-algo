@@ -39,7 +39,7 @@ class LiveSignalHandler:
             
             action_name = "Long" if action == 1 else ("Short" if action == 2 else "Hold")
             
-            log.info(f"{action_name}: size={size}, conf={confidence:.3f}, id={self.signal_counter}")
+            log.info(f"Signal sent - {action_name}: size={size}, conf={confidence:.3f}, id={self.signal_counter}, timestamp={timestamp}")
                     
         except Exception as e:
             log.error(f"Failed to send signal: {e}")

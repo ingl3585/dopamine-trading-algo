@@ -287,12 +287,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        return;
 		    }
 		    
-		    if (IsSignalAlreadyProcessed(signal))
-		    {
-		        Print($"Blocked: Already processed signal - (signal_ts={signal.Timestamp}");
-		        return;
-		    }
-		    
 		    ExecuteSignal(signal);
 		    UpdateLastSignalTime(signal);
 		}
@@ -323,16 +317,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    }
 		    catch (Exception ex)
 		    {
-		        Print($"[TIMESTAMP] Validation error: {ex.Message}");
+		        Print($"Timestamp validation error: {ex.Message}");
 		        return false;
 		    }
-		}
-		
-		private bool IsSignalAlreadyProcessed(SignalData signal)
-		{
-		    bool isDuplicate = signal.Timestamp <= lastProcessedTimestamp;
-		    Print($"Duplicate signal: {signal.Timestamp}");
-		    return isDuplicate;
 		}
 		
 		private void ExecuteSignal(SignalData signal)
@@ -340,7 +327,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    
 		    if (signal.Size <= 0 || signal.Size > 20)
 		    {
-		        Print($"Blocked: Invalid size: {signal.Size}");
 		        return;
 		    }
 		
@@ -363,7 +349,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		
 		protected override void OnExecutionUpdate(Execution execution, string executionId, double price, int quantity, MarketPosition marketPosition, string orderId, DateTime time)
 		{
-		    if (execution.Order != null && execution.Order.Name.StartsWith("RL_"))
+		    if (execution.Order != null)
 		    {
 		        Print($"Filled {execution.Order.Name}: {quantity} @ {price:F2}");
 		        
@@ -598,17 +584,25 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    string jsonString = Encoding.UTF8.GetString(messageBuffer);
 		    var signalDict = serializer.Deserialize<Dictionary<string, object>>(jsonString);
 		    
-		    lock (signalLock)
-		    {
-		        latestSignal = new SignalData
-		        {
-		            Action = Convert.ToInt32(signalDict["action"]),
-		            Size = Convert.ToInt32(signalDict["size"]),
-		            Confidence = Convert.ToDouble(signalDict["confidence"]),
-		            Timestamp = Convert.ToInt64(signalDict["timestamp"]),
-		            SignalId = signalDict.ContainsKey("signal_id") ? Convert.ToInt32(signalDict["signal_id"]) : 0  // ADD THIS
-		        };
-		    }
+			lock (signalLock)
+			{
+			    latestSignal = new SignalData
+			    {
+			        Action = Convert.ToInt32(signalDict["action"]),
+			        Size = Convert.ToInt32(signalDict["size"]),
+			        Confidence = Convert.ToDouble(signalDict["confidence"]),
+			        Timestamp = Convert.ToInt64(signalDict["timestamp"]),
+			        SignalId = signalDict.ContainsKey("signal_id") ? Convert.ToInt32(signalDict["signal_id"]) : 0
+			    };
+			
+			    string action_name = latestSignal.Action == 1 ? "Long" : (latestSignal.Action == 2 ? "Short" : "Hold");
+			
+			    Print(string.Format("Signal received - {0}, size={1}, confidence={2:F3}, timestamp={3}",
+			        action_name,
+			        latestSignal.Size,
+			        latestSignal.Confidence,
+			        latestSignal.Timestamp));
+			}
 		}
         
         private void ProcessLwpeData(byte[] buffer, int bytesRead)
