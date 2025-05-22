@@ -118,6 +118,9 @@ namespace NinjaTrader.NinjaScript.Strategies
             Name = "RLTrader";
             Description = "Reinforcement Learning Trading Strategy";
             Calculate = Calculate.OnBarClose;
+			
+			// Request 25,000 historical bars
+			BarsRequiredToTrade = 25000;
             
             // Chart configuration
             AddPlot(Brushes.Blue, "LWPE");
@@ -287,49 +290,88 @@ namespace NinjaTrader.NinjaScript.Strategies
             return CurrentBar >= 20 && State == State.Realtime;
         }
         
-        private void ProcessLatestSignal()
-        {
-            var signal = GetLatestSignal();
-            
-            if (signal == null || IsSignalAlreadyProcessed(signal))
-                return;
-                
-            ExecuteSignal(signal);
-            UpdateLastSignalTime(signal);
-        }
-        
-        private SignalData GetLatestSignal()
-        {
-            lock (signalLock)
-            {
-                return latestSignal;
-            }
-        }
-        
-        private bool IsSignalAlreadyProcessed(SignalData signal)
-        {
-            return signal.Timestamp == 0 || signal.Timestamp == lastSignalTime.Ticks;
-        }
-        
-        private void ExecuteSignal(SignalData signal)
-        {
-            switch (signal.Action)
-            {
-                case 1: // BUY
-                    Print($"Executing LONG: size={signal.Size}, confidence={signal.Confidence:F3}");
-                    EnterLong(signal.Size);
-                    break;
-                    
-                case 2: // SELL
-                    Print($"Executing SHORT: size={signal.Size}, confidence={signal.Confidence:F3}");
-                    EnterShort(signal.Size);
-                    break;
-                    
-                default: // HOLD
-                    Print($"HOLD signal: confidence={signal.Confidence:F3}");
-                    break;
-            }
-        }
+		// Updated ProcessLatestSignal method in RLTrader.cs
+		private void ProcessLatestSignal()
+		{
+		    var signal = GetLatestSignal();
+		    
+		    if (signal == null || IsSignalAlreadyProcessed(signal))
+		        return;
+		    
+		    // Add validation for reasonable timestamps
+		    if (!IsSignalTimestampValid(signal))
+		    {
+		        Print($"Invalid signal timestamp: {signal.Timestamp}");
+		        return;
+		    }
+		        
+		    ExecuteSignal(signal);
+		    UpdateLastSignalTime(signal);
+		}
+		
+		private SignalData GetLatestSignal()
+		{
+		    lock (signalLock)
+		    {
+		        return latestSignal;
+		    }
+		}
+		
+		private bool IsSignalTimestampValid(SignalData signal)
+		{
+		    // Convert timestamp to DateTime and check if it's reasonable
+		    var signalTime = new DateTime(signal.Timestamp);
+		    var now = DateTime.Now;
+		    
+		    // Signal should be within last 10 seconds and not in future
+		    return signalTime <= now && (now - signalTime).TotalSeconds <= 10;
+		}
+		
+		private bool IsSignalAlreadyProcessed(SignalData signal)
+		{
+		    // More robust signal duplicate detection
+		    if (signal.Timestamp == 0)
+		        return true;
+		    
+		    var signalTime = new DateTime(signal.Timestamp);
+		    
+		    // Check if we've already processed this exact timestamp
+		    if (signalTime <= lastSignalTime)
+		        return true;
+		    
+		    // Additional check: don't process signals that are too close together
+		    if ((signalTime - lastSignalTime).TotalSeconds < 1.0)
+		        return true;
+		        
+		    return false;
+		}
+		
+		private void ExecuteSignal(SignalData signal)
+		{
+		    // Add position size validation
+		    if (signal.Size <= 0 || signal.Size > 20) // Reasonable size limits
+		    {
+		        Print($"Invalid signal size: {signal.Size}");
+		        return;
+		    }
+		
+		    switch (signal.Action)
+		    {
+		        case 1: // BUY
+		            Print($"Executing LONG: size={signal.Size}, confidence={signal.Confidence:F3}");
+		            EnterLong(signal.Size, "RL_LONG");  // Add signal name for tracking
+		            break;
+		            
+		        case 2: // SELL
+		            Print($"Executing SHORT: size={signal.Size}, confidence={signal.Confidence:F3}");
+		            EnterShort(signal.Size, "RL_SHORT");  // Add signal name for tracking
+		            break;
+		            
+		        default: // HOLD
+		            Print($"HOLD signal: confidence={signal.Confidence:F3}");
+		            break;
+		    }
+		}
         
         private void UpdateLastSignalTime(SignalData signal)
         {
