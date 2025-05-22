@@ -6,49 +6,21 @@ import pandas as pd
 
 log = logging.getLogger(__name__)
 
-try:
-    from arch import arch_model
-    has_arch = True
-except ImportError:
-    log.warning("Arch package not found. Using simple volatility estimation.")
-    has_arch = False
-
-try:
-    from hmmlearn.hmm import GaussianHMM
-    has_hmm = True
-except ImportError:
-    log.warning("HmmLearn package not found. Using simple regime detection.")
-    has_hmm = False
-
 class MarketAnalysis:
     @staticmethod
-    def detect_regime(prices, window=50):
+    def detect_regime(prices, window=20):
+        """
+        Simple regime detection using moving averages
+        Returns 0 for uptrend, 1 for downtrend
+        """
         try:
-            if len(prices) < 20:
+            if len(prices) < window:
                 return 0
 
-            if has_hmm and len(prices) > window:
-                try:
-                    returns = np.diff(np.log(prices))
-                    roll_std = pd.Series(returns).rolling(5).std().fillna(0).values
-                    roll_mean = pd.Series(prices).pct_change().rolling(10).mean().fillna(0).values
-
-                    min_len = min(len(returns), len(roll_std), len(roll_mean))
-                    features = np.column_stack([
-                        returns[-min_len:],
-                        roll_std[-min_len:],
-                        roll_mean[-min_len:]
-                    ])
-
-                    if len(features) > 10 and not np.isnan(features).any():
-                        model = GaussianHMM(n_components=2, covariance_type="diag", n_iter=100)
-                        model.fit(features)
-                        return model.predict(features)[-1]
-                except Exception as e:
-                    log.warning(f"HMM regime detection failed: {e}")
-
+            # Simple and robust: short MA vs long MA
             ma_short = np.mean(prices[-10:])
-            ma_long = np.mean(prices[-20:])
+            ma_long = np.mean(prices[-window:])
+            
             return 0 if ma_short > ma_long else 1
 
         except Exception as e:
@@ -57,26 +29,45 @@ class MarketAnalysis:
 
     @staticmethod
     def forecast_volatility(prices, window=14):
+        """
+        Simple exponential moving average of returns volatility
+        """
         try:
             if len(prices) < window + 1:
                 return 0.01
 
-            returns = 1000 * pd.Series(prices).pct_change().dropna()
-
-            if has_arch and len(returns) > 30:
-                try:
-                    model = arch_model(returns, vol='Garch', p=1, q=1, rescale=False)
-                    res = model.fit(disp='off')
-                    forecast = np.sqrt(res.forecast(horizon=1).variance.values[-1, 0])
-                    if not np.isfinite(forecast) or forecast > 5: 
-                        raise ValueError("Unrealistic GARCH output")
-                    return forecast
-                except Exception as e:
-                    log.warning(f"GARCH failed: {e}")
-                    return returns.ewm(span=window).std().iloc[-1]
-
-            return returns.ewm(span=window).std().iloc[-1] if not returns.empty else 0.01
+            returns = pd.Series(prices).pct_change().dropna()
+            
+            if len(returns) < 5:
+                return 0.01
+                
+            # Simple exponential weighted volatility
+            volatility = returns.ewm(span=window).std().iloc[-1]
+            
+            # Ensure reasonable bounds
+            return max(0.001, min(volatility, 0.1))
 
         except Exception as e:
             log.warning(f"Volatility forecasting error: {e}")
             return 0.01
+
+    @staticmethod
+    def calculate_momentum(prices, window=10):
+        """
+        Simple momentum indicator
+        """
+        try:
+            if len(prices) < window + 1:
+                return 0.0
+                
+            current_price = prices[-1]
+            past_price = prices[-window-1]
+            
+            momentum = (current_price - past_price) / past_price
+            
+            # Normalize to reasonable range
+            return np.clip(momentum, -0.1, 0.1)
+            
+        except Exception as e:
+            log.warning(f"Momentum calculation error: {e}")
+            return 0.0

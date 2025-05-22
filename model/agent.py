@@ -2,7 +2,6 @@
 
 import os
 import time
-import random
 import logging
 
 import numpy as np
@@ -19,12 +18,14 @@ log = logging.getLogger(__name__)
 class RLAgent:
     def __init__(self, config):
         self.config = config
-        self.temp   = config.TEMPERATURE
+        self.temp = config.TEMPERATURE
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.model = ActorCritic(config.INPUT_DIM, config.HIDDEN_DIM, config.ACTION_DIM).to(self.device)
-        self.optimizer = optim.AdamW(self.model.parameters(), lr=config.LR)
-        self.replay_buffer = deque(maxlen=10_000)
+        self.optimizer = optim.AdamW(self.model.parameters(), lr=config.LR, weight_decay=1e-5)
+        
+        # Remove replay buffer - use immediate experience for on-policy learning
+        self.experience_buffer = []  # For batch training only
         self.loss_fn = nn.SmoothL1Loss()
         self.last_save_time = 0
 
@@ -32,120 +33,185 @@ class RLAgent:
 
     def load_model(self):
         if not os.path.exists(self.config.MODEL_PATH):
+            log.info("No existing model found, starting fresh")
             return
         try:
-            self.model.load_state_dict(torch.load(self.config.MODEL_PATH, map_location=self.device))
-            log.info("Model loaded from %s", self.config.MODEL_PATH)
-
-            buf_path = self.config.MODEL_PATH.replace(".pth", "_buffer.npy")
-            if os.path.exists(buf_path):
-                self.replay_buffer = deque(np.load(buf_path, allow_pickle=True), maxlen=10_000)
-                log.info("Replay buffer loaded  (%d samples)", len(self.replay_buffer))
+            checkpoint = torch.load(self.config.MODEL_PATH, map_location=self.device)
+            if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+                self.model.load_state_dict(checkpoint['model_state_dict'])
+                if 'optimizer_state_dict' in checkpoint:
+                    self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                log.info("Model and optimizer loaded from checkpoint")
+            else:
+                # Legacy loading
+                self.model.load_state_dict(checkpoint)
+                log.info("Model loaded (legacy format)")
         except Exception as e:
             log.warning("Model load failed: %s", e)
 
     def save_model(self):
         try:
             os.makedirs(os.path.dirname(self.config.MODEL_PATH), exist_ok=True)
-            torch.save(self.model.state_dict(), self.config.MODEL_PATH)
-            np.save(self.config.MODEL_PATH.replace(".pth", "_buffer.npy"), np.array(self.replay_buffer, dtype=object))
-            log.info("Model and buffer saved")
+            checkpoint = {
+                'model_state_dict': self.model.state_dict(),
+                'optimizer_state_dict': self.optimizer.state_dict(),
+                'config': {
+                    'input_dim': self.config.INPUT_DIM,
+                    'hidden_dim': self.config.HIDDEN_DIM,
+                    'action_dim': self.config.ACTION_DIM
+                }
+            }
+            torch.save(checkpoint, self.config.MODEL_PATH)
+            log.info("Model checkpoint saved")
         except Exception as e:
             log.warning("Save error: %s", e)
 
+    def train_on_batch(self, experiences):
+        """
+        Train on a batch of recent experiences (on-policy)
+        """
+        if len(experiences) < 2:
+            return 0.0
+            
+        try:
+            states, actions, rewards, next_states = zip(*experiences)
+            
+            # Convert to tensors
+            states = torch.tensor(np.array(states), dtype=torch.float32, device=self.device)
+            next_states = torch.tensor(np.array(next_states), dtype=torch.float32, device=self.device)
+            actions = torch.tensor(actions, dtype=torch.int64, device=self.device)
+            rewards = torch.tensor(rewards, dtype=torch.float32, device=self.device)
+            
+            # Forward pass
+            probs, values = self.model(states)
+            _, next_values = self.model(next_states)
+            
+            # Calculate advantages using TD error
+            targets = rewards + self.config.GAMMA * next_values.squeeze()
+            advantages = targets - values.squeeze()
+            
+            # Normalize advantages
+            if len(advantages) > 1:
+                advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+            
+            # Calculate losses
+            dist = torch.distributions.Categorical(probs)
+            log_probs = dist.log_prob(actions)
+            entropy = dist.entropy().mean()
+            
+            actor_loss = -(log_probs * advantages.detach()).mean()
+            critic_loss = self.loss_fn(values.squeeze(), targets.detach())
+            
+            # Total loss with entropy regularization
+            total_loss = actor_loss + 0.5 * critic_loss - self.config.ENTROPY_COEF * entropy
+            
+            # Optimization step
+            self.optimizer.zero_grad()
+            total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
+            self.optimizer.step()
+            
+            return total_loss.item()
+            
+        except Exception as e:
+            log.warning(f"Training error: {e}")
+            return 0.0
+
     def train(self, df, epochs=1):
+        """
+        Train on historical data for initial learning
+        """
         try:
             if isinstance(df.iloc[0, 1], str):
                 df = df.iloc[1:]
 
-            data = df.iloc[:, 1:-1].apply(pd.to_numeric, errors="coerce").fillna(0).values
-            if len(data) <= self.config.LOOKBACK:
-                log.warning(f"Insufficient data for training: {len(data)} samples")
+            # Extract features and prepare data
+            feature_data = df.iloc[:, 1:-1].apply(pd.to_numeric, errors="coerce").fillna(0).values
+            rewards = df.iloc[:, -1].apply(pd.to_numeric, errors="coerce").fillna(0).values
+            
+            if len(feature_data) < 2:
+                log.warning(f"Insufficient data for training: {len(feature_data)} samples")
                 return
 
-            sequences = torch.tensor(data, dtype=torch.float32).unfold(0, self.config.LOOKBACK, 1).transpose(1, 2)
-            total_seq = len(sequences) - 1
-            bar_len = 30
-
-            log.info(f"Starting training: {total_seq} sequences × {epochs} epoch(s)")
-
+            log.info(f"Training on {len(feature_data)} samples for {epochs} epochs")
+            
             for epoch in range(epochs):
-                epoch_loss, num_batches, bar_tick = 0, 0, 0
-
-                print(f"\rEpoch {epoch+1}/{epochs} [{' ' * bar_len}] 0% ", end="", flush=True)
-                for i in range(total_seq - 1):
-                    state = sequences[i].unsqueeze(0)
-                    next_state = sequences[i + 1].unsqueeze(0)
-
-                    price_change = (next_state[0, -1, 0] - state[0, -1, 0]).item()
-                    atr = state[0, -1, 2].item() if state.shape[2] > 2 else 0.01
-                    reward = price_change / (atr + 1e-6)
-
-                    self.replay_buffer.append((state, 1, reward, next_state, False))
-
-                    if len(self.replay_buffer) >= self.config.BATCH_SIZE:
-                        epoch_loss += self._update_model()
+                total_loss = 0.0
+                num_batches = 0
+                
+                # Create batches for training
+                batch_size = min(self.config.BATCH_SIZE, len(feature_data) - 1)
+                
+                for i in range(0, len(feature_data) - 1, batch_size):
+                    end_idx = min(i + batch_size, len(feature_data) - 1)
+                    
+                    batch_experiences = []
+                    for j in range(i, end_idx):
+                        state = feature_data[j]
+                        next_state = feature_data[j + 1]
+                        reward = rewards[j]
+                        action = 1  # Placeholder action for historical training
+                        
+                        batch_experiences.append((state, action, reward, next_state))
+                    
+                    if batch_experiences:
+                        loss = self.train_on_batch(batch_experiences)
+                        total_loss += loss
                         num_batches += 1
+                
+                avg_loss = total_loss / max(num_batches, 1)
+                log.info(f"Epoch {epoch+1}/{epochs} - Average loss: {avg_loss:.4f}")
 
-                    pct = (i + 1) / total_seq
-                    if pct >= bar_tick / bar_len:
-                        filled = "=" * bar_tick + ">" + " " * (bar_len - bar_tick - 1)
-                        print(f"\rEpoch {epoch+1}/{epochs} [{filled}] {pct*100:.0f}% ", end="", flush=True)
-                        bar_tick += 1
-
-                print(f"\rEpoch {epoch+1}/{epochs} [{'=' * bar_len}] 100% ", end="", flush=True)
-                print()
-                if num_batches:
-                    avg_loss = epoch_loss / num_batches
-                    print(f"Epoch {epoch+1}/{epochs} complete - Average loss: {avg_loss:.4f}")
-
-            if time.time() - self.last_save_time > 3600:
+            # Save after training
+            if time.time() - self.last_save_time > 300:  # Save every 5 minutes
                 self.save_model()
                 self.last_save_time = time.time()
 
         except Exception as e:
             log.warning(f"Training error: {e}")
 
-    def _update_model(self):
-        batch = random.sample(self.replay_buffer, self.config.BATCH_SIZE)
-        states, actions, rewards, next_states, _ = zip(*batch)
-
-        states = torch.cat(states).to(self.device)
-        next_states = torch.cat(next_states).to(self.device)
-        actions = torch.tensor(actions, dtype=torch.int64, device=self.device)
-        rewards = torch.tensor(rewards, dtype=torch.float32, device=self.device)
-
-        with torch.no_grad():
-            _, next_values = self.model(next_states)
-            targets = rewards + self.config.GAMMA * next_values.squeeze()
-
-        probs, values = self.model(states, temperature=0.5)
-        dist = torch.distributions.Categorical(probs)
-        entropy = dist.entropy().mean()
-        advantage = (targets - values.squeeze()).detach()
-        advantage = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
-
-        actor_loss = -(dist.log_prob(actions) * advantage).mean()
-        critic_loss = self.loss_fn(values.squeeze(), targets)
-        l2_reg = sum(torch.norm(p) for p in self.model.parameters())
-
-        loss = actor_loss + 0.5 * critic_loss - self.config.ENTROPY_COEF * 1.5 * entropy + 0.001 * l2_reg
-
-        self.optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-        self.optimizer.step()
-
-        return loss.item()
-
     def predict_single(self, feat_vec):
-        state = np.repeat(np.asarray(feat_vec, np.float32).reshape(1, -1), self.config.LOOKBACK, 0)
-        with torch.no_grad():
-            probs, _ = self.model(torch.tensor(state).unsqueeze(0).to(self.device), temperature=self.temp)
-            action = int(torch.argmax(probs))
-            conf = float(probs[0, action])
-        return action, conf
+        """
+        Make a single prediction from feature vector
+        """
+        try:
+            # Convert to tensor and ensure correct shape
+            state = torch.tensor(feat_vec, dtype=torch.float32, device=self.device)
+            if len(state.shape) == 1:
+                state = state.unsqueeze(0)
+            
+            with torch.no_grad():
+                probs, _ = self.model(state, temperature=self.temp)
+                action = int(torch.argmax(probs[0]))
+                confidence = float(probs[0, action])
+                
+            return action, confidence
+            
+        except Exception as e:
+            log.warning(f"Prediction error: {e}")
+            return 0, 0.33  # Default to HOLD with low confidence
 
-    def push_sample(self, feat, action, reward):
-        state = torch.tensor(np.repeat(np.asarray(feat, np.float32).reshape(1, -1), self.config.LOOKBACK, 0)).unsqueeze(0)
-        self.replay_buffer.append((state, action, reward, state.clone(), False))
+    def add_experience(self, state, action, reward, next_state):
+        """
+        Add experience for online learning
+        """
+        self.experience_buffer.append((state, action, reward, next_state))
+        
+        # Keep buffer size manageable
+        if len(self.experience_buffer) > 1000:
+            self.experience_buffer = self.experience_buffer[-500:]
+
+    def train_online(self):
+        """
+        Train on recent experiences
+        """
+        if len(self.experience_buffer) >= self.config.BATCH_SIZE:
+            # Take most recent experiences for on-policy learning
+            recent_experiences = self.experience_buffer[-self.config.BATCH_SIZE:]
+            loss = self.train_on_batch(recent_experiences)
+            
+            # Clear some old experiences but keep some for stability
+            self.experience_buffer = self.experience_buffer[-200:]
+            
+            return loss
+        return 0.0

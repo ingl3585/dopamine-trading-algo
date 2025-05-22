@@ -20,6 +20,7 @@ class Trainer:
         self.last_price = None
         self.last_save_time = time.time()
         self.training_in_progress = False
+        self.online_training_counter = 0
 
     def append(self, row):
         self.logger.append(row)
@@ -32,32 +33,85 @@ class Trainer:
             return
             
         self.training_in_progress = True
-        log.info("Initial backfill training")
-        df = pd.DataFrame(self.logger.rows, columns=["ts", "close", "volume", "atr", "lwpe", "reward"])
-        self.agent.train(df, epochs=3)
-        self.agent.save_model()
-        self.agent.last_save_time = time.time()  # Reset the save timer
-        self.logger.rows.clear()
-        self.trained = True
-        self.args.reset = False
-        self.training_in_progress = False
-        log.info("Initial training completed - ready for live trading")
+        log.info("Starting initial training")
+        
+        try:
+            df = pd.DataFrame(self.logger.rows, columns=["ts", "close", "volume", "atr", "lwpe", "reward"])
+            if len(df) > 0:
+                self.agent.train(df, epochs=3)
+                self.agent.save_model()
+                log.info(f"Initial training completed on {len(df)} samples")
+            else:
+                log.warning("No data available for initial training")
+            
+            self.logger.rows.clear()
+            self.trained = True
+            self.args.reset = False
+            
+        except Exception as e:
+            log.error(f"Initial training failed: {e}")
+        finally:
+            self.training_in_progress = False
 
     def should_train_batch(self):
-        return len(self.logger.rows) >= self.cfg.BATCH_SIZE and not self.training_in_progress
+        """
+        Determine if we should do batch training
+        """
+        return (len(self.logger.rows) >= self.cfg.BATCH_SIZE and 
+                not self.training_in_progress and
+                self.trained)
+
+    def should_train_online(self):
+        """
+        Determine if we should do online training (more frequent)
+        """
+        return (len(self.agent.experience_buffer) >= self.cfg.BATCH_SIZE and
+                not self.training_in_progress and
+                self.trained)
 
     def train_batch(self):
+        """
+        Train on logged batch data
+        """
         if self.training_in_progress:
             return
             
-        df = pd.DataFrame(self.logger.rows, columns=["ts", "close", "volume", "atr", "lwpe", "reward"])
-        self.agent.train(df, epochs=1)
-        self.agent.save_model()
-        self.logger.flush()
+        try:
+            df = pd.DataFrame(self.logger.rows, columns=["ts", "close", "volume", "atr", "lwpe", "reward"])
+            self.agent.train(df, epochs=1)
+            
+            # Save periodically
+            if time.time() - self.last_save_time > 1800:  # Every 30 minutes
+                self.agent.save_model()
+                self.last_save_time = time.time()
+                
+            self.logger.flush()
+            log.info(f"Batch training completed on {len(df)} samples")
+            
+        except Exception as e:
+            log.error(f"Batch training failed: {e}")
 
-    def update_latest_reward(self, reward):
-        if self.logger.rows:
-            self.logger.rows[-1][-1] = reward
+    def train_online(self):
+        """
+        Perform online training on recent experiences
+        """
+        if self.training_in_progress or not self.trained:
+            return
+            
+        try:
+            loss = self.agent.train_online()
+            self.online_training_counter += 1
+            
+            if self.online_training_counter % 10 == 0:
+                log.debug(f"Online training step {self.online_training_counter}, loss: {loss:.4f}")
+                
+            # Save periodically during online training
+            if self.online_training_counter % 100 == 0:
+                self.agent.save_model()
+                log.info(f"Model saved after {self.online_training_counter} online training steps")
+                
+        except Exception as e:
+            log.error(f"Online training failed: {e}")
 
     def is_ready_for_trading(self):
         return self.trained and not self.training_in_progress
