@@ -36,6 +36,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private Thread recvThread, lwpeThread;
         private volatile bool running;
         private bool socketsStarted = false;
+		
+		// Manual position tracking
+		private int manualPosition = 0;
         
         // Signal handling
         private SignalData latestSignal;
@@ -125,7 +128,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             IsOverlay = false;
             
             // Entry configuration
-			BarsRequiredToTrade = 5;
+			BarsRequiredToTrade = 2;
             EntriesPerDirection = 10;
             EntryHandling = EntryHandling.AllEntries;
             
@@ -286,17 +289,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         
 		private bool IsReadyForTrading()
 		{
-		    bool barReady = CurrentBar >= BarsRequiredToTrade;
-		    bool stateReady = State == State.Realtime || State == State.Historical;
-		    
-		    // Optional: Add debug logging (remove after testing)
-		    if (!barReady && CurrentBar % 5 == 0) // Log every 5 bars to avoid spam
-		        Print($"Warming up: {CurrentBar}/{BarsRequiredToTrade} bars ready");
-		    
-		    if (barReady && !stateReady)
-		        Print($"Bars ready but state not ready: {State}");
-		    
-		    return barReady && stateReady;
+		    Print($"[TEST] CurrentBar: {CurrentBar}, State: {State}");
+		    return true; // Bypass warmup for testing
 		}
         
 		private void ProcessLatestSignal()
@@ -304,16 +298,25 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    var signal = GetLatestSignal();
 		    
 		    if (signal == null)
+		    {
+		        Print($"[SIGNAL] No signal to process");
 		        return;
-		        
-		    // ADD: Check for duplicates
+		    }
+		    
+		    Print($"[SIGNAL] Processing signal: Action={signal.Action}, Size={signal.Size}, ID={signal.SignalId}");
+		    
+		    // Check for duplicates
 		    if (IsSignalAlreadyProcessed(signal))
+		    {
+		        Print($"[SIGNAL] BLOCKED - Already processed (signal_ts={signal.Timestamp}, last_ts={lastProcessedTimestamp})");
 		        return;
-		        
-		    // ADD: Validate timestamp  
-		    if (!IsSignalTimestampValid(signal))
-		        return;
-		        
+		    }
+		    else
+		    {
+		        Print($"[SIGNAL] PASS - Not a duplicate");
+		    }
+		    
+		    Print($"[SIGNAL] Executing signal...");
 		    ExecuteSignal(signal);
 		    UpdateLastSignalTime(signal);
 		}
@@ -330,59 +333,75 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
-		        // Use platform time instead of DateTime.Now
-		        var platformNow = NinjaTrader.Core.Globals.Now;
-		        var signalTime = Time[0]; // Use current bar timestamp
-		        
-		        // For external signals, you could use a simple integer timestamp
-		        // and convert it to platform time for comparison
+		        // Convert Unix timestamp to UTC DateTime
 		        var signalDateTime = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(signal.Timestamp);
 		        
-		        // Compare against bar time rather than system time
-		        var timeDiff = (Time[0] - signalDateTime).TotalSeconds;
+		        // Convert to local time for comparison
+		        var signalLocalTime = signalDateTime.ToLocalTime();
 		        
-		        // More lenient validation for external signals
-		        return Math.Abs(timeDiff) <= 300; // 5 minute window
+		        // Use current time for validation
+		        var currentTime = DateTime.Now;
+		        
+		        var timeDiff = (currentTime - signalLocalTime).TotalSeconds;
+		        
+		        Print($"[TIMESTAMP] Signal time: {signalDateTime:HH:mm:ss} UTC ({signalLocalTime:HH:mm:ss} Local)");
+		        Print($"[TIMESTAMP] Current time: {currentTime:HH:mm:ss} Local");
+		        Print($"[TIMESTAMP] Time difference: {timeDiff:F1} seconds");
+		        Print($"[TIMESTAMP] Allowed window: ±120 seconds");
+		        
+		        // More lenient validation - signals should be recent
+		        bool isValid = Math.Abs(timeDiff) <= 120; // 2 minute window
+		        Print($"[TIMESTAMP] Validation result: {isValid}");
+		        
+		        return isValid;
 		    }
 		    catch (Exception ex)
 		    {
-		        Print($"Timestamp validation error: {ex.Message}");
+		        Print($"[TIMESTAMP] Validation error: {ex.Message}");
 		        return false;
 		    }
 		}
 		
 		private bool IsSignalAlreadyProcessed(SignalData signal)
 		{
-		    // Simple approach: track last processed signal ID or timestamp
-		    if (signal.Timestamp <= lastProcessedTimestamp)
-		        return true;
-		        
-		    return false;
+		    bool isDuplicate = signal.Timestamp <= lastProcessedTimestamp;
+		    Print($"[DUPLICATE] Signal timestamp: {signal.Timestamp}, Last processed: {lastProcessedTimestamp}");
+		    Print($"[DUPLICATE] Is duplicate: {isDuplicate}");
+		    return isDuplicate;
 		}
 		
 		private void ExecuteSignal(SignalData signal)
 		{
-		    // Add position size validation
-		    if (signal.Size <= 0 || signal.Size > 20) // Reasonable size limits
+		    Print($"[EXECUTE] Starting execution - Action={signal.Action}, Size={signal.Size}");
+		    
+		    if (signal.Size <= 0 || signal.Size > 20)
 		    {
-		        Print($"Invalid signal size: {signal.Size}");
+		        Print($"[EXECUTE] BLOCKED - Invalid size: {signal.Size}");
 		        return;
 		    }
 		
 		    switch (signal.Action)
 		    {
 		        case 1: // BUY
-		            Print($"Executing LONG: size={signal.Size}, confidence={signal.Confidence:F3}");
-		            EnterLong(signal.Size, "RL_LONG");  // Add signal name for tracking
+		            EnterLong(signal.Size, "RL_LONG");
+		            manualPosition += signal.Size;
+		            Print($"[EXECUTE] LONG - Manual position now: {manualPosition}");
+		            
+		            // ADD THIS: Send immediate position update
+		            SendPositionUpdate();
 		            break;
 		            
 		        case 2: // SELL
-		            Print($"Executing SHORT: size={signal.Size}, confidence={signal.Confidence:F3}");
-		            EnterShort(signal.Size, "RL_SHORT");  // Add signal name for tracking
+		            EnterShort(signal.Size, "RL_SHORT");
+		            manualPosition -= signal.Size;
+		            Print($"[EXECUTE] SHORT - Manual position now: {manualPosition}");
+		            
+		            // ADD THIS: Send immediate position update  
+		            SendPositionUpdate();
 		            break;
 		            
 		        default: // HOLD
-		            Print($"HOLD signal: confidence={signal.Confidence:F3}");
+		            Print($"[EXECUTE] HOLD signal - confidence={signal.Confidence:F3}");
 		            break;
 		    }
 		}
@@ -510,18 +529,18 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         #region Position Management
         
-        private void SendPositionUpdate()
-        {
-            try
-            {
-                string positionJson = $"{{\"position\":{Position.Quantity}}}";
-                TransmitData(sendSock, positionJson);
-            }
-            catch (Exception ex)
-            {
-                Print($"Position update error: {ex.Message}");
-            }
-        }
+		private void SendPositionUpdate()
+		{
+		    try
+		    {
+		        string positionJson = $"{{\"position\":{manualPosition}}}";
+		        TransmitData(sendSock, positionJson);
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Position update error: {ex.Message}");
+		    }
+		}
         
         #endregion
         
