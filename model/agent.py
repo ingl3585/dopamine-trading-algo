@@ -172,7 +172,7 @@ class RLAgent:
 
     def predict_single(self, feat_vec):
         """
-        Make a single prediction from feature vector
+        Make a single prediction from feature vector with proper temperature scaling
         """
         try:
             # Convert to tensor and ensure correct shape
@@ -182,8 +182,17 @@ class RLAgent:
             
             with torch.no_grad():
                 probs, _ = self.model(state, temperature=self.temp)
-                action = int(torch.argmax(probs[0]))
+                
+                # Sample from distribution instead of taking argmax for exploration
+                dist = torch.distributions.Categorical(probs)
+                action = int(dist.sample())
+                
+                # Get actual probability (not max probability)
                 confidence = float(probs[0, action])
+                
+                # Add some noise to prevent perfect confidence
+                confidence = confidence * (0.9 + 0.1 * torch.rand(1).item())
+                confidence = max(0.1, min(0.95, confidence))  # Clamp between 0.1 and 0.95
                 
             return action, confidence
             
