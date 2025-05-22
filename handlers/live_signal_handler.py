@@ -36,16 +36,17 @@ class LiveSignalHandler:
             log.debug("Dispatch skipped: too close to last signal")
             return
         
-        # Convert to .NET DateTime ticks
-        # .NET DateTime ticks = (Unix timestamp * 10,000,000) + 621,355,968,000,000,000
-        unix_timestamp = int(current_time)
-        dotnet_ticks = (unix_timestamp * 10_000_000) + 621_355_968_000_000_000
+        # FIXED: Proper Unix to .NET DateTime ticks conversion
+        # Unix epoch in .NET ticks: 621355968000000000
+        # Ticks per second: 10,000,000
+        unix_timestamp_seconds = current_time
+        dotnet_ticks = int((unix_timestamp_seconds * 10_000_000) + 621_355_968_000_000_000)
         
         sig = {
             "action": action,
             "confidence": round(confidence, 4),  # Round confidence to prevent precision issues
             "size": size,
-            "timestamp": dotnet_ticks  # Use .NET ticks format
+            "timestamp": dotnet_ticks  # Now using correct .NET ticks format
         }
 
         try:

@@ -187,12 +187,24 @@ class RLAgent:
                 dist = torch.distributions.Categorical(probs)
                 action = int(dist.sample())
                 
-                # Get actual probability (not max probability)
-                confidence = float(probs[0, action])
+                # FIXED: Get more realistic confidence values
+                # Use the actual probability of the selected action
+                raw_confidence = float(probs[0, action])
                 
-                # Add some noise to prevent perfect confidence
-                confidence = confidence * (0.9 + 0.1 * torch.rand(1).item())
-                confidence = max(0.1, min(0.95, confidence))  # Clamp between 0.1 and 0.95
+                # Apply confidence calibration - reduce overconfidence
+                # Map probabilities to more realistic confidence range
+                if raw_confidence > 0.8:
+                    # Very high probabilities get reduced significantly
+                    confidence = 0.5 + (raw_confidence - 0.8) * 1.5  # Maps 0.8-1.0 to 0.5-0.8
+                elif raw_confidence > 0.6:
+                    # High probabilities get moderate reduction
+                    confidence = 0.3 + (raw_confidence - 0.6) * 1.0  # Maps 0.6-0.8 to 0.3-0.5
+                else:
+                    # Lower probabilities get minimal adjustment
+                    confidence = raw_confidence * 0.5  # Maps 0.0-0.6 to 0.0-0.3
+                
+                # Ensure reasonable bounds
+                confidence = max(0.1, min(0.8, confidence))  # Clamp between 0.1 and 0.8
                 
             return action, confidence
             
