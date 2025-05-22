@@ -287,19 +287,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        return;
 		    }
 		    
-		    Print($"[SIGNAL] Processing signal: Action={signal.Action}, Size={signal.Size}, ID={signal.SignalId}");
-		    
 		    if (IsSignalAlreadyProcessed(signal))
 		    {
-		        Print($"[SIGNAL] BLOCKED - Already processed (signal_ts={signal.Timestamp}, last_ts={lastProcessedTimestamp})");
+		        Print($"Blocked: Already processed signal - (signal_ts={signal.Timestamp}");
 		        return;
 		    }
-		    else
-		    {
-		        Print($"[SIGNAL] PASS - Not a duplicate");
-		    }
 		    
-		    Print($"[SIGNAL] Executing signal...");
 		    ExecuteSignal(signal);
 		    UpdateLastSignalTime(signal);
 		}
@@ -323,14 +316,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        var currentTime = DateTime.Now;
 		        
 		        var timeDiff = (currentTime - signalLocalTime).TotalSeconds;
-		        
-		        Print($"[TIMESTAMP] Signal time: {signalDateTime:HH:mm:ss} UTC ({signalLocalTime:HH:mm:ss} Local)");
-		        Print($"[TIMESTAMP] Current time: {currentTime:HH:mm:ss} Local");
-		        Print($"[TIMESTAMP] Time difference: {timeDiff:F1} seconds");
-		        Print($"[TIMESTAMP] Allowed window: ±120 seconds");
-		        
+
 		        bool isValid = Math.Abs(timeDiff) <= 120;
-		        Print($"[TIMESTAMP] Validation result: {isValid}");
 		        
 		        return isValid;
 		    }
@@ -344,38 +331,32 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private bool IsSignalAlreadyProcessed(SignalData signal)
 		{
 		    bool isDuplicate = signal.Timestamp <= lastProcessedTimestamp;
-		    Print($"[DUPLICATE] Signal timestamp: {signal.Timestamp}, Last processed: {lastProcessedTimestamp}");
-		    Print($"[DUPLICATE] Is duplicate: {isDuplicate}");
+		    Print($"Duplicate signal: {signal.Timestamp}");
 		    return isDuplicate;
 		}
 		
 		private void ExecuteSignal(SignalData signal)
 		{
-		    Print($"[EXECUTE] Starting execution - Action={signal.Action}, Size={signal.Size}");
 		    
 		    if (signal.Size <= 0 || signal.Size > 20)
 		    {
-		        Print($"[EXECUTE] BLOCKED - Invalid size: {signal.Size}");
+		        Print($"Blocked: Invalid size: {signal.Size}");
 		        return;
 		    }
 		
 		    int currentPos = GetCurrentPosition();
-		    Print($"[EXECUTE] Current position: {currentPos}");
 		
 		    switch (signal.Action)
 		    {
 		        case 1: // BUY
-		            EnterLong(signal.Size, "RL_LONG");
-		            Print($"[EXECUTE] LONG order submitted - Size: {signal.Size}, From position: {currentPos}");
+		            EnterLong(signal.Size, "Long");
 		            break;
 		            
 		        case 2: // SELL
-		            EnterShort(signal.Size, "RL_SHORT");
-		            Print($"[EXECUTE] SHORT order submitted - Size: {signal.Size}, From position: {currentPos}");
+		            EnterShort(signal.Size, "Short");
 		            break;
 		            
 		        default: // HOLD
-		            Print($"[EXECUTE] HOLD signal - confidence={signal.Confidence:F3}");
 		            break;
 		    }
 		}
@@ -384,24 +365,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    if (execution.Order != null && execution.Order.Name.StartsWith("RL_"))
 		    {
-		        Print($"[FILL] {execution.Order.Name}: {quantity} @ {price:F2}");
+		        Print($"Filled {execution.Order.Name}: {quantity} @ {price:F2}");
 		        
 		        Core.Globals.RandomDispatcher.BeginInvoke(new Action(() =>
 		        {
 		            SendPositionUpdate();
 		        }));
-		    }
-		}
-		
-		protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice, int quantity, int filled, double averageFillPrice, OrderState orderState, DateTime time, ErrorCode error, string comment)
-		{
-		    if (order.Name.StartsWith("RL_") && orderState == OrderState.Filled)
-		    {
-		        Print($"[ORDER] {order.Name} FILLED: {filled}/{quantity} @ {averageFillPrice:F2}");
-		    }
-		    else if (order.Name.StartsWith("RL_") && orderState == OrderState.Rejected)
-		    {
-		        Print($"[ORDER] {order.Name} REJECTED: {comment}");
 		    }
 		}
         
@@ -639,12 +608,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            Timestamp = Convert.ToInt64(signalDict["timestamp"]),
 		            SignalId = signalDict.ContainsKey("signal_id") ? Convert.ToInt32(signalDict["signal_id"]) : 0  // ADD THIS
 		        };
-		        
-		        Print($"Signal received → action={latestSignal.Action}, " +
-		              $"confidence={latestSignal.Confidence:F3}, " +
-		              $"size={latestSignal.Size}, " +
-		              $"timestamp={latestSignal.Timestamp}, " +
-		              $"id={latestSignal.SignalId}");
 		    }
 		}
         
