@@ -21,206 +21,485 @@ namespace NinjaTrader.NinjaScript.Strategies
 {
     public class RLTrader : Strategy
     {
+        #region Private Fields
+        
+        // Indicators
         private ATR atr;
+        private Series<double> lwpeSeries;
+        
+        // LWPE handling
         private double currentLWPE = 0.5;
         private readonly object lwpeLock = new object();
+        
+        // Network connections
         private TcpClient sendSock, recvSock, tickSock, lwpeSock;
         private Thread recvThread, lwpeThread;
         private volatile bool running;
+        private bool socketsStarted = false;
+        
+        // Signal handling
         private SignalData latestSignal;
         private DateTime lastSignalTime = DateTime.MinValue;
-        private int currentTargetPosition = 0;
-		private bool socketsStarted = false;
-		private readonly object signalLock = new object();
-		double lwpeCopy;
-		private Series<double> lwpeSeries;
-
-        [NinjaScriptProperty, Range(0.001, 0.1)]
+        private readonly object signalLock = new object();
+        
+        // Serialization
+        private readonly JavaScriptSerializer serializer = new JavaScriptSerializer();
+        
+        // State tracking
+        private bool isTerminated = false;
+        private static int instanceCounter = 0;
+        private int instanceId;
+        
+        #endregion
+        
+        #region Properties
+        
+        [NinjaScriptProperty]
+        [Range(0.001, 0.1)]
+        [Display(Name = "Risk Percent", Description = "Risk percentage per trade", Order = 1, GroupName = "Risk Management")]
         public double RiskPercent { get; set; } = 0.01;
 
-        [NinjaScriptProperty, Range(0.5, 10)]
+        [NinjaScriptProperty]
+        [Range(0.5, 10)]
+        [Display(Name = "ATR Stop Multiple", Description = "ATR multiplier for stop loss", Order = 2, GroupName = "Risk Management")]
         public double AtrStopMultiple { get; set; } = 2.0;
-
+        
+        #endregion
+        
+        #region State Management
+        
         protected override void OnStateChange()
-        {
-            if (State == State.SetDefaults)
-            {
-                Name = "RLTrader";
-                Calculate = Calculate.OnBarClose;
-			    AddPlot(Brushes.Blue, "LWPE");
-			    IsOverlay = false;
-				EntriesPerDirection = 10;
-				EntryHandling = EntryHandling.AllEntries;
-            }
-            else if (State == State.DataLoaded)
-            {
-                atr = ATR(14);
-				lwpeSeries = new Series<double>(this);
-				
-                AddChartIndicator(atr);
-            }
-			else if (State == State.Historical && !socketsStarted) 
-			{
-			    StartSockets();
-			    socketsStarted = true;
-			    Print("Sockets started in Historical state");
-			}
-			else if (State == State.Realtime && !socketsStarted)
-			{
-			    StartSockets();
-			    socketsStarted = true;
-			    Print("Sockets started in Realtime state");
-			}
-            else if (State == State.Terminated)
-            {
-                running = false;
-                recvThread?.Join(500);
-                lwpeThread?.Join(500);
-                sendSock?.Close();
-                recvSock?.Close();
-                tickSock?.Close();
-                lwpeSock?.Close();
-            }
-        }
-
-        private void StartSockets()
         {
             try
             {
-                sendSock = new TcpClient("localhost", 5556);
-                recvSock = new TcpClient("localhost", 5557);
-                tickSock = new TcpClient("localhost", 5558);
-                lwpeSock = new TcpClient("localhost", 5559);
-
-                running = true;
-                recvThread = new Thread(RecvLoop) { IsBackground = true };
-                lwpeThread = new Thread(LwpeLoop) { IsBackground = true };
-                recvThread.Start();
-                lwpeThread.Start();
-                Print("All sockets connected");
+                switch (State)
+                {
+                    case State.SetDefaults:
+                        ConfigureDefaults();
+                        break;
+                        
+                    case State.DataLoaded:
+                        InitializeIndicators();
+                        // Don't log data loaded - too noisy
+                        break;
+                        
+                    case State.Historical:
+                        // Don't log Historical state - too noisy
+                        if (!socketsStarted)
+                        {
+                            InitializeSockets();
+                        }
+                        break;
+                        
+                    case State.Realtime:
+                        if (!socketsStarted)
+                        {
+                            InitializeSockets();
+                        }
+                        break;
+                        
+                    case State.Terminated:
+                        // Don't log termination unless it was active
+                        Cleanup();
+                        break;
+                }
             }
             catch (Exception ex)
             {
-                Print($"Socket error: {ex.Message}");
+                Print($"Instance #{instanceId} OnStateChange error in {State}: {ex.Message}");
             }
         }
-
-        private void RecvLoop()
+        
+        private void ConfigureDefaults()
+        {
+            // Assign unique instance ID
+            instanceId = ++instanceCounter;
+            
+            Name = "RLTrader";
+            Description = "Reinforcement Learning Trading Strategy";
+            Calculate = Calculate.OnBarClose;
+            
+            // Chart configuration
+            AddPlot(Brushes.Blue, "LWPE");
+            IsOverlay = false;
+            
+            // Entry configuration
+            EntriesPerDirection = 10;
+            EntryHandling = EntryHandling.AllEntries;
+            
+            // Reset state flags for new instance
+            isTerminated = false;
+            socketsStarted = false;
+            running = false;
+            
+            // Don't log initialization - too noisy
+        }
+        
+        private void InitializeIndicators()
+        {
+            atr = ATR(14);
+            lwpeSeries = new Series<double>(this);
+            AddChartIndicator(atr);
+        }
+        
+        private void InitializeSockets()
+        {
+            if (socketsStarted)
+            {
+                return; // No logging for already initialized
+            }
+            
+            try
+            {
+                ConnectToSockets();
+                StartBackgroundThreads();
+                socketsStarted = true;
+                Print($"RLTrader connected to Python service - Ready for signals");
+            }
+            catch (Exception ex)
+            {
+                Print($"Socket connection failed: {ex.Message}");
+                socketsStarted = false;
+            }
+        }
+        
+        private void Cleanup()
+        {
+            // Use a local variable to ensure thread safety
+            bool shouldCleanup = false;
+            
+            lock (signalLock)
+            {
+                if (!isTerminated)
+                {
+                    isTerminated = true;
+                    shouldCleanup = true;
+                }
+            }
+            
+            if (!shouldCleanup)
+            {
+                return; // Already cleaned up
+            }
+            
+            // Only print shutdown for the active trading instance
+            if (socketsStarted)
+            {
+                Print($"RLTrader shutting down");
+            }
+            
+            running = false;
+            
+            // Wait for threads to complete
+            if (recvThread?.IsAlive == true)
+            {
+                recvThread.Join(1000);
+            }
+            
+            if (lwpeThread?.IsAlive == true)
+            {
+                lwpeThread.Join(1000);
+            }
+            
+            // Close all connections
+            DisposeSockets();
+        }
+        
+        #endregion
+        
+        #region Socket Management
+        
+        private void ConnectToSockets()
+        {
+            const string host = "localhost";
+            
+            sendSock = new TcpClient(host, 5556);
+            recvSock = new TcpClient(host, 5557);
+            tickSock = new TcpClient(host, 5558);
+            lwpeSock = new TcpClient(host, 5559);
+            
+            // No connection logging - keep it clean
+        }
+        
+        private void StartBackgroundThreads()
+        {
+            running = true;
+            
+            recvThread = new Thread(SignalReceiveLoop) 
+            { 
+                IsBackground = true, 
+                Name = "SignalReceiver" 
+            };
+            
+            lwpeThread = new Thread(LwpeReceiveLoop) 
+            { 
+                IsBackground = true, 
+                Name = "LwpeReceiver" 
+            };
+            
+            recvThread.Start();
+            lwpeThread.Start();
+        }
+        
+        private void DisposeSockets()
+        {
+            var sockets = new[] { sendSock, recvSock, tickSock, lwpeSock };
+            
+            foreach (var socket in sockets)
+            {
+                try
+                {
+                    socket?.Close();
+                }
+                catch (Exception ex)
+                {
+                    Print($"Error closing socket: {ex.Message}");
+                }
+            }
+        }
+        
+        #endregion
+        
+        #region Main Trading Logic
+        
+        protected override void OnBarUpdate()
+        {
+            UpdateLwpePlot();
+            SendFeatureVector();
+            
+            if (!IsReadyForTrading())
+                return;
+                
+            ProcessLatestSignal();
+            SendPositionUpdate();
+        }
+        
+        private void UpdateLwpePlot()
+        {
+            lock (lwpeLock)
+            {
+                Values[0][0] = currentLWPE;
+            }
+        }
+        
+        private bool IsReadyForTrading()
+        {
+            return CurrentBar >= 20 && State == State.Realtime;
+        }
+        
+        private void ProcessLatestSignal()
+        {
+            var signal = GetLatestSignal();
+            
+            if (signal == null || IsSignalAlreadyProcessed(signal))
+                return;
+                
+            ExecuteSignal(signal);
+            UpdateLastSignalTime(signal);
+        }
+        
+        private SignalData GetLatestSignal()
+        {
+            lock (signalLock)
+            {
+                return latestSignal;
+            }
+        }
+        
+        private bool IsSignalAlreadyProcessed(SignalData signal)
+        {
+            return signal.Timestamp == 0 || signal.Timestamp == lastSignalTime.Ticks;
+        }
+        
+        private void ExecuteSignal(SignalData signal)
+        {
+            switch (signal.Action)
+            {
+                case 1: // BUY
+                    Print($"Executing LONG: size={signal.Size}, confidence={signal.Confidence:F3}");
+                    EnterLong(signal.Size);
+                    break;
+                    
+                case 2: // SELL
+                    Print($"Executing SHORT: size={signal.Size}, confidence={signal.Confidence:F3}");
+                    EnterShort(signal.Size);
+                    break;
+                    
+                default: // HOLD
+                    Print($"HOLD signal: confidence={signal.Confidence:F3}");
+                    break;
+            }
+        }
+        
+        private void UpdateLastSignalTime(SignalData signal)
+        {
+            lastSignalTime = new DateTime(signal.Timestamp * TimeSpan.TicksPerSecond);
+        }
+        
+        #endregion
+        
+        #region Market Data Handling
+        
+        protected override void OnMarketData(MarketDataEventArgs e)
+        {
+            if (!IsRelevantMarketData(e.MarketDataType))
+                return;
+                
+            ForwardTickData(e);
+        }
+        
+        private bool IsRelevantMarketData(MarketDataType dataType)
+        {
+            return dataType == MarketDataType.Bid || 
+                   dataType == MarketDataType.Ask || 
+                   dataType == MarketDataType.Last;
+        }
+        
+        private void ForwardTickData(MarketDataEventArgs e)
+        {
+            try
+            {
+                long unixMs = GetUnixTimestamp(e.Time);
+                string tickData = FormatTickData(unixMs, e.Price, e.Volume, e.MarketDataType);
+                
+                SendTickData(tickData);
+            }
+            catch (Exception ex)
+            {
+                Print($"Tick forwarding error: {ex.Message}");
+            }
+        }
+        
+        private long GetUnixTimestamp(DateTime dateTime)
+        {
+            return (long)(dateTime.ToUniversalTime() - new DateTime(1970, 1, 1)).TotalMilliseconds;
+        }
+        
+        private string FormatTickData(long timestamp, double price, long volume, MarketDataType dataType)
+        {
+            return $"{timestamp},{price},{volume},{dataType}\n";
+        }
+        
+        private void SendTickData(string tickData)
+        {
+            if (tickSock?.Connected == true)
+            {
+                byte[] data = Encoding.UTF8.GetBytes(tickData);
+                tickSock.GetStream().Write(data, 0, data.Length);
+            }
+        }
+        
+        #endregion
+        
+        #region Feature Vector Transmission
+        
+        private void SendFeatureVector()
+        {
+            if (sendSock?.Connected != true)
+                return;
+                
+            try
+            {
+                var features = CalculateFeatures();
+                string payload = CreateFeaturePayload(features);
+                TransmitData(sendSock, payload);
+            }
+            catch (Exception ex)
+            {
+                Print($"Feature transmission error: {ex.Message}");
+            }
+        }
+        
+        private FeatureVector CalculateFeatures()
+        {
+            double volMean = SMA(Volume, 20)[0];
+            double volStd = StdDev(Volume, 20)[0];
+            double normalizedVolume = volStd != 0 ? (Volume[0] - volMean) / volStd : 0;
+            
+            double lwpeValue;
+            lock (lwpeLock)
+            {
+                lwpeValue = currentLWPE;
+            }
+            
+            return new FeatureVector
+            {
+                Close = Close[0],
+                NormalizedVolume = normalizedVolume,
+                ATR = atr[0],
+                LWPE = lwpeValue,
+                IsLive = State == State.Realtime
+            };
+        }
+        
+        private string CreateFeaturePayload(FeatureVector features)
+        {
+            return string.Format(CultureInfo.InvariantCulture,
+                @"{{
+                    ""features"":[{0:F6},{1:F6},{2:F6},{3:F6}],
+                    ""live"":{4}
+                }}",
+                features.Close, 
+                features.NormalizedVolume, 
+                features.ATR, 
+                features.LWPE,
+                features.IsLive ? 1 : 0);
+        }
+        
+        #endregion
+        
+        #region Position Management
+        
+        private void SendPositionUpdate()
+        {
+            try
+            {
+                string positionJson = $"{{\"position\":{Position.Quantity}}}";
+                TransmitData(sendSock, positionJson);
+            }
+            catch (Exception ex)
+            {
+                Print($"Position update error: {ex.Message}");
+            }
+        }
+        
+        #endregion
+        
+        #region Network Communication
+        
+        private void SignalReceiveLoop()
         {
             var stream = recvSock.GetStream();
-            var ser = new JavaScriptSerializer();
-            byte[] lenBuf = new byte[4];
-
+            byte[] lengthBuffer = new byte[4];
+            
             while (running)
             {
                 try
                 {
-                    if (stream.Read(lenBuf, 0, 4) != 4) break;
-                    int n = BitConverter.ToInt32(lenBuf, 0);
-                    byte[] buf = new byte[n];
-                    int read = 0;
-                    while (read < n) read += stream.Read(buf, read, n - read);
-
-                    var dict = ser.Deserialize<Dictionary<string, object>>(Encoding.UTF8.GetString(buf));
-                    lock (signalLock)
-					{
-					    latestSignal = new SignalData
-	                    {
-	                        Action = Convert.ToInt32(dict["action"]),
-	                        Size = Convert.ToInt32(dict["size"]),
-	                        Confidence = Convert.ToDouble(dict["confidence"]),
-	                        Timestamp = Convert.ToInt64(dict["timestamp"])
-	                    };
-						Print(string.Format("Signal received → action={0}, confidence={1:F3}, size={2}, timestamp={3}",
-						    latestSignal.Action,
-						    latestSignal.Confidence,
-						    latestSignal.Size,
-						    latestSignal.Timestamp));
-                    }
+                    if (!ReadExactBytes(stream, lengthBuffer, 4))
+                        break;
+                        
+                    int messageLength = BitConverter.ToInt32(lengthBuffer, 0);
+                    byte[] messageBuffer = new byte[messageLength];
+                    
+                    if (!ReadExactBytes(stream, messageBuffer, messageLength))
+                        continue;
+                        
+                    ProcessReceivedSignal(messageBuffer);
                 }
                 catch (Exception ex)
                 {
-                    Print($"Recv error: {ex.Message}");
+                    Print($"Signal receive error: {ex.Message}");
+                    Thread.Sleep(1000);
                 }
             }
         }
-		
-		protected override void OnBarUpdate()
-		{
-			// Print($"[BAR] OnBarUpdate fired - CurrentBar={CurrentBar}, State={State}");
-			
-			SendFeatureVector();
-			
-		    lock (lwpeLock)
-		    {
-		        Values[0][0] = currentLWPE;
-		    }
-
-		    if (CurrentBar < 20 || State != State.Realtime)
-		        return;
-		
-		    SignalData sigCopy = null;
-		    lock (signalLock)
-		    {
-		        sigCopy = latestSignal;
-		    }
-		
-		    if (sigCopy == null || sigCopy.Timestamp == 0)
-		        return;
-		
-		    // Avoid duplicate execution
-		    if (sigCopy.Timestamp == lastSignalTime.Ticks)
-		        return;
-		
-		    lastSignalTime = new DateTime(sigCopy.Timestamp * TimeSpan.TicksPerSecond);
-		
-		    if (sigCopy.Action == 1)  // BUY
-		    {
-		        Print($"Long: size={sigCopy.Size} conf={sigCopy.Confidence:F2}");
-		        EnterLong(sigCopy.Size);
-		    }
-		    else if (sigCopy.Action == 2)  // SELL
-		    {
-		        Print($"Short: size={sigCopy.Size} conf={sigCopy.Confidence:F2}");
-		        EnterShort(sigCopy.Size);
-		    }
-		    else
-		    {
-		        Print($"Flat/No Action: conf={sigCopy.Confidence:F2}");
-		    }
-			try
-				{
-					string posJson = $"{{\"position\":{Position.Quantity}}}";
-					byte[] posData = Encoding.UTF8.GetBytes(posJson);
-					byte[] posHeader = BitConverter.GetBytes(posData.Length);
-					sendSock?.GetStream().Write(posHeader, 0, 4);
-					sendSock?.GetStream().Write(posData, 0, posData.Length);
-				}
-				catch (Exception ex)
-				{
-				    Print($"Position send error: {ex.Message}");
-				}
-		}
-
-        protected override void OnMarketData(MarketDataEventArgs e)
-        {
-			// Print($"[TICK] {e.MarketDataType} {e.Price} {e.Volume}");
-
-            if (e.MarketDataType == MarketDataType.Bid ||
-                e.MarketDataType == MarketDataType.Ask ||
-                e.MarketDataType == MarketDataType.Last)
-            {
-                long unixMs = (long)(e.Time.ToUniversalTime() - new DateTime(1970, 1, 1)).TotalMilliseconds;
-                string tickStr = $"{unixMs},{e.Price},{e.Volume},{e.MarketDataType}\n";
-                tickSock?.GetStream().Write(Encoding.UTF8.GetBytes(tickStr), 0, tickStr.Length);
-            }
-        }
-
-        private void LwpeLoop()
+        
+        private void LwpeReceiveLoop()
         {
             var stream = lwpeSock.GetStream();
             byte[] buffer = new byte[1024];
-
+            
             while (running)
             {
                 try
@@ -228,67 +507,99 @@ namespace NinjaTrader.NinjaScript.Strategies
                     int bytesRead = stream.Read(buffer, 0, buffer.Length);
                     if (bytesRead > 0)
                     {
-                        string val = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
-                        if (double.TryParse(val, NumberStyles.Any, CultureInfo.InvariantCulture, out double parsed))
-                        {
-                            lock (lwpeLock)
-                            {
-                                currentLWPE = parsed;
-                            }
-                        }
+                        ProcessLwpeData(buffer, bytesRead);
                     }
                 }
                 catch (Exception ex)
                 {
-                    Print($"LWPE error: {ex.Message}");
+                    Print($"LWPE receive error: {ex.Message}");
                     Thread.Sleep(1000);
                 }
             }
         }
-
-        private void SendFeatureVector()
+        
+        private bool ReadExactBytes(NetworkStream stream, byte[] buffer, int count)
         {
-            if (sendSock?.Connected != true) return;
-
-            double volMean = SMA(Volume, 20)[0];
-            double volStd = StdDev(Volume, 20)[0];
-            double normVol = volStd != 0 ? (Volume[0] - volMean) / volStd : 0;
-
-            double lwpeCopy;
-            lock (lwpeLock)
+            int totalRead = 0;
+            while (totalRead < count)
             {
-                lwpeCopy = currentLWPE;
+                int bytesRead = stream.Read(buffer, totalRead, count - totalRead);
+                if (bytesRead == 0)
+                    return false;
+                totalRead += bytesRead;
             }
-
-            string payload = string.Format(CultureInfo.InvariantCulture,
-                @"{{
-                    ""features"":[{0:F6},{1:F6},{2:F6},{3:F6}],
-                    ""live"":{4}
-                }}",
-                Close[0], normVol, atr[0], lwpeCopy,
-                State == State.Realtime ? 1 : 0);
-			
-			// Print($"[feature] Close={Close[0]:F2}, normVol={normVol:F4}, ATR={atr[0]:F4}, LWPE={lwpeCopy:F4}, live={(State == State.Realtime ? 1 : 0)}");
-
-            try
+            return true;
+        }
+        
+        private void ProcessReceivedSignal(byte[] messageBuffer)
+        {
+            string jsonString = Encoding.UTF8.GetString(messageBuffer);
+            var signalDict = serializer.Deserialize<Dictionary<string, object>>(jsonString);
+            
+            lock (signalLock)
             {
-                byte[] data = Encoding.UTF8.GetBytes(payload);
-                byte[] header = BitConverter.GetBytes(data.Length);
-                sendSock.GetStream().Write(header, 0, 4);
-                sendSock.GetStream().Write(data, 0, data.Length);
-            }
-            catch (Exception ex)
-            {
-                Print($"Send error: {ex.Message}");
+                latestSignal = new SignalData
+                {
+                    Action = Convert.ToInt32(signalDict["action"]),
+                    Size = Convert.ToInt32(signalDict["size"]),
+                    Confidence = Convert.ToDouble(signalDict["confidence"]),
+                    Timestamp = Convert.ToInt64(signalDict["timestamp"])
+                };
+                
+                Print($"Signal received → action={latestSignal.Action}, " +
+                      $"confidence={latestSignal.Confidence:F3}, " +
+                      $"size={latestSignal.Size}, " +
+                      $"timestamp={latestSignal.Timestamp}");
             }
         }
-
+        
+        private void ProcessLwpeData(byte[] buffer, int bytesRead)
+        {
+            string valueString = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
+            
+            if (double.TryParse(valueString, NumberStyles.Any, CultureInfo.InvariantCulture, out double lwpeValue))
+            {
+                lock (lwpeLock)
+                {
+                    currentLWPE = lwpeValue;
+                }
+            }
+        }
+        
+        private void TransmitData(TcpClient client, string data)
+        {
+            if (client?.Connected != true)
+                return;
+                
+            byte[] payload = Encoding.UTF8.GetBytes(data);
+            byte[] header = BitConverter.GetBytes(payload.Length);
+            
+            var stream = client.GetStream();
+            stream.Write(header, 0, 4);
+            stream.Write(payload, 0, payload.Length);
+        }
+        
+        #endregion
+        
+        #region Helper Classes
+        
         private class SignalData
         {
-            public int Action;
-            public int Size;
-            public double Confidence;
-            public long Timestamp;
+            public int Action { get; set; }
+            public int Size { get; set; }
+            public double Confidence { get; set; }
+            public long Timestamp { get; set; }
         }
+        
+        private class FeatureVector
+        {
+            public double Close { get; set; }
+            public double NormalizedVolume { get; set; }
+            public double ATR { get; set; }
+            public double LWPE { get; set; }
+            public bool IsLive { get; set; }
+        }
+        
+        #endregion
     }
 }
