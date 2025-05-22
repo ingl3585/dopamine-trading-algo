@@ -39,6 +39,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         // Signal handling
         private SignalData latestSignal;
+		private long lastProcessedTimestamp = 0;
         private DateTime lastSignalTime = DateTime.MinValue;
         private readonly object signalLock = new object();
         
@@ -291,7 +292,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    var signal = GetLatestSignal();
 		    
-		    if (signal == null || IsSignalAlreadyProcessed(signal))
+		    if (signal == null)
+		        return;
+		        
+		    // ADD: Check for duplicates
+		    if (IsSignalAlreadyProcessed(signal))
+		        return;
+		        
+		    // ADD: Validate timestamp  
+		    if (!IsSignalTimestampValid(signal))
 		        return;
 		        
 		    ExecuteSignal(signal);
@@ -571,27 +580,29 @@ namespace NinjaTrader.NinjaScript.Strategies
             return true;
         }
         
-        private void ProcessReceivedSignal(byte[] messageBuffer)
-        {
-            string jsonString = Encoding.UTF8.GetString(messageBuffer);
-            var signalDict = serializer.Deserialize<Dictionary<string, object>>(jsonString);
-            
-            lock (signalLock)
-            {
-                latestSignal = new SignalData
-                {
-                    Action = Convert.ToInt32(signalDict["action"]),
-                    Size = Convert.ToInt32(signalDict["size"]),
-                    Confidence = Convert.ToDouble(signalDict["confidence"]),
-                    Timestamp = Convert.ToInt64(signalDict["timestamp"])
-                };
-                
-                Print($"Signal received → action={latestSignal.Action}, " +
-                      $"confidence={latestSignal.Confidence:F3}, " +
-                      $"size={latestSignal.Size}, " +
-                      $"timestamp={latestSignal.Timestamp}");
-            }
-        }
+		private void ProcessReceivedSignal(byte[] messageBuffer)
+		{
+		    string jsonString = Encoding.UTF8.GetString(messageBuffer);
+		    var signalDict = serializer.Deserialize<Dictionary<string, object>>(jsonString);
+		    
+		    lock (signalLock)
+		    {
+		        latestSignal = new SignalData
+		        {
+		            Action = Convert.ToInt32(signalDict["action"]),
+		            Size = Convert.ToInt32(signalDict["size"]),
+		            Confidence = Convert.ToDouble(signalDict["confidence"]),
+		            Timestamp = Convert.ToInt64(signalDict["timestamp"]),
+		            SignalId = signalDict.ContainsKey("signal_id") ? Convert.ToInt32(signalDict["signal_id"]) : 0  // ADD THIS
+		        };
+		        
+		        Print($"Signal received → action={latestSignal.Action}, " +
+		              $"confidence={latestSignal.Confidence:F3}, " +
+		              $"size={latestSignal.Size}, " +
+		              $"timestamp={latestSignal.Timestamp}, " +
+		              $"id={latestSignal.SignalId}");  // ADD ID to logging
+		    }
+		}
         
         private void ProcessLwpeData(byte[] buffer, int bytesRead)
         {
@@ -629,6 +640,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             public int Size { get; set; }
             public double Confidence { get; set; }
             public long Timestamp { get; set; }
+			public int SignalId { get; set; }
         }
         
         private class FeatureVector

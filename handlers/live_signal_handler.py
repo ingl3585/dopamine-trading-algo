@@ -1,4 +1,4 @@
-# handlers/live_signal_handler.py
+# handlers/live_signal_handler.py:
 
 import time
 import logging
@@ -13,7 +13,8 @@ class LiveSignalHandler:
         self.portfolio = portfolio
         self.tcp = tcp
         self.logger = logger
-        self.signal_counter = 0  # Simple counter instead of complex timestamps
+        self.signal_counter = 0
+        self.last_signal_time = 0  # ADD THIS BACK - needed for rate limiting
 
     def dispatch_signal(self, action: int, confidence: float):
         self.portfolio.update_position(self.tcp._current_position)
@@ -23,20 +24,27 @@ class LiveSignalHandler:
             log.debug("Dispatch skipped: size = 0")
             return
 
-        # SIMPLIFIED: Use incrementing counter + basic timestamp
+        current_time = time.time()
+        
+        # ADD THIS BACK - Prevent rapid-fire signals (aligned with NT bar processing)
+        if current_time - self.last_signal_time < 1.0:
+            log.debug("Dispatch skipped: too close to last signal")
+            return
+
         self.signal_counter += 1
-        current_time = int(time.time())  # Simple Unix timestamp in seconds
+        timestamp = int(current_time)  # Simple Unix timestamp in seconds
         
         sig = {
             "action": action,
             "confidence": round(confidence, 4),
             "size": size,
-            "timestamp": current_time,  # Simple Unix timestamp
-            "signal_id": self.signal_counter  # For duplicate prevention
+            "timestamp": timestamp,
+            "signal_id": self.signal_counter
         }
 
         try:
             self.tcp.send_signal(sig)
+            self.last_signal_time = current_time  # ADD THIS BACK
             log.info("Sent signal %s", sig)
         except Exception as e:
             log.error(f"Failed to send signal: {e}")
