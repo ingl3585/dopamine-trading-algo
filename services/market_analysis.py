@@ -9,10 +9,6 @@ log = logging.getLogger(__name__)
 class MarketAnalysis:
     @staticmethod
     def detect_regime(prices, window=20):
-        """
-        Simple regime detection using moving averages
-        Returns 0 for uptrend, 1 for downtrend
-        """
         try:
             if len(prices) < window:
                 return 0
@@ -29,9 +25,6 @@ class MarketAnalysis:
 
     @staticmethod
     def forecast_volatility(prices, window=14):
-        """
-        Simple exponential moving average of returns volatility
-        """
         try:
             if len(prices) < window + 1:
                 return 0.01
@@ -53,9 +46,6 @@ class MarketAnalysis:
 
     @staticmethod
     def calculate_momentum(prices, window=10):
-        """
-        Simple momentum indicator
-        """
         try:
             if len(prices) < window + 1:
                 return 0.0
