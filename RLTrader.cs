@@ -552,8 +552,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    {
 		        if (signal.Size <= 0 || signal.Size > 20)
 		        {
-		            if (EnableLogging)
-		                Print($"Invalid signal size: {signal.Size}");
 		            return;
 		        }
 
