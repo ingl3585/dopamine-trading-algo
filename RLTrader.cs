@@ -122,7 +122,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             IsOverlay = false;
             
             // Entry configuration
-			BarsRequiredToTrade = 2;
+			BarsRequiredToTrade = 14; // ATR warm up
             EntriesPerDirection = 10;
             EntryHandling = EntryHandling.AllEntries;
             
