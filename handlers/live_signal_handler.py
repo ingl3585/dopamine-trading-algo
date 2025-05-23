@@ -245,13 +245,13 @@ class LiveSignalHandler:
                 return "No signals dispatched yet"
             
             summary = f"""
-                Signal Performance Summary:
-                Total Signals: {total}
-                Ichimoku-based: {self.performance_tracker['ichimoku_signals']} ({self.performance_tracker['ichimoku_signals']/total*100:.1f}%)
-                EMA-based: {self.performance_tracker['ema_signals']} ({self.performance_tracker['ema_signals']/total*100:.1f}%)
-                Mixed Signals: {self.performance_tracker['mixed_signals']} ({self.performance_tracker['mixed_signals']/total*100:.1f}%)
-                High Confidence: {self.performance_tracker['high_confidence_signals']} ({self.performance_tracker['high_confidence_signals']/total*100:.1f}%)
-                """
+            Signal Performance Summary:
+            Total Signals: {total}
+            Ichimoku-based: {self.performance_tracker['ichimoku_signals']} ({self.performance_tracker['ichimoku_signals']/total*100:.1f}%)
+            EMA-based: {self.performance_tracker['ema_signals']} ({self.performance_tracker['ema_signals']/total*100:.1f}%)
+            Mixed Signals: {self.performance_tracker['mixed_signals']} ({self.performance_tracker['mixed_signals']/total*100:.1f}%)
+            High Confidence: {self.performance_tracker['high_confidence_signals']} ({self.performance_tracker['high_confidence_signals']/total*100:.1f}%)
+            """
             
             # Recent signal quality distribution
             if self.signal_history:
