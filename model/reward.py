@@ -1,49 +1,24 @@
 # model/reward.py
 
+import numpy as np
+
 class RewardCalculator:
     def __init__(self):
-        self.recent_rewards = []
-        self.prev_volatility = None
-
-    def compute_reward(self, price_change, atr, state_data=None):
-        base_reward = price_change / (atr + 1e-6)
-        consistency_reward = self._calculate_consistency_bonus(base_reward)
-        volatility_reward = self._calculate_volatility_bonus(base_reward, atr, state_data)
-        return base_reward + consistency_reward + volatility_reward
-
-    def modify_reward(self, action, reward):
-        if action == 1:  # Buy
-            reward -= 0.01
-        return reward
-
-    def _calculate_consistency_bonus(self, base_reward):
-        if len(self.recent_rewards) >= 10:
-            win_rate = sum(1 for r in self.recent_rewards if r > 0) / len(self.recent_rewards)
-            bonus = 0.2 * (1.0 - 2.0 * abs(win_rate - 0.65))
-        else:
-            bonus = 0.0
-
-        self.recent_rewards.append(base_reward)
-        if len(self.recent_rewards) > 50:
-            self.recent_rewards.pop(0)
-
-        return bonus
-
-    def _calculate_volatility_bonus(self, base_reward, atr, state_data):
-        if state_data is not None:
-            current_volatility = state_data[0, -1, 2].item()
-        else:
-            current_volatility = atr
-
-        if self.prev_volatility is None:
-            self.prev_volatility = current_volatility
+        self.transaction_cost = 0.001
+        
+    def compute_reward(self, price_change, atr, action_taken=None):
+        base_reward = price_change / max(atr, 1e-6)
+        
+        if action_taken is not None and action_taken != 0:
+            base_reward -= self.transaction_cost
+            
+        return np.clip(base_reward, -5.0, 5.0)
+    
+    def compute_position_reward(self, position, price_change, atr):
+        if position == 0:
             return 0.0
-
-        vol_change = abs(current_volatility - self.prev_volatility)
-        self.prev_volatility = current_volatility
-
-        if vol_change > 0.0005:
-            return 0.1 * min(base_reward, 1.0)
-
-        return 0.0
-
+            
+        pnl = position * price_change
+        normalized_pnl = pnl / max(atr, 1e-6)
+        
+        return np.clip(normalized_pnl, -5.0, 5.0)

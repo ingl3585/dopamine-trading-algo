@@ -3,35 +3,43 @@
 import time
 import logging
 
-from services.portfolio import Portfolio
-from model.agent import RLAgent
-from utils.feature_writer import FeatureWriter
-from services.tcp_bridge import TCPBridge
-
 log = logging.getLogger(__name__)
 
 class LiveSignalHandler:
-    def __init__(self, cfg, agent: RLAgent, portfolio: Portfolio, tcp: TCPBridge, logger: FeatureWriter):
+    def __init__(self, cfg, agent, portfolio, tcp, logger):
         self.cfg = cfg
         self.agent = agent
         self.portfolio = portfolio
         self.tcp = tcp
         self.logger = logger
+        self.signal_counter = 0
+        self.last_signal_time = 0
 
     def dispatch_signal(self, action: int, confidence: float):
         self.portfolio.update_position(self.tcp._current_position)
-        size = self.portfolio.calculate_trade_size(action, confidence, self.cfg.BASE_SIZE, self.cfg.MIN_SIZE)
 
-        if size == 0:
-            log.debug("Dispatch skipped: size = 0")
-            return
+        size = self.portfolio.calculate_position_size(action, confidence)
 
+        current_time = time.time()
+
+        self.signal_counter += 1
+        timestamp = int(current_time)
+        
         sig = {
             "action": action,
-            "confidence": confidence,
+            "confidence": round(confidence, 3),
             "size": size,
-            "timestamp": int(time.time())
+            "timestamp": timestamp,
+            "signal_id": self.signal_counter
         }
 
-        self.tcp.send_signal(sig)
-        log.info("Sent signal %s", sig)
+        try:
+            self.tcp.send_signal(sig)
+            self.last_signal_time = current_time
+            
+            action_name = "Long" if action == 1 else ("Short" if action == 2 else "Hold")
+            
+            log.info(f"Signal sent - {action_name}: size={size}, conf={confidence:.3f}, id={self.signal_counter}, timestamp={timestamp}")
+                    
+        except Exception as e:
+            log.error(f"Failed to send signal: {e}")
