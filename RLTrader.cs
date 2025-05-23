@@ -24,7 +24,6 @@ namespace NinjaTrader.NinjaScript.Strategies
         #region Private Fields
         
         // Indicators
-        private Ichimoku ichimoku;
         private EMA emaFast;
         private EMA emaSlow;
         private Series<double> lwpeSeries;
@@ -146,56 +145,56 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
         
-        private void ConfigureDefaults()
-        {
-            // Assign unique instance ID
-            instanceId = ++instanceCounter;
-            
-            Name = "RLTrader";
-            Description = "Reinforcement Learning Trading Strategy with Ichimoku/EMA Features v2.0";
-            Calculate = Calculate.OnBarClose;
-            
-            // Chart configuration
-            AddPlot(Brushes.Blue, "LWPE");
-            AddPlot(Brushes.Green, "Signal Quality");
-            IsOverlay = false;
-            
-            // Entry configuration - increased for Ichimoku requirements
-			BarsRequiredToTrade = Math.Max(SenkouPeriod, EmaSlowPeriod) + 10;
-            EntriesPerDirection = 10;
-            EntryHandling = EntryHandling.AllEntries;
-            
-            // Reset state flags for new instance
-            isTerminated = false;
-            socketsStarted = false;
-            running = false;
-            signalCount = 0;
-            tradesExecuted = 0;
-        }
+		private void ConfigureDefaults()
+		{
+		    // Assign unique instance ID
+		    instanceId = ++instanceCounter;
+		    
+		    Name = "RLTrader";
+		    Description = "Reinforcement Learning Trading Strategy with Ichimoku/EMA Features v2.1";
+		    Calculate = Calculate.OnBarClose;
+		    
+		    // Chart configuration
+		    AddPlot(Brushes.Blue, "LWPE");
+		    AddPlot(Brushes.Green, "Signal Quality");
+		    IsOverlay = false;
+		    
+		    // Entry configuration - increased for enhanced momentum requirements
+		    BarsRequiredToTrade = Math.Max(SenkouPeriod + 5, EmaSlowPeriod + 5);
+		    EntriesPerDirection = 10;
+		    EntryHandling = EntryHandling.AllEntries;
+		    
+		    // Reset state flags for new instance
+		    isTerminated = false;
+		    socketsStarted = false;
+		    running = false;
+		    signalCount = 0;
+		    tradesExecuted = 0;
+		}
         
-        private void InitializeIndicators()
-        {
-            try
-            {
-                ichimoku = Ichimoku(TenkanPeriod, KijunPeriod, SenkouPeriod);
-                emaFast = EMA(EmaFastPeriod);
-                emaSlow = EMA(EmaSlowPeriod);
-                lwpeSeries = new Series<double>(this);
-                
-                AddChartIndicator(ichimoku);
-                AddChartIndicator(emaFast);
-                AddChartIndicator(emaSlow);
-                
-                if (EnableLogging)
-                {
-                    Print($"Initialized indicators - Ichimoku({TenkanPeriod},{KijunPeriod},{SenkouPeriod}), EMA({EmaFastPeriod},{EmaSlowPeriod})");
-                }
-            }
-            catch (Exception ex)
-            {
-                Print($"Indicator initialization error: {ex.Message}");
-            }
-        }
+		private void InitializeIndicators()
+		{
+		    try
+		    {
+		        // Remove ichimoku initialization - we'll call it directly when needed
+		        emaFast = EMA(EmaFastPeriod);
+		        emaSlow = EMA(EmaSlowPeriod);
+		        lwpeSeries = new Series<double>(this);
+		        
+		        // Only add EMAs to chart
+		        AddChartIndicator(emaFast);
+		        AddChartIndicator(emaSlow);
+		        
+		        if (EnableLogging)
+		        {
+		            Print($"Initialized indicators - EMA({EmaFastPeriod},{EmaSlowPeriod}), Ichimoku will be called as needed");
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Indicator initialization error: {ex.Message}");
+		    }
+		}
         
         private void InitializeSockets()
         {
@@ -377,54 +376,56 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
         
-        private double CalculateSignalQuality()
-        {
-            try
-            {
-                if (CurrentBar < Math.Max(SenkouPeriod, EmaSlowPeriod))
-                    return 0.5;
-                
-                double quality = 0.0;
-                int signalCount = 0;
-                
-                // Ichimoku signals
-                if (ichimoku.TenkanSen[0] != 0 && ichimoku.KijunSen[0] != 0)
-                {
-                    quality += ichimoku.TenkanSen[0] > ichimoku.KijunSen[0] ? 1.0 : 0.0;
-                    signalCount++;
-                }
-                
-                // Price vs Cloud
-                double senkouA = ichimoku.SenkouSpanA[0];
-                double senkouB = ichimoku.SenkouSpanB[0];
-                if (senkouA != 0 && senkouB != 0)
-                {
-                    double cloudTop = Math.Max(senkouA, senkouB);
-                    double cloudBottom = Math.Min(senkouA, senkouB);
-                    
-                    if (Close[0] > cloudTop)
-                        quality += 1.0;
-                    else if (Close[0] < cloudBottom)
-                        quality += 0.0;
-                    else
-                        quality += 0.5;
-                    signalCount++;
-                }
-                
-                // EMA signal
-                if (emaFast[0] != 0 && emaSlow[0] != 0)
-                {
-                    quality += emaFast[0] > emaSlow[0] ? 1.0 : 0.0;
-                    signalCount++;
-                }
-                
-                return signalCount > 0 ? quality / signalCount : 0.5;
-            }
-            catch
-            {
-                return 0.5;
-            }
-        }
+		private double CalculateSignalQuality()
+		{
+		    try
+		    {
+		        if (CurrentBar < BarsRequiredToTrade)
+		            return 0.5;
+		        
+		        double quality = 0.0;
+		        int signalCount = 0;
+		        
+		        // Get all signals
+		        double tkSignal = GetTenkanKijunSignal();
+		        double pcSignal = GetPriceCloudSignal();
+		        double fcSignal = GetFutureCloudSignal();
+		        double emaSignal = GetEmaCrossSignal();
+		        double tmSignal = GetTenkanMomentum();
+		        double kmSignal = GetKijunMomentum();
+		        
+		        // Weight signals by importance
+		        var signals = new[]
+		        {
+		            new { value = tkSignal, weight = 0.25 },
+		            new { value = pcSignal, weight = 0.25 },
+		            new { value = emaSignal, weight = 0.20 },
+		            new { value = fcSignal, weight = 0.15 },
+		            new { value = tmSignal, weight = 0.075 },
+		            new { value = kmSignal, weight = 0.075 }
+		        };
+		        
+		        double totalWeight = 0;
+		        double weightedSum = 0;
+		        
+		        foreach (var signal in signals)
+		        {
+		            if (signal.value != 0) // Only count active signals
+		            {
+		                // Convert signal to quality score (1 for bullish, 0 for bearish, 0.5 for neutral)
+		                double signalQuality = signal.value > 0 ? 1.0 : 0.0;
+		                weightedSum += signalQuality * signal.weight;
+		                totalWeight += signal.weight;
+		            }
+		        }
+		        
+		        return totalWeight > 0 ? weightedSum / totalWeight : 0.5;
+		    }
+		    catch
+		    {
+		        return 0.5;
+		    }
+		}
         
 		private bool IsReadyForTrading()
 		{
@@ -433,22 +434,45 @@ namespace NinjaTrader.NinjaScript.Strategies
 		           running;
 		}
         
-        private void LogCurrentStatus()
-        {
-            try
-            {
-                var features = CalculateFeatures();
-                Print($"Bar {CurrentBar}: TK={features.TenkanKijunSignal:F0}, " +
-                      $"Cloud={features.PriceCloudSignal:F0}, " +
-                      $"EMA={features.EmaCrossSignal:F0}, " +
-                      $"LWPE={features.LWPE:F3}, " +
-                      $"Pos={GetCurrentPosition()}");
-            }
-            catch (Exception ex)
-            {
-                Print($"Status logging error: {ex.Message}");
-            }
-        }
+		private void LogCurrentStatus()
+		{
+		    try
+		    {
+		        var features = CalculateFeatures();
+		        
+		        // Create array of all signals
+		        var signals = new[] { 
+		            features.TenkanKijunSignal, 
+		            features.PriceCloudSignal, 
+		            features.FutureCloudSignal, 
+		            features.EmaCrossSignal,
+		            features.TenkanMomentum, 
+		            features.KijunMomentum 
+		        };
+		        
+		        // Count signals manually (no LINQ needed)
+		        int bullish = 0;
+		        int bearish = 0;
+		        int neutral = 0;
+		        
+		        for (int i = 0; i < signals.Length; i++)
+		        {
+		            if (signals[i] > 0)
+		                bullish++;
+		            else if (signals[i] < 0)
+		                bearish++;
+		            else
+		                neutral++;
+		        }
+		        
+		        Print($"Bar {CurrentBar}: Bull={bullish}, Bear={bearish}, Neutral={neutral}, " +
+		              $"LWPE={features.LWPE:F3}, Pos={GetCurrentPosition()}");
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Status logging error: {ex.Message}");
+		    }
+		}
         
 		private void ProcessLatestSignal()
 		{
@@ -719,112 +743,234 @@ namespace NinjaTrader.NinjaScript.Strategies
             };
         }
         
-        private double GetTenkanKijunSignal()
-        {
-            try
-            {
-                if (CurrentBar < KijunPeriod)
-                    return 0;
-                    
-                return ichimoku.TenkanSen[0] > ichimoku.KijunSen[0] ? 1.0 : -1.0;
-            }
-            catch
-            {
-                return 0;
-            }
-        }
+		private double GetTenkanKijunSignal()
+		{
+		    try
+		    {
+		        if (CurrentBar < Math.Max(TenkanPeriod, KijunPeriod))
+		            return 0;
+		            
+		        // Calculate Tenkan-sen (Conversion Line): (9-period high + 9-period low) / 2
+		        double tenkanHigh = MAX(High, TenkanPeriod)[0];
+		        double tenkanLow = MIN(Low, TenkanPeriod)[0];
+		        double tenkan = (tenkanHigh + tenkanLow) / 2;
+		        
+		        // Calculate Kijun-sen (Base Line): (26-period high + 26-period low) / 2
+		        double kijunHigh = MAX(High, KijunPeriod)[0];
+		        double kijunLow = MIN(Low, KijunPeriod)[0];
+		        double kijun = (kijunHigh + kijunLow) / 2;
+		        
+		        if (tenkan == 0 || kijun == 0)
+		            return 0;
+		            
+		        double diff = tenkan - kijun;
+		        
+		        // Use percentage-based threshold for neutral signal
+		        double priceRange = Math.Max(High[0] - Low[0], Close[0] * 0.0001);
+		        double threshold = priceRange * 0.5;
+		        
+		        if (diff > threshold)
+		            return 1.0;   // Bullish
+		        else if (diff < -threshold)
+		            return -1.0;  // Bearish
+		        else
+		            return 0.0;   // Neutral
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
         
-        private double GetPriceCloudSignal()
-        {
-            try
-            {
-                if (CurrentBar < SenkouPeriod)
-                    return 0;
-                    
-                double senkouA = ichimoku.SenkouSpanA[0];
-                double senkouB = ichimoku.SenkouSpanB[0];
-                double cloudTop = Math.Max(senkouA, senkouB);
-                double cloudBottom = Math.Min(senkouA, senkouB);
-                
-                if (Close[0] > cloudTop)
-                    return 1.0; // Above cloud (bullish)
-                else if (Close[0] < cloudBottom)
-                    return -1.0; // Below cloud (bearish)
-                else
-                    return 0.0; // Inside cloud (neutral)
-            }
-            catch
-            {
-                return 0;
-            }
-        }
+		private double GetPriceCloudSignal()
+		{
+		    try
+		    {
+		        if (CurrentBar < SenkouPeriod)
+		            return 0;
+		            
+		        // Calculate Senkou Span A: (Tenkan-sen + Kijun-sen) / 2, plotted 26 periods ahead
+		        double tenkanHigh = MAX(High, TenkanPeriod)[0];
+		        double tenkanLow = MIN(Low, TenkanPeriod)[0];
+		        double tenkan = (tenkanHigh + tenkanLow) / 2;
+		        
+		        double kijunHigh = MAX(High, KijunPeriod)[0];
+		        double kijunLow = MIN(Low, KijunPeriod)[0];
+		        double kijun = (kijunHigh + kijunLow) / 2;
+		        
+		        double senkouA = (tenkan + kijun) / 2;
+		        
+		        // Calculate Senkou Span B: (52-period high + 52-period low) / 2, plotted 26 periods ahead
+		        double senkouBHigh = MAX(High, SenkouPeriod)[0];
+		        double senkouBLow = MIN(Low, SenkouPeriod)[0];
+		        double senkouB = (senkouBHigh + senkouBLow) / 2;
+		        
+		        if (senkouA == 0 || senkouB == 0)
+		            return 0;
+		            
+		        double cloudTop = Math.Max(senkouA, senkouB);
+		        double cloudBottom = Math.Min(senkouA, senkouB);
+		        double cloudThickness = cloudTop - cloudBottom;
+		        
+		        // Add buffer zone for cleaner signals
+		        double buffer = cloudThickness * 0.1; // 10% of cloud thickness
+		        
+		        if (Close[0] > cloudTop + buffer)
+		            return 1.0; // Clearly above cloud (bullish)
+		        else if (Close[0] < cloudBottom - buffer)
+		            return -1.0; // Clearly below cloud (bearish)
+		        else
+		            return 0.0; // Inside cloud or near edges (neutral)
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
+		
+		private double GetFutureCloudSignal()
+		{
+		    try
+		    {
+		        if (CurrentBar < SenkouPeriod)
+		            return 0;
+		            
+		        // Calculate current Senkou spans (these represent the "future" cloud)
+		        double tenkanHigh = MAX(High, TenkanPeriod)[0];
+		        double tenkanLow = MIN(Low, TenkanPeriod)[0];
+		        double tenkan = (tenkanHigh + tenkanLow) / 2;
+		        
+		        double kijunHigh = MAX(High, KijunPeriod)[0];
+		        double kijunLow = MIN(Low, KijunPeriod)[0];
+		        double kijun = (kijunHigh + kijunLow) / 2;
+		        
+		        double futureA = (tenkan + kijun) / 2;
+		        
+		        double futureBHigh = MAX(High, SenkouPeriod)[0];
+		        double futureBLow = MIN(Low, SenkouPeriod)[0];
+		        double futureB = (futureBHigh + futureBLow) / 2;
+		        
+		        if (futureA == 0 || futureB == 0)
+		            return 0;
+		            
+		        double diff = futureA - futureB;
+		        double avgPrice = (futureA + futureB) / 2;
+		        double threshold = avgPrice * 0.0001; // 0.01% threshold
+		        
+		        if (diff > threshold)
+		            return 1.0;  // Green cloud (bullish)
+		        else if (diff < -threshold)
+		            return -1.0; // Red cloud (bearish)
+		        else
+		            return 0.0;  // Neutral cloud
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
         
-        private double GetFutureCloudSignal()
-        {
-            try
-            {
-                if (CurrentBar < SenkouPeriod)
-                    return 0;
-                    
-                // Look at future cloud color
-                double futureA = ichimoku.SenkouSpanA[0];
-                double futureB = ichimoku.SenkouSpanB[0];
-                return futureA > futureB ? 1.0 : -1.0; // Green vs Red cloud
-            }
-            catch
-            {
-                return 0;
-            }
-        }
+		private double GetEmaCrossSignal()
+		{
+		    try
+		    {
+		        if (CurrentBar < EmaSlowPeriod)
+		            return 0;
+		            
+		        double fastEma = emaFast[0];
+		        double slowEma = emaSlow[0];
+		        
+		        if (fastEma == 0 || slowEma == 0)
+		            return 0;
+		            
+		        double diff = fastEma - slowEma;
+		        double avgEma = (fastEma + slowEma) / 2;
+		        double threshold = avgEma * 0.0002; // 0.02% threshold for neutral zone
+		        
+		        if (diff > threshold)
+		            return 1.0;   // Fast above slow (bullish)
+		        else if (diff < -threshold)
+		            return -1.0;  // Fast below slow (bearish)
+		        else
+		            return 0.0;   // EMAs converging (neutral)
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
         
-        private double GetEmaCrossSignal()
-        {
-            try
-            {
-                if (CurrentBar < EmaSlowPeriod)
-                    return 0;
-                    
-                return emaFast[0] > emaSlow[0] ? 1.0 : -1.0;
-            }
-            catch
-            {
-                return 0;
-            }
-        }
-        
-        private double GetTenkanMomentum()
-        {
-            try
-            {
-                if (CurrentBar < TenkanPeriod + 3)
-                    return 0;
-                    
-                double current = ichimoku.TenkanSen[0];
-                double previous = ichimoku.TenkanSen[3];
-                return current > previous ? 1.0 : -1.0;
-            }
-            catch
-            {
-                return 0;
-            }
-        }
-        
-        private double GetKijunMomentum()
-        {
-            try
-            {
-                if (CurrentBar < KijunPeriod + 3)
-                    return 0;
-                    
-                double current = ichimoku.KijunSen[0];
-                double previous = ichimoku.KijunSen[3];
-                return current > previous ? 1.0 : -1.0;
-            }
-            catch
-            {
-                return 0;
-            }
-        }
+		private double GetTenkanMomentum()
+		{
+		    try
+		    {
+		        if (CurrentBar < TenkanPeriod + 5)
+		            return 0;
+		            
+		        // Calculate current Tenkan-sen
+		        double currentTenkanHigh = MAX(High, TenkanPeriod)[0];
+		        double currentTenkanLow = MIN(Low, TenkanPeriod)[0];
+		        double currentTenkan = (currentTenkanHigh + currentTenkanLow) / 2;
+		        
+		        // Calculate previous Tenkan-sen (3 bars ago)
+		        double previousTenkanHigh = MAX(High, TenkanPeriod)[3];
+		        double previousTenkanLow = MIN(Low, TenkanPeriod)[3];
+		        double previousTenkan = (previousTenkanHigh + previousTenkanLow) / 2;
+		        
+		        if (currentTenkan == 0 || previousTenkan == 0)
+		            return 0;
+		            
+		        double change = currentTenkan - previousTenkan;
+		        double threshold = currentTenkan * 0.0001; // 0.01% momentum threshold
+		        
+		        if (change > threshold)
+		            return 1.0;   // Rising momentum
+		        else if (change < -threshold)
+		            return -1.0;  // Falling momentum
+		        else
+		            return 0.0;   // Flat momentum
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
+		
+		private double GetKijunMomentum()
+		{
+		    try
+		    {
+		        if (CurrentBar < KijunPeriod + 5)
+		            return 0;
+		            
+		        // Calculate current Kijun-sen
+		        double currentKijunHigh = MAX(High, KijunPeriod)[0];
+		        double currentKijunLow = MIN(Low, KijunPeriod)[0];
+		        double currentKijun = (currentKijunHigh + currentKijunLow) / 2;
+		        
+		        // Calculate previous Kijun-sen (3 bars ago)
+		        double previousKijunHigh = MAX(High, KijunPeriod)[3];
+		        double previousKijunLow = MIN(Low, KijunPeriod)[3];
+		        double previousKijun = (previousKijunHigh + previousKijunLow) / 2;
+		        
+		        if (currentKijun == 0 || previousKijun == 0)
+		            return 0;
+		            
+		        double change = currentKijun - previousKijun;
+		        double threshold = currentKijun * 0.0001; // 0.01% momentum threshold
+		        
+		        if (change > threshold)
+		            return 1.0;   // Rising momentum
+		        else if (change < -threshold)
+		            return -1.0;  // Falling momentum
+		        else
+		            return 0.0;   // Flat momentum
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
         
         private string CreateFeaturePayload(FeatureVector features)
         {
@@ -1052,6 +1198,35 @@ namespace NinjaTrader.NinjaScript.Strategies
             public double LWPE { get; set; }
             public bool IsLive { get; set; }
         }
+		
+		private double GetTenkanValue()
+		{
+		    if (CurrentBar < TenkanPeriod) return 0;
+		    double high = MAX(High, TenkanPeriod)[0];
+		    double low = MIN(Low, TenkanPeriod)[0];
+		    return (high + low) / 2;
+		}
+		
+		private double GetKijunValue()
+		{
+		    if (CurrentBar < KijunPeriod) return 0;
+		    double high = MAX(High, KijunPeriod)[0];
+		    double low = MIN(Low, KijunPeriod)[0];
+		    return (high + low) / 2;
+		}
+		
+		private double GetSenkouSpanA()
+		{
+		    return (GetTenkanValue() + GetKijunValue()) / 2;
+		}
+		
+		private double GetSenkouSpanB()
+		{
+		    if (CurrentBar < SenkouPeriod) return 0;
+		    double high = MAX(High, SenkouPeriod)[0];
+		    double low = MIN(Low, SenkouPeriod)[0];
+		    return (high + low) / 2;
+		}
         
         #endregion
         
