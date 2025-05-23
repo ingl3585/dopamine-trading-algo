@@ -156,19 +156,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    Description = "Reinforcement Learning Trading Strategy with Ichimoku/EMA Features v2.1";
 		    Calculate = Calculate.OnBarClose;
 		    
-		    // Chart configuration - ADD ICHIMOKU PLOTS
-		    IsOverlay = true;  // CHANGE TO TRUE for price overlay
+		    // Chart configuration
+		    IsOverlay = false;  // Set to FALSE so it shows in a separate panel
+		    DisplayInDataBox = true;
 		    
-		    // LWPE and Signal Quality (subplot)
+		    // LWPE and Signal Quality plots
 		    AddPlot(Brushes.Blue, "LWPE");
 		    AddPlot(Brushes.Green, "Signal Quality");
-		    
-		    // Ichimoku Lines (main chart overlay)
-		    AddPlot(Brushes.Red, "Tenkan-sen");         // Plot[2]
-		    AddPlot(Brushes.Blue, "Kijun-sen");         // Plot[3] 
-		    AddPlot(Brushes.Orange, "Senkou Span A");   // Plot[4]
-		    AddPlot(Brushes.Purple, "Senkou Span B");   // Plot[5]
-		    AddPlot(Brushes.Yellow, "Chikou Span");     // Plot[6]
 		    
 		    // Entry configuration
 		    BarsRequiredToTrade = Math.Max(SenkouPeriod + 5, EmaSlowPeriod + 5);
@@ -187,18 +181,19 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
-		        // Remove ichimoku initialization - we'll call it directly when needed
+		        // Initialize EMAs
 		        emaFast = EMA(EmaFastPeriod);
 		        emaSlow = EMA(EmaSlowPeriod);
 		        lwpeSeries = new Series<double>(this);
 		        
-		        // Only add EMAs to chart
+		        // Add only EMAs to the main price chart
+		        // Ichimoku will be calculated manually 
 		        AddChartIndicator(emaFast);
 		        AddChartIndicator(emaSlow);
 		        
 		        if (EnableLogging)
 		        {
-		            Print($"Initialized indicators - EMA({EmaFastPeriod},{EmaSlowPeriod}), Ichimoku will be called as needed");
+		            Print($"Initialized indicators - EMA({EmaFastPeriod},{EmaSlowPeriod}), Ichimoku calculated manually");
 		        }
 		    }
 		    catch (Exception ex)
@@ -377,6 +372,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
+		        // Plot LWPE value
 		        lock (lwpeLock)
 		        {
 		            Values[0][0] = currentLWPE;
@@ -385,25 +381,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        // Calculate and plot signal quality
 		        double signalQuality = CalculateSignalQuality();
 		        Values[1][0] = signalQuality;
-		        
-		        // Plot Ichimoku lines
-		        if (CurrentBar >= Math.Max(TenkanPeriod, KijunPeriod))
-		        {
-		            Values[2][0] = GetTenkanValue();    // Tenkan-sen (Red)
-		            Values[3][0] = GetKijunValue();     // Kijun-sen (Blue)
-		        }
-		        
-		        if (CurrentBar >= SenkouPeriod)
-		        {
-		            Values[4][0] = GetSenkouSpanA();    // Senkou Span A (Orange)
-		            Values[5][0] = GetSenkouSpanB();    // Senkou Span B (Purple)
-		        }
-		        
-		        // Chikou Span (Lagging Line) - Close shifted back 26 periods
-		        if (CurrentBar >= KijunPeriod)
-		        {
-		            Values[6][0] = Close[0];            // Chikou Span (Yellow)
-		        }
 		    }
 		    catch (Exception ex)
 		    {
