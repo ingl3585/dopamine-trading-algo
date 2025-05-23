@@ -10,6 +10,8 @@ using NinjaTrader.Cbi;
 using NinjaTrader.Data;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.Strategies;
+using NinjaTrader.Gui.Chart;
+using NinjaTrader.NinjaScript.DrawingTools;
 using System.Collections.Generic;
 using System.Web.Script.Serialization;
 using System.ComponentModel;
@@ -154,12 +156,21 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    Description = "Reinforcement Learning Trading Strategy with Ichimoku/EMA Features v2.1";
 		    Calculate = Calculate.OnBarClose;
 		    
-		    // Chart configuration
+		    // Chart configuration - ADD ICHIMOKU PLOTS
+		    IsOverlay = true;  // CHANGE TO TRUE for price overlay
+		    
+		    // LWPE and Signal Quality (subplot)
 		    AddPlot(Brushes.Blue, "LWPE");
 		    AddPlot(Brushes.Green, "Signal Quality");
-		    IsOverlay = false;
 		    
-		    // Entry configuration - increased for enhanced momentum requirements
+		    // Ichimoku Lines (main chart overlay)
+		    AddPlot(Brushes.Red, "Tenkan-sen");         // Plot[2]
+		    AddPlot(Brushes.Blue, "Kijun-sen");         // Plot[3] 
+		    AddPlot(Brushes.Orange, "Senkou Span A");   // Plot[4]
+		    AddPlot(Brushes.Purple, "Senkou Span B");   // Plot[5]
+		    AddPlot(Brushes.Yellow, "Chikou Span");     // Plot[6]
+		    
+		    // Entry configuration
 		    BarsRequiredToTrade = Math.Max(SenkouPeriod + 5, EmaSlowPeriod + 5);
 		    EntriesPerDirection = 10;
 		    EntryHandling = EntryHandling.AllEntries;
@@ -331,50 +342,75 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         #region Main Trading Logic
         
-        protected override void OnBarUpdate()
-        {
-            try
-            {
-                UpdatePlots();
-                SendFeatureVector();
-                
-                if (!IsReadyForTrading())
-                    return;
-                    
-                ProcessLatestSignal();
-                SendPositionUpdate();
-                
-                // Periodic status logging
-                if (CurrentBar % 100 == 0 && EnableLogging)
-                {
-                    LogCurrentStatus();
-                }
-            }
-            catch (Exception ex)
-            {
-                Print($"OnBarUpdate error: {ex.Message}");
-            }
-        }
+		protected override void OnBarUpdate()
+		{
+		    try
+		    {
+		        UpdatePlots();
+		        SendFeatureVector();
+		        
+		        // ADD signal arrows to chart
+		        if (CurrentBar >= BarsRequiredToTrade)
+		        {
+		            PlotSignalArrows();  // <-- ADD THIS LINE
+		        }
+		        
+		        if (!IsReadyForTrading())
+		            return;
+		            
+		        ProcessLatestSignal();
+		        SendPositionUpdate();
+		        
+		        // Periodic status logging
+		        if (CurrentBar % 100 == 0 && EnableLogging)
+		        {
+		            LogCurrentStatus();
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"OnBarUpdate error: {ex.Message}");
+		    }
+		}
         
-        private void UpdatePlots()
-        {
-            try
-            {
-                lock (lwpeLock)
-                {
-                    Values[0][0] = currentLWPE;
-                }
-                
-                // Calculate and plot signal quality
-                double signalQuality = CalculateSignalQuality();
-                Values[1][0] = signalQuality;
-            }
-            catch (Exception ex)
-            {
-                if (EnableLogging)
-                    Print($"Plot update error: {ex.Message}");
-            }
-        }
+		private void UpdatePlots()
+		{
+		    try
+		    {
+		        lock (lwpeLock)
+		        {
+		            Values[0][0] = currentLWPE;
+		        }
+		        
+		        // Calculate and plot signal quality
+		        double signalQuality = CalculateSignalQuality();
+		        Values[1][0] = signalQuality;
+		        
+		        // Plot Ichimoku lines
+		        if (CurrentBar >= Math.Max(TenkanPeriod, KijunPeriod))
+		        {
+		            Values[2][0] = GetTenkanValue();    // Tenkan-sen (Red)
+		            Values[3][0] = GetKijunValue();     // Kijun-sen (Blue)
+		        }
+		        
+		        if (CurrentBar >= SenkouPeriod)
+		        {
+		            Values[4][0] = GetSenkouSpanA();    // Senkou Span A (Orange)
+		            Values[5][0] = GetSenkouSpanB();    // Senkou Span B (Purple)
+		        }
+		        
+		        // Chikou Span (Lagging Line) - Close shifted back 26 periods
+		        if (CurrentBar >= KijunPeriod)
+		        {
+		            Values[6][0] = Close[0];            // Chikou Span (Yellow)
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        if (EnableLogging)
+		            Print($"Plot update error: {ex.Message}");
+		    }
+		}
         
 		private double CalculateSignalQuality()
 		{
@@ -1226,6 +1262,99 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    double high = MAX(High, SenkouPeriod)[0];
 		    double low = MIN(Low, SenkouPeriod)[0];
 		    return (high + low) / 2;
+		}
+		
+		private void PlotSignalArrows()
+		{
+		    try
+		    {
+		        // Get current signals
+		        double tkSignal = GetTenkanKijunSignal();
+		        double pcSignal = GetPriceCloudSignal();
+		        double emaSignal = GetEmaCrossSignal();
+		        double fcSignal = GetFutureCloudSignal();
+		        double tmSignal = GetTenkanMomentum();
+		        double kmSignal = GetKijunMomentum();
+		        
+		        // Count aligned signals
+		        double bullishCount = 0;
+		        double bearishCount = 0;
+		        double neutralCount = 0;
+		        
+		        // Major signals (weighted more heavily)
+		        var majorSignals = new[] { tkSignal, pcSignal, emaSignal };
+		        var minorSignals = new[] { fcSignal, tmSignal, kmSignal };
+		        
+		        // Count major signals
+		        foreach (double signal in majorSignals)
+		        {
+		            if (signal > 0) bullishCount++;
+		            else if (signal < 0) bearishCount++;
+		            else neutralCount++;
+		        }
+		        
+		        // Add minor signals with half weight
+		        foreach (double signal in minorSignals)
+		        {
+		            if (signal > 0) bullishCount += 0.5;
+		            else if (signal < 0) bearishCount += 0.5;
+		            else neutralCount += 0.5;
+		        }
+		        
+		        // Calculate signal quality score
+		        double signalQuality = CalculateSignalQuality();
+		        
+		        // Strong bullish setup (2+ major bullish OR high signal quality)
+		        if (bullishCount >= 2 || (bullishCount >= 1.5 && signalQuality > 0.7))
+		        {
+		            Draw.ArrowUp(this, "BullArrow" + CurrentBar, false, 0, Low[0] - 4 * TickSize, Brushes.Lime);
+		            Draw.Text(this, "BullText" + CurrentBar, $"BULL {bullishCount:F1}", 0, Low[0] - 8 * TickSize, Brushes.Lime);
+		            
+		            if (EnableLogging && CurrentBar % 20 == 0)
+		                Print($"BULLISH SETUP: TK={tkSignal}, PC={pcSignal}, EMA={emaSignal}, Quality={signalQuality:F2}");
+		        }
+		        // Strong bearish setup (2+ major bearish OR high signal quality)
+		        else if (bearishCount >= 2 || (bearishCount >= 1.5 && signalQuality < 0.3))
+		        {
+		            Draw.ArrowDown(this, "BearArrow" + CurrentBar, false, 0, High[0] + 4 * TickSize, Brushes.Red);
+		            Draw.Text(this, "BearText" + CurrentBar, $"BEAR {bearishCount:F1}", 0, High[0] + 8 * TickSize, Brushes.Red);
+		            
+		            if (EnableLogging && CurrentBar % 20 == 0)
+		                Print($"BEARISH SETUP: TK={tkSignal}, PC={pcSignal}, EMA={emaSignal}, Quality={signalQuality:F2}");
+		        }
+		        // Mixed/neutral signals (1+ neutral signals OR moderate signal quality)
+		        else if (neutralCount >= 1 || (signalQuality > 0.4 && signalQuality < 0.6))
+		        {
+		            Draw.Diamond(this, "NeutralDiamond" + CurrentBar, false, 0, Close[0], Brushes.Yellow);
+		            Draw.Text(this, "NeutralText" + CurrentBar, $"NEUTRAL {neutralCount:F1}", 0, Close[0] + 2 * TickSize, Brushes.Yellow);
+		            
+		            if (EnableLogging && CurrentBar % 50 == 0)
+		                Print($"NEUTRAL SETUP: TK={tkSignal}, PC={pcSignal}, EMA={emaSignal}, Quality={signalQuality:F2}");
+		        }
+		        
+		        // Add trend strength indicator
+		        if (CurrentBar % 10 == 0) // Every 10 bars
+		        {
+		            string trendStrength = "";
+		            if (signalQuality > 0.8) trendStrength = "STRONG";
+		            else if (signalQuality > 0.6) trendStrength = "MODERATE";
+		            else if (signalQuality < 0.2) trendStrength = "STRONG BEAR";
+		            else if (signalQuality < 0.4) trendStrength = "MODERATE BEAR";
+		            else trendStrength = "WEAK/MIXED";
+		            
+		            if (!string.IsNullOrEmpty(trendStrength))
+		            {
+						Draw.TextFixed(this, "TrendStrength" + CurrentBar, 
+						    $"Trend: {trendStrength} | Quality: {signalQuality:F2}", 
+						    TextPosition.TopRight);
+		            }
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        if (EnableLogging)
+		            Print($"Signal arrow error: {ex.Message}");
+		    }
 		}
         
         #endregion
