@@ -1,10 +1,45 @@
 # requirements.txt
 
-# To run : pip install -r requirements.txt
+# Core ML/RL dependencies
+numpy>=1.21.0
+pandas>=1.3.0
+torch>=1.10.0
+scikit-learn>=1.0.0
 
-numpy
-pandas
-torch
-scikit-learn
-hmmlearn
-arch
+# Technical analysis (if using additional TA libraries)
+ta-lib>=0.4.21
+TA-Lib>=0.4.21
+
+# Statistical analysis
+scipy>=1.7.0
+statsmodels>=0.12.0
+
+# Time series analysis
+hmmlearn>=0.2.6
+arch>=5.0.0
+
+# Data handling and visualization (optional but recommended)
+matplotlib>=3.3.0
+seaborn>=0.11.0
+plotly>=5.0.0
+
+# Network and I/O
+requests>=2.25.0
+aiohttp>=3.7.0
+
+# Logging and monitoring
+colorlog>=6.0.0
+tqdm>=4.60.0
+
+# Development and testing (optional)
+pytest>=6.0.0
+pytest-cov>=2.10.0
+black>=21.0.0
+flake8>=3.8.0
+
+# Performance optimization (optional)
+numba>=0.53.0
+cython>=0.29.0
+
+# Note: Install with: pip install -r requirements.txt
+# For development: pip install -r requirements.txt[dev]
