@@ -24,7 +24,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         #region Private Fields
         
         // Indicators
-        private ATR atr;
+        private Ichimoku ichimoku;
+        private EMA emaFast;
+        private EMA emaSlow;
         private Series<double> lwpeSeries;
         
         // LWPE handling
@@ -42,6 +44,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private long lastProcessedTimestamp = 0;
         private DateTime lastSignalTime = DateTime.MinValue;
         private readonly object signalLock = new object();
+        
+        // Performance tracking
+        private int signalCount = 0;
+        private int tradesExecuted = 0;
+        private DateTime strategyStartTime;
         
         // Serialization
         private readonly JavaScriptSerializer serializer = new JavaScriptSerializer();
@@ -61,9 +68,38 @@ namespace NinjaTrader.NinjaScript.Strategies
         public double RiskPercent { get; set; } = 0.01;
 
         [NinjaScriptProperty]
-        [Range(0.5, 10)]
-        [Display(Name = "ATR Stop Multiple", Description = "ATR multiplier for stop loss", Order = 2, GroupName = "Risk Management")]
-        public double AtrStopMultiple { get; set; } = 2.0;
+        [Range(5, 50)]
+        [Display(Name = "EMA Fast Period", Description = "Fast EMA period", Order = 2, GroupName = "Indicators")]
+        public int EmaFastPeriod { get; set; } = 12;
+
+        [NinjaScriptProperty]
+        [Range(10, 100)]
+        [Display(Name = "EMA Slow Period", Description = "Slow EMA period", Order = 3, GroupName = "Indicators")]
+        public int EmaSlowPeriod { get; set; } = 26;
+
+        [NinjaScriptProperty]
+        [Range(5, 20)]
+        [Display(Name = "Tenkan Period", Description = "Ichimoku Tenkan period", Order = 4, GroupName = "Indicators")]
+        public int TenkanPeriod { get; set; } = 9;
+
+        [NinjaScriptProperty]
+        [Range(15, 50)]
+        [Display(Name = "Kijun Period", Description = "Ichimoku Kijun period", Order = 5, GroupName = "Indicators")]
+        public int KijunPeriod { get; set; } = 26;
+
+        [NinjaScriptProperty]
+        [Range(25, 100)]
+        [Display(Name = "Senkou Period", Description = "Ichimoku Senkou period", Order = 6, GroupName = "Indicators")]
+        public int SenkouPeriod { get; set; } = 52;
+
+        [NinjaScriptProperty]
+        [Range(0.1, 1.0)]
+        [Display(Name = "Min Confidence", Description = "Minimum confidence threshold for trading", Order = 7, GroupName = "Risk Management")]
+        public double MinConfidence { get; set; } = 0.6;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Enable Logging", Description = "Enable detailed logging", Order = 8, GroupName = "Debug")]
+        public bool EnableLogging { get; set; } = true;
         
         #endregion
         
@@ -95,6 +131,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                         {
                             InitializeSockets();
                         }
+                        strategyStartTime = DateTime.Now;
+                        Print($"RLTrader #{instanceId} started in real-time mode with Ichimoku/EMA features");
                         break;
                         
                     case State.Terminated:
@@ -114,15 +152,16 @@ namespace NinjaTrader.NinjaScript.Strategies
             instanceId = ++instanceCounter;
             
             Name = "RLTrader";
-            Description = "Reinforcement Learning Trading Strategy";
+            Description = "Reinforcement Learning Trading Strategy with Ichimoku/EMA Features v2.0";
             Calculate = Calculate.OnBarClose;
             
             // Chart configuration
             AddPlot(Brushes.Blue, "LWPE");
+            AddPlot(Brushes.Green, "Signal Quality");
             IsOverlay = false;
             
-            // Entry configuration
-			BarsRequiredToTrade = 14; // ATR warm up
+            // Entry configuration - increased for Ichimoku requirements
+			BarsRequiredToTrade = Math.Max(SenkouPeriod, EmaSlowPeriod) + 10;
             EntriesPerDirection = 10;
             EntryHandling = EntryHandling.AllEntries;
             
@@ -130,13 +169,32 @@ namespace NinjaTrader.NinjaScript.Strategies
             isTerminated = false;
             socketsStarted = false;
             running = false;
+            signalCount = 0;
+            tradesExecuted = 0;
         }
         
         private void InitializeIndicators()
         {
-            atr = ATR(14);
-            lwpeSeries = new Series<double>(this);
-            AddChartIndicator(atr);
+            try
+            {
+                ichimoku = Ichimoku(TenkanPeriod, KijunPeriod, SenkouPeriod);
+                emaFast = EMA(EmaFastPeriod);
+                emaSlow = EMA(EmaSlowPeriod);
+                lwpeSeries = new Series<double>(this);
+                
+                AddChartIndicator(ichimoku);
+                AddChartIndicator(emaFast);
+                AddChartIndicator(emaSlow);
+                
+                if (EnableLogging)
+                {
+                    Print($"Initialized indicators - Ichimoku({TenkanPeriod},{KijunPeriod},{SenkouPeriod}), EMA({EmaFastPeriod},{EmaSlowPeriod})");
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"Indicator initialization error: {ex.Message}");
+            }
         }
         
         private void InitializeSockets()
@@ -151,7 +209,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 ConnectToSockets();
                 StartBackgroundThreads();
                 socketsStarted = true;
-                Print($"RLTrader connected to Python service - Ready for signals");
+                Print($"RLTrader #{instanceId} connected to Python service - Ready for Ichimoku/EMA signals");
             }
             catch (Exception ex)
             {
@@ -180,7 +238,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             
             if (socketsStarted)
             {
-                Print($"RLTrader shutting down");
+                LogPerformanceSummary();
+                Print($"RLTrader #{instanceId} shutting down");
             }
             
             running = false;
@@ -196,6 +255,26 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             
             DisposeSockets();
+        }
+        
+        private void LogPerformanceSummary()
+        {
+            try
+            {
+                if (strategyStartTime != DateTime.MinValue)
+                {
+                    TimeSpan uptime = DateTime.Now - strategyStartTime;
+                    Print($"=== Performance Summary ===");
+                    Print($"Uptime: {uptime.TotalHours:F1} hours");
+                    Print($"Signals processed: {signalCount}");
+                    Print($"Trades executed: {tradesExecuted}");
+                    Print($"Current position: {GetCurrentPosition()}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"Performance summary error: {ex.Message}");
+            }
         }
         
         #endregion
@@ -219,13 +298,13 @@ namespace NinjaTrader.NinjaScript.Strategies
             recvThread = new Thread(SignalReceiveLoop) 
             { 
                 IsBackground = true, 
-                Name = "SignalReceiver" 
+                Name = $"SignalReceiver_{instanceId}" 
             };
             
             lwpeThread = new Thread(LwpeReceiveLoop) 
             { 
                 IsBackground = true, 
-                Name = "LwpeReceiver" 
+                Name = $"LwpeReceiver_{instanceId}" 
             };
             
             recvThread.Start();
@@ -255,28 +334,121 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         protected override void OnBarUpdate()
         {
-            UpdateLwpePlot();
-            SendFeatureVector();
-            
-            if (!IsReadyForTrading())
-                return;
+            try
+            {
+                UpdatePlots();
+                SendFeatureVector();
                 
-            ProcessLatestSignal();
-            SendPositionUpdate();
+                if (!IsReadyForTrading())
+                    return;
+                    
+                ProcessLatestSignal();
+                SendPositionUpdate();
+                
+                // Periodic status logging
+                if (CurrentBar % 100 == 0 && EnableLogging)
+                {
+                    LogCurrentStatus();
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"OnBarUpdate error: {ex.Message}");
+            }
         }
         
-        private void UpdateLwpePlot()
+        private void UpdatePlots()
         {
-            lock (lwpeLock)
+            try
             {
-                Values[0][0] = currentLWPE;
+                lock (lwpeLock)
+                {
+                    Values[0][0] = currentLWPE;
+                }
+                
+                // Calculate and plot signal quality
+                double signalQuality = CalculateSignalQuality();
+                Values[1][0] = signalQuality;
+            }
+            catch (Exception ex)
+            {
+                if (EnableLogging)
+                    Print($"Plot update error: {ex.Message}");
+            }
+        }
+        
+        private double CalculateSignalQuality()
+        {
+            try
+            {
+                if (CurrentBar < Math.Max(SenkouPeriod, EmaSlowPeriod))
+                    return 0.5;
+                
+                double quality = 0.0;
+                int signalCount = 0;
+                
+                // Ichimoku signals
+                if (ichimoku.TenkanSen[0] != 0 && ichimoku.KijunSen[0] != 0)
+                {
+                    quality += ichimoku.TenkanSen[0] > ichimoku.KijunSen[0] ? 1.0 : 0.0;
+                    signalCount++;
+                }
+                
+                // Price vs Cloud
+                double senkouA = ichimoku.SenkouSpanA[0];
+                double senkouB = ichimoku.SenkouSpanB[0];
+                if (senkouA != 0 && senkouB != 0)
+                {
+                    double cloudTop = Math.Max(senkouA, senkouB);
+                    double cloudBottom = Math.Min(senkouA, senkouB);
+                    
+                    if (Close[0] > cloudTop)
+                        quality += 1.0;
+                    else if (Close[0] < cloudBottom)
+                        quality += 0.0;
+                    else
+                        quality += 0.5;
+                    signalCount++;
+                }
+                
+                // EMA signal
+                if (emaFast[0] != 0 && emaSlow[0] != 0)
+                {
+                    quality += emaFast[0] > emaSlow[0] ? 1.0 : 0.0;
+                    signalCount++;
+                }
+                
+                return signalCount > 0 ? quality / signalCount : 0.5;
+            }
+            catch
+            {
+                return 0.5;
             }
         }
         
 		private bool IsReadyForTrading()
 		{
-		    return true;
+		    return CurrentBar >= Math.Max(SenkouPeriod, EmaSlowPeriod) && 
+		           socketsStarted && 
+		           running;
 		}
+        
+        private void LogCurrentStatus()
+        {
+            try
+            {
+                var features = CalculateFeatures();
+                Print($"Bar {CurrentBar}: TK={features.TenkanKijunSignal:F0}, " +
+                      $"Cloud={features.PriceCloudSignal:F0}, " +
+                      $"EMA={features.EmaCrossSignal:F0}, " +
+                      $"LWPE={features.LWPE:F3}, " +
+                      $"Pos={GetCurrentPosition()}");
+            }
+            catch (Exception ex)
+            {
+                Print($"Status logging error: {ex.Message}");
+            }
+        }
         
 		private void ProcessLatestSignal()
 		{
@@ -287,8 +459,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        return;
 		    }
 		    
-		    ExecuteSignal(signal);
-		    UpdateLastSignalTime(signal);
+		    if (IsSignalValid(signal))
+		    {
+		        ExecuteSignal(signal);
+		        UpdateLastSignalTime(signal);
+		        signalCount++;
+		    }
 		}
 		
 		private SignalData GetLatestSignal()
@@ -299,51 +475,74 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    }
 		}
 		
-		private bool IsSignalTimestampValid(SignalData signal)
+		private bool IsSignalValid(SignalData signal)
 		{
 		    try
 		    {
+		        // Check timestamp validity
 		        var signalDateTime = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(signal.Timestamp);
-		        
 		        var signalLocalTime = signalDateTime.ToLocalTime();
-		        
 		        var currentTime = DateTime.Now;
-		        
 		        var timeDiff = (currentTime - signalLocalTime).TotalSeconds;
 
-		        bool isValid = Math.Abs(timeDiff) <= 120;
+		        if (Math.Abs(timeDiff) > 120)
+		        {
+		            if (EnableLogging)
+		                Print($"Signal expired: {timeDiff:F1}s old");
+		            return false;
+		        }
 		        
-		        return isValid;
+		        // Check confidence threshold
+		        if (signal.Confidence < MinConfidence)
+		        {
+		            if (EnableLogging)
+		                Print($"Signal confidence {signal.Confidence:F3} below threshold {MinConfidence:F3}");
+		            return false;
+		        }
+		        
+		        return true;
 		    }
 		    catch (Exception ex)
 		    {
-		        Print($"Timestamp validation error: {ex.Message}");
+		        Print($"Signal validation error: {ex.Message}");
 		        return false;
 		    }
 		}
 		
 		private void ExecuteSignal(SignalData signal)
 		{
-		    
-		    if (signal.Size <= 0 || signal.Size > 20)
+		    try
 		    {
-		        return;
+		        if (signal.Size <= 0 || signal.Size > 20)
+		        {
+		            if (EnableLogging)
+		                Print($"Invalid signal size: {signal.Size}");
+		            return;
+		        }
+
+		        switch (signal.Action)
+		        {
+		            case 1: // BUY
+		                EnterLong(signal.Size, "IchimokuEMA_Long");
+		                if (EnableLogging)
+		                    Print($"Executing LONG: size={signal.Size}, conf={signal.Confidence:F3}");
+		                break;
+		                
+		            case 2: // SELL
+		                EnterShort(signal.Size, "IchimokuEMA_Short");
+		                if (EnableLogging)
+		                    Print($"Executing SHORT: size={signal.Size}, conf={signal.Confidence:F3}");
+		                break;
+		                
+		            default: // HOLD
+		                if (EnableLogging)
+		                    Print($"HOLD signal: conf={signal.Confidence:F3}");
+		                break;
+		        }
 		    }
-		
-		    int currentPos = GetCurrentPosition();
-		
-		    switch (signal.Action)
+		    catch (Exception ex)
 		    {
-		        case 1: // BUY
-		            EnterLong(signal.Size, "Long");
-		            break;
-		            
-		        case 2: // SELL
-		            EnterShort(signal.Size, "Short");
-		            break;
-		            
-		        default: // HOLD
-		            break;
+		        Print($"Signal execution error: {ex.Message}");
 		    }
 		}
 		
@@ -351,7 +550,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    if (execution.Order != null)
 		    {
-		        Print($"Filled {execution.Order.Name}: {quantity} @ {price:F2}");
+		        tradesExecuted++;
+		        Print($"FILL #{tradesExecuted}: {execution.Order.Name} {quantity} @ {price:F2} | Position: {GetCurrentPosition()}");
 		        
 		        Core.Globals.RandomDispatcher.BeginInvoke(new Action(() =>
 		        {
@@ -363,7 +563,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private void UpdateLastSignalTime(SignalData signal)
 		{
 		    lastProcessedTimestamp = signal.Timestamp;
-		    
 		    lastSignalTime = Time[0];
 		}
         
@@ -397,7 +596,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             catch (Exception ex)
             {
-                Print($"Tick forwarding error: {ex.Message}");
+                if (EnableLogging)
+                    Print($"Tick forwarding error: {ex.Message}");
             }
         }
         
@@ -413,10 +613,18 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         private void SendTickData(string tickData)
         {
-            if (tickSock?.Connected == true)
+            try
             {
-                byte[] data = Encoding.UTF8.GetBytes(tickData);
-                tickSock.GetStream().Write(data, 0, data.Length);
+                if (tickSock?.Connected == true)
+                {
+                    byte[] data = Encoding.UTF8.GetBytes(tickData);
+                    tickSock.GetStream().Write(data, 0, data.Length);
+                }
+            }
+            catch (Exception ex)
+            {
+                if (EnableLogging)
+                    Print($"Tick send error: {ex.Message}");
             }
         }
         
@@ -437,16 +645,59 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
             catch (Exception ex)
             {
-                Print($"Feature transmission error: {ex.Message}");
+                if (EnableLogging)
+                    Print($"Feature transmission error: {ex.Message}");
             }
         }
         
         private FeatureVector CalculateFeatures()
         {
-            double volMean = SMA(Volume, 20)[0];
-            double volStd = StdDev(Volume, 20)[0];
-            double normalizedVolume = volStd != 0 ? (Volume[0] - volMean) / volStd : 0;
-            
+            try
+            {
+                // Volume normalization
+                double volMean = SMA(Volume, 20)[0];
+                double volStd = StdDev(Volume, 20)[0];
+                double normalizedVolume = volStd != 0 ? (Volume[0] - volMean) / volStd : 0;
+                
+                // LWPE value
+                double lwpeValue;
+                lock (lwpeLock)
+                {
+                    lwpeValue = currentLWPE;
+                }
+                
+                // Calculate all Ichimoku signals
+                double tenkanKijunSignal = GetTenkanKijunSignal();
+                double priceCloudSignal = GetPriceCloudSignal();
+                double futureCloudSignal = GetFutureCloudSignal();
+                double emaCrossSignal = GetEmaCrossSignal();
+                double tenkanMomentum = GetTenkanMomentum();
+                double kijunMomentum = GetKijunMomentum();
+                
+                return new FeatureVector
+                {
+                    Close = Close[0],
+                    NormalizedVolume = normalizedVolume,
+                    TenkanKijunSignal = tenkanKijunSignal,
+                    PriceCloudSignal = priceCloudSignal,
+                    FutureCloudSignal = futureCloudSignal,
+                    EmaCrossSignal = emaCrossSignal,
+                    TenkanMomentum = tenkanMomentum,
+                    KijunMomentum = kijunMomentum,
+                    LWPE = lwpeValue,
+                    IsLive = State == State.Realtime
+                };
+            }
+            catch (Exception ex)
+            {
+                if (EnableLogging)
+                    Print($"Feature calculation error: {ex.Message}");
+                return GetDefaultFeatures();
+            }
+        }
+        
+        private FeatureVector GetDefaultFeatures()
+        {
             double lwpeValue;
             lock (lwpeLock)
             {
@@ -456,23 +707,140 @@ namespace NinjaTrader.NinjaScript.Strategies
             return new FeatureVector
             {
                 Close = Close[0],
-                NormalizedVolume = normalizedVolume,
-                ATR = atr[0],
+                NormalizedVolume = 0,
+                TenkanKijunSignal = 0,
+                PriceCloudSignal = 0,
+                FutureCloudSignal = 0,
+                EmaCrossSignal = 0,
+                TenkanMomentum = 0,
+                KijunMomentum = 0,
                 LWPE = lwpeValue,
                 IsLive = State == State.Realtime
             };
+        }
+        
+        private double GetTenkanKijunSignal()
+        {
+            try
+            {
+                if (CurrentBar < KijunPeriod)
+                    return 0;
+                    
+                return ichimoku.TenkanSen[0] > ichimoku.KijunSen[0] ? 1.0 : -1.0;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+        
+        private double GetPriceCloudSignal()
+        {
+            try
+            {
+                if (CurrentBar < SenkouPeriod)
+                    return 0;
+                    
+                double senkouA = ichimoku.SenkouSpanA[0];
+                double senkouB = ichimoku.SenkouSpanB[0];
+                double cloudTop = Math.Max(senkouA, senkouB);
+                double cloudBottom = Math.Min(senkouA, senkouB);
+                
+                if (Close[0] > cloudTop)
+                    return 1.0; // Above cloud (bullish)
+                else if (Close[0] < cloudBottom)
+                    return -1.0; // Below cloud (bearish)
+                else
+                    return 0.0; // Inside cloud (neutral)
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+        
+        private double GetFutureCloudSignal()
+        {
+            try
+            {
+                if (CurrentBar < SenkouPeriod)
+                    return 0;
+                    
+                // Look at future cloud color
+                double futureA = ichimoku.SenkouSpanA[0];
+                double futureB = ichimoku.SenkouSpanB[0];
+                return futureA > futureB ? 1.0 : -1.0; // Green vs Red cloud
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+        
+        private double GetEmaCrossSignal()
+        {
+            try
+            {
+                if (CurrentBar < EmaSlowPeriod)
+                    return 0;
+                    
+                return emaFast[0] > emaSlow[0] ? 1.0 : -1.0;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+        
+        private double GetTenkanMomentum()
+        {
+            try
+            {
+                if (CurrentBar < TenkanPeriod + 3)
+                    return 0;
+                    
+                double current = ichimoku.TenkanSen[0];
+                double previous = ichimoku.TenkanSen[3];
+                return current > previous ? 1.0 : -1.0;
+            }
+            catch
+            {
+                return 0;
+            }
+        }
+        
+        private double GetKijunMomentum()
+        {
+            try
+            {
+                if (CurrentBar < KijunPeriod + 3)
+                    return 0;
+                    
+                double current = ichimoku.KijunSen[0];
+                double previous = ichimoku.KijunSen[3];
+                return current > previous ? 1.0 : -1.0;
+            }
+            catch
+            {
+                return 0;
+            }
         }
         
         private string CreateFeaturePayload(FeatureVector features)
         {
             return string.Format(CultureInfo.InvariantCulture,
                 @"{{
-                    ""features"":[{0:F6},{1:F6},{2:F6},{3:F6}],
-                    ""live"":{4}
+                    ""features"":[{0:F6},{1:F6},{2:F1},{3:F1},{4:F1},{5:F1},{6:F1},{7:F1},{8:F6}],
+                    ""live"":{9}
                 }}",
                 features.Close, 
                 features.NormalizedVolume, 
-                features.ATR, 
+                features.TenkanKijunSignal,
+                features.PriceCloudSignal,
+                features.FutureCloudSignal,
+                features.EmaCrossSignal,
+                features.TenkanMomentum,
+                features.KijunMomentum,
                 features.LWPE,
                 features.IsLive ? 1 : 0);
         }
@@ -491,7 +859,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    }
 		    catch (Exception ex)
 		    {
-		        Print($"Position update error: {ex.Message}");
+		        if (EnableLogging)
+		            Print($"Position update error: {ex.Message}");
 		    }
 		}
 		
@@ -528,6 +897,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                         break;
                         
                     int messageLength = BitConverter.ToInt32(lengthBuffer, 0);
+                    if (messageLength > 10000) // Sanity check
+                        continue;
+                        
                     byte[] messageBuffer = new byte[messageLength];
                     
                     if (!ReadExactBytes(stream, messageBuffer, messageLength))
@@ -537,7 +909,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
                 catch (Exception ex)
                 {
-                    Print($"Signal receive error: {ex.Message}");
+                    if (EnableLogging)
+                        Print($"Signal receive error: {ex.Message}");
                     Thread.Sleep(1000);
                 }
             }
@@ -560,7 +933,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
                 catch (Exception ex)
                 {
-                    Print($"LWPE receive error: {ex.Message}");
+                    if (EnableLogging)
+                        Print($"LWPE receive error: {ex.Message}");
                     Thread.Sleep(1000);
                 }
             }
@@ -581,54 +955,75 @@ namespace NinjaTrader.NinjaScript.Strategies
         
 		private void ProcessReceivedSignal(byte[] messageBuffer)
 		{
-		    string jsonString = Encoding.UTF8.GetString(messageBuffer);
-		    var signalDict = serializer.Deserialize<Dictionary<string, object>>(jsonString);
-		    
-			lock (signalLock)
-			{
-			    latestSignal = new SignalData
+		    try
+		    {
+		        string jsonString = Encoding.UTF8.GetString(messageBuffer);
+		        var signalDict = serializer.Deserialize<Dictionary<string, object>>(jsonString);
+		        
+			    lock (signalLock)
 			    {
-			        Action = Convert.ToInt32(signalDict["action"]),
-			        Size = Convert.ToInt32(signalDict["size"]),
-			        Confidence = Convert.ToDouble(signalDict["confidence"]),
-			        Timestamp = Convert.ToInt64(signalDict["timestamp"]),
-			        SignalId = signalDict.ContainsKey("signal_id") ? Convert.ToInt32(signalDict["signal_id"]) : 0
-			    };
+			        latestSignal = new SignalData
+			        {
+			            Action = Convert.ToInt32(signalDict["action"]),
+			            Size = Convert.ToInt32(signalDict["size"]),
+			            Confidence = Convert.ToDouble(signalDict["confidence"]),
+			            Timestamp = Convert.ToInt64(signalDict["timestamp"]),
+			            SignalId = signalDict.ContainsKey("signal_id") ? Convert.ToInt32(signalDict["signal_id"]) : 0
+			        };
 			
-			    string action_name = latestSignal.Action == 1 ? "Long" : (latestSignal.Action == 2 ? "Short" : "Hold");
-			
-			    Print(string.Format("Signal received - {0}, size={1}, confidence={2:F3}, timestamp={3}",
-			        action_name,
-			        latestSignal.Size,
-			        latestSignal.Confidence,
-			        latestSignal.Timestamp));
-			}
+			        if (EnableLogging)
+			        {
+			            string actionName = latestSignal.Action == 1 ? "Long" : (latestSignal.Action == 2 ? "Short" : "Hold");
+			            Print($"Signal #{latestSignal.SignalId}: {actionName}, size={latestSignal.Size}, conf={latestSignal.Confidence:F3}");
+			        }
+			    }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Signal processing error: {ex.Message}");
+		    }
 		}
         
         private void ProcessLwpeData(byte[] buffer, int bytesRead)
         {
-            string valueString = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
-            
-            if (double.TryParse(valueString, NumberStyles.Any, CultureInfo.InvariantCulture, out double lwpeValue))
+            try
             {
-                lock (lwpeLock)
+                string valueString = Encoding.UTF8.GetString(buffer, 0, bytesRead).Trim();
+                
+                if (double.TryParse(valueString, NumberStyles.Any, CultureInfo.InvariantCulture, out double lwpeValue))
                 {
-                    currentLWPE = lwpeValue;
+                    lock (lwpeLock)
+                    {
+                        currentLWPE = Math.Max(0, Math.Min(1, lwpeValue)); // Clamp to [0,1]
+                    }
                 }
+            }
+            catch (Exception ex)
+            {
+                if (EnableLogging)
+                    Print($"LWPE processing error: {ex.Message}");
             }
         }
         
         private void TransmitData(TcpClient client, string data)
         {
-            if (client?.Connected != true)
-                return;
+            try
+            {
+                if (client?.Connected != true)
+                    return;
+                    
+                byte[] payload = Encoding.UTF8.GetBytes(data);
+                byte[] header = BitConverter.GetBytes(payload.Length);
                 
-            byte[] payload = Encoding.UTF8.GetBytes(data);
-            byte[] header = BitConverter.GetBytes(payload.Length);
-            
-            var stream = client.GetStream();
-            stream.Write(header, 0, 4);
-            stream.Write(payload, 0, payload.Length);
+                var stream = client.GetStream();
+                stream.Write(header, 0, 4);
+                stream.Write(payload, 0, payload.Length);
+            }
+            catch (Exception ex)
+            {
+                if (EnableLogging)
+                    Print($"Data transmission error: {ex.Message}");
+            }
         }
         
         #endregion
@@ -648,9 +1043,70 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             public double Close { get; set; }
             public double NormalizedVolume { get; set; }
-            public double ATR { get; set; }
+            public double TenkanKijunSignal { get; set; }
+            public double PriceCloudSignal { get; set; }
+            public double FutureCloudSignal { get; set; }
+            public double EmaCrossSignal { get; set; }
+            public double TenkanMomentum { get; set; }
+            public double KijunMomentum { get; set; }
             public double LWPE { get; set; }
             public bool IsLive { get; set; }
+        }
+        
+        #endregion
+        
+        #region Public Methods for Monitoring
+        
+        public string GetStrategyStatus()
+        {
+            try
+            {
+                return $"RLTrader #{instanceId} | " +
+                       $"Signals: {signalCount} | " +
+                       $"Trades: {tradesExecuted} | " +
+                       $"Position: {GetCurrentPosition()} | " +
+                       $"Ready: {IsReadyForTrading()} | " +
+                       $"LWPE: {currentLWPE:F3}";
+            }
+            catch
+            {
+                return "Status unavailable";
+            }
+        }
+        
+        public Dictionary<string, object> GetDetailedStatus()
+        {
+            try
+            {
+                var features = CalculateFeatures();
+                
+                return new Dictionary<string, object>
+                {
+                    ["instance_id"] = instanceId,
+                    ["signals_processed"] = signalCount,
+                    ["trades_executed"] = tradesExecuted,
+                    ["current_position"] = GetCurrentPosition(),
+                    ["is_ready"] = IsReadyForTrading(),
+                    ["current_bar"] = CurrentBar,
+                    ["ichimoku_signals"] = new Dictionary<string, object>
+                    {
+                        ["tenkan_kijun"] = features.TenkanKijunSignal,
+                        ["price_cloud"] = features.PriceCloudSignal,
+                        ["future_cloud"] = features.FutureCloudSignal,
+                        ["tenkan_momentum"] = features.TenkanMomentum,
+                        ["kijun_momentum"] = features.KijunMomentum
+                    },
+                    ["ema_signal"] = features.EmaCrossSignal,
+                    ["lwpe"] = features.LWPE,
+                    ["signal_quality"] = CalculateSignalQuality(),
+                    ["uptime_hours"] = strategyStartTime != DateTime.MinValue ? 
+                        (DateTime.Now - strategyStartTime).TotalHours : 0
+                };
+            }
+            catch (Exception ex)
+            {
+                return new Dictionary<string, object> { ["error"] = ex.Message };
+            }
         }
         
         #endregion

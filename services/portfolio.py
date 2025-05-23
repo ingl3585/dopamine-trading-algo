@@ -9,33 +9,225 @@ class Portfolio:
         self.cfg = cfg
         self.position = 0
         self.max_position = cfg.MAX_SIZE
+        
+        # Enhanced position sizing for Ichimoku/EMA signals
+        self.signal_weights = {
+            'ichimoku_alignment': 0.4,
+            'ema_alignment': 0.3,
+            'momentum_alignment': 0.2,
+            'confidence_base': 0.1
+        }
 
     def update_position(self, pos):
+        """Update current position"""
         self.position = pos
 
     def get_available_capacity(self, action):
+        """Get available capacity for new positions"""
         if action == 1:  # BUY
             return max(0, self.max_position - self.position)
         elif action == 2:  # SELL  
             return max(0, self.max_position + self.position)
         return 0
     
-    def calculate_position_size(self, action: int, confidence: float) -> int:
+    def calculate_position_size(self, action: int, confidence: float, signal_data=None) -> int:
+        """
+        Calculate position size with enhanced logic for Ichimoku/EMA signals
+        
+        Args:
+            action: Trading action (0=hold, 1=long, 2=short)
+            confidence: Model confidence
+            signal_data: Optional dict with current signal values
+        """
         if action == 0:
             return 0
         
         available_capacity = self.get_available_capacity(action)
         
         if available_capacity <= 0:
+            log.debug(f"No available capacity for action {action}")
             return 0
         
+        # Enhanced confidence calculation with signal alignment
+        enhanced_confidence = self._calculate_enhanced_confidence(
+            confidence, action, signal_data
+        )
+        
+        # Check minimum confidence threshold
+        if enhanced_confidence < self.cfg.CONFIDENCE_THRESHOLD:
+            log.debug(f"Enhanced confidence {enhanced_confidence:.3f} below threshold")
+            return 0
+        
+        # Base position sizing
         base_size = self.cfg.BASE_SIZE
         
-        confidence_multiplier = max(0.5, confidence)
+        # Apply confidence multiplier with signal-based scaling
+        confidence_multiplier = self._calculate_confidence_multiplier(enhanced_confidence)
         scaled_size = int(base_size * confidence_multiplier)
         
+        # Apply bounds
         scaled_size = max(self.cfg.MIN_SIZE, min(scaled_size, self.cfg.MAX_SIZE))
         
+        # Final capacity check
         final_size = min(scaled_size, available_capacity)
         
+        log.debug(f"Position sizing: action={action}, conf={confidence:.3f}, "
+                 f"enhanced_conf={enhanced_confidence:.3f}, size={final_size}")
+        
         return final_size
+
+    def _calculate_enhanced_confidence(self, base_confidence, action, signal_data):
+        """Calculate enhanced confidence using signal alignment"""
+        if not signal_data:
+            return base_confidence
+        
+        try:
+            alignment_scores = {
+                'ichimoku_alignment': self._get_ichimoku_alignment_score(action, signal_data),
+                'ema_alignment': self._get_ema_alignment_score(action, signal_data),
+                'momentum_alignment': self._get_momentum_alignment_score(action, signal_data)
+            }
+            
+            # Calculate weighted alignment score
+            total_alignment = sum(
+                self.signal_weights[key] * score 
+                for key, score in alignment_scores.items()
+            )
+            
+            # Combine with base confidence
+            enhanced_confidence = (
+                self.signal_weights['confidence_base'] * base_confidence +
+                (1 - self.signal_weights['confidence_base']) * total_alignment
+            )
+            
+            return min(enhanced_confidence, 0.95)  # Cap at 95%
+            
+        except Exception as e:
+            log.warning(f"Enhanced confidence calculation failed: {e}")
+            return base_confidence
+
+    def _get_ichimoku_alignment_score(self, action, signal_data):
+        """Calculate Ichimoku signal alignment score"""
+        try:
+            expected_direction = 1 if action == 1 else -1
+            
+            alignments = []
+            
+            # Tenkan/Kijun cross
+            if 'tenkan_kijun_signal' in signal_data:
+                signal = signal_data['tenkan_kijun_signal']
+                if signal != 0:
+                    alignments.append(1.0 if signal == expected_direction else 0.0)
+            
+            # Price vs Cloud
+            if 'price_cloud_signal' in signal_data:
+                signal = signal_data['price_cloud_signal']
+                if signal != 0:
+                    alignments.append(1.0 if signal == expected_direction else 0.0)
+            
+            # Future Cloud color
+            if 'future_cloud_signal' in signal_data:
+                signal = signal_data['future_cloud_signal']
+                if signal != 0:
+                    alignments.append(1.0 if signal == expected_direction else 0.0)
+            
+            return sum(alignments) / len(alignments) if alignments else 0.5
+            
+        except Exception as e:
+            log.debug(f"Ichimoku alignment calculation error: {e}")
+            return 0.5
+
+    def _get_ema_alignment_score(self, action, signal_data):
+        """Calculate EMA signal alignment score"""
+        try:
+            if 'ema_cross_signal' not in signal_data:
+                return 0.5
+            
+            ema_signal = signal_data['ema_cross_signal']
+            if ema_signal == 0:
+                return 0.5
+            
+            expected_direction = 1 if action == 1 else -1
+            return 1.0 if ema_signal == expected_direction else 0.0
+            
+        except Exception as e:
+            log.debug(f"EMA alignment calculation error: {e}")
+            return 0.5
+
+    def _get_momentum_alignment_score(self, action, signal_data):
+        """Calculate momentum signal alignment score"""
+        try:
+            expected_direction = 1 if action == 1 else -1
+            
+            alignments = []
+            
+            # Tenkan momentum
+            if 'tenkan_momentum' in signal_data:
+                momentum = signal_data['tenkan_momentum']
+                if momentum != 0:
+                    alignments.append(1.0 if momentum == expected_direction else 0.0)
+            
+            # Kijun momentum
+            if 'kijun_momentum' in signal_data:
+                momentum = signal_data['kijun_momentum']
+                if momentum != 0:
+                    alignments.append(1.0 if momentum == expected_direction else 0.0)
+            
+            return sum(alignments) / len(alignments) if alignments else 0.5
+            
+        except Exception as e:
+            log.debug(f"Momentum alignment calculation error: {e}")
+            return 0.5
+
+    def _calculate_confidence_multiplier(self, enhanced_confidence):
+        """Calculate position size multiplier based on enhanced confidence"""
+        # More aggressive scaling for high-confidence signals
+        if enhanced_confidence >= 0.8:
+            return 1.5  # 150% of base size
+        elif enhanced_confidence >= 0.7:
+            return 1.2  # 120% of base size
+        elif enhanced_confidence >= 0.6:
+            return 1.0  # 100% of base size
+        else:
+            return 0.7  # 70% of base size
+
+    def get_portfolio_status(self):
+        """Get current portfolio status"""
+        return {
+            'current_position': self.position,
+            'max_position': self.max_position,
+            'long_capacity': self.get_available_capacity(1),
+            'short_capacity': self.get_available_capacity(2),
+            'utilization_pct': abs(self.position) / self.max_position * 100
+        }
+
+    def calculate_risk_adjusted_size(self, action, confidence, volatility_measure):
+        """Calculate position size with risk adjustment based on market volatility"""
+        try:
+            base_size = self.calculate_position_size(action, confidence)
+            
+            if base_size == 0:
+                return 0
+            
+            # Adjust for volatility (using LWPE as volatility proxy)
+            if volatility_measure is not None:
+                # LWPE close to 0.5 = balanced/low volatility
+                # LWPE near 0 or 1 = high volatility/directional
+                volatility_score = abs(volatility_measure - 0.5) * 2
+                
+                # Reduce size in high volatility
+                if volatility_score > 0.7:
+                    volatility_adjustment = 0.7
+                elif volatility_score > 0.5:
+                    volatility_adjustment = 0.85
+                else:
+                    volatility_adjustment = 1.0
+                
+                adjusted_size = int(base_size * volatility_adjustment)
+                return max(self.cfg.MIN_SIZE, adjusted_size)
+            
+            return base_size
+            
+        except Exception as e:
+            log.warning(f"Risk adjusted sizing failed: {e}")
+            return self.cfg.MIN_SIZE

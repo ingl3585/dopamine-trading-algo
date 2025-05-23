@@ -27,24 +27,45 @@ class RLAgent:
         self.loss_fn = nn.SmoothL1Loss()
         self.last_save_time = 0
 
+        # Feature importance tracking for Ichimoku/EMA
+        self.feature_importance = {
+            'ichimoku_signals': 0.0,
+            'ema_signals': 0.0,
+            'momentum_signals': 0.0,
+            'volume_signals': 0.0,
+            'lwpe_signals': 0.0
+        }
+
         self.load_model()
 
     def load_model(self):
         if not os.path.exists(self.config.MODEL_PATH):
-            log.info("No existing model found, starting fresh")
+            log.info("No existing model found, starting fresh with Ichimoku/EMA features")
             return
         try:
             checkpoint = torch.load(self.config.MODEL_PATH, map_location=self.device)
             if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
-                self.model.load_state_dict(checkpoint['model_state_dict'])
-                if 'optimizer_state_dict' in checkpoint:
-                    self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-                log.info("Model and optimizer loaded from checkpoint")
+                # Check if model dimensions match
+                if self._check_model_compatibility(checkpoint):
+                    self.model.load_state_dict(checkpoint['model_state_dict'])
+                    if 'optimizer_state_dict' in checkpoint:
+                        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                    log.info("Model and optimizer loaded from checkpoint")
+                else:
+                    log.warning("Model dimensions incompatible, starting fresh")
             else:
-                self.model.load_state_dict(checkpoint)
-                log.info("Model loaded (legacy format)")
+                log.warning("Legacy model format detected, starting fresh for Ichimoku/EMA")
         except Exception as e:
-            log.warning("Model load failed: %s", e)
+            log.warning("Model load failed: %s, starting fresh", e)
+
+    def _check_model_compatibility(self, checkpoint):
+        """Check if saved model has compatible dimensions"""
+        try:
+            config_in_checkpoint = checkpoint.get('config', {})
+            expected_input_dim = config_in_checkpoint.get('input_dim', 4)  # Old default
+            return expected_input_dim == self.config.INPUT_DIM
+        except:
+            return False
 
     def save_model(self):
         try:
@@ -56,10 +77,12 @@ class RLAgent:
                     'input_dim': self.config.INPUT_DIM,
                     'hidden_dim': self.config.HIDDEN_DIM,
                     'action_dim': self.config.ACTION_DIM
-                }
+                },
+                'feature_importance': self.feature_importance,
+                'version': 'ichimoku_ema_v1.0'
             }
             torch.save(checkpoint, self.config.MODEL_PATH)
-            log.info("Model checkpoint saved")
+            log.info("Model checkpoint saved with Ichimoku/EMA configuration")
         except Exception as e:
             log.warning("Save error: %s", e)
 
@@ -98,17 +121,42 @@ class RLAgent:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
             self.optimizer.step()
             
+            # Update feature importance tracking
+            self._update_feature_importance(states, advantages.detach())
+            
             return total_loss.item()
             
         except Exception as e:
             log.warning(f"Training error: {e}")
             return 0.0
 
+    def _update_feature_importance(self, states, advantages):
+        """Track which features contribute most to good decisions"""
+        try:
+            if len(states) > 0:
+                # Extract feature contributions (simplified approach)
+                state_importance = torch.abs(states * advantages.unsqueeze(-1)).mean(dim=0)
+                
+                # Map to feature categories (indices based on FeatureVector order)
+                self.feature_importance['ichimoku_signals'] = float(
+                    (state_importance[2] + state_importance[3] + state_importance[4]).mean()
+                )
+                self.feature_importance['ema_signals'] = float(state_importance[5])
+                self.feature_importance['momentum_signals'] = float(
+                    (state_importance[6] + state_importance[7]).mean()
+                )
+                self.feature_importance['volume_signals'] = float(state_importance[1])
+                self.feature_importance['lwpe_signals'] = float(state_importance[8])
+                
+        except Exception as e:
+            log.debug(f"Feature importance update error: {e}")
+
     def train(self, df, epochs=1):
         try:
             if isinstance(df.iloc[0, 1], str):
                 df = df.iloc[1:]
 
+            # Updated for new feature columns
             feature_data = df.iloc[:, 1:-1].apply(pd.to_numeric, errors="coerce").fillna(0).values
             rewards = df.iloc[:, -1].apply(pd.to_numeric, errors="coerce").fillna(0).values
             
@@ -116,7 +164,12 @@ class RLAgent:
                 log.warning(f"Insufficient data for training: {len(feature_data)} samples")
                 return
 
-            log.info(f"Training on {len(feature_data)} samples for {epochs} epochs")
+            # Validate feature dimensions
+            if feature_data.shape[1] != self.config.INPUT_DIM:
+                log.error(f"Feature dimension mismatch: expected {self.config.INPUT_DIM}, got {feature_data.shape[1]}")
+                return
+
+            log.info(f"Training on {len(feature_data)} samples for {epochs} epochs (Ichimoku/EMA features)")
             
             for epoch in range(epochs):
                 total_loss = 0.0
@@ -132,7 +185,7 @@ class RLAgent:
                         state = feature_data[j]
                         next_state = feature_data[j + 1]
                         reward = rewards[j]
-                        action = 1 
+                        action = 1  # Default action for training
                         
                         batch_experiences.append((state, action, reward, next_state))
                     
@@ -153,6 +206,10 @@ class RLAgent:
 
     def predict_single(self, feat_vec):
         try:
+            if len(feat_vec) != self.config.INPUT_DIM:
+                log.warning(f"Feature vector dimension mismatch: expected {self.config.INPUT_DIM}, got {len(feat_vec)}")
+                return 0, 0.33
+
             state = torch.tensor(feat_vec, dtype=torch.float32, device=self.device)
             if len(state.shape) == 1:
                 state = state.unsqueeze(0)
@@ -163,40 +220,123 @@ class RLAgent:
                 dist = torch.distributions.Categorical(probs)
                 action = int(dist.sample())
                 
-                entropy = float(dist.entropy())
-                max_entropy = np.log(probs.shape[1])
+                # Enhanced confidence calculation using Ichimoku/EMA signals
+                confidence = self._calculate_enhanced_confidence(feat_vec, probs, value, action)
                 
-                entropy_confidence = 1.0 - (entropy / max_entropy)
-                
-                action_prob = float(probs[0, action])
-                
-                value_confidence = min(1.0, abs(float(value[0])) / 2.0)
-                
-                combined_confidence = (
-                    0.3 * action_prob + 
-                    0.4 * entropy_confidence + 
-                    0.3 * value_confidence
-                )
-                
-                if combined_confidence > 0.7:
-                    confidence = 0.7 + (combined_confidence - 0.7) * 0.67
-                elif combined_confidence > 0.5:
-                    confidence = 0.4 + (combined_confidence - 0.5) * 1.5
-                else:
-                    confidence = 0.2 + combined_confidence * 0.4
-
-                noise = np.random.uniform(-0.1, 0.1)
-                confidence = np.clip(confidence + noise, 0.25, 0.85)
-                
-                confidence = 0.2 + 0.6 * (1 / (1 + np.exp(-4 * (confidence - 0.5))))
-                
-                confidence = np.clip(confidence, 0.15, 0.85)
-                    
                 return action, confidence
                 
         except Exception as e:
             log.warning(f"Prediction error: {e}")
             return 0, 0.33
+
+    def _calculate_enhanced_confidence(self, feat_vec, probs, value, action):
+        """Calculate confidence using Ichimoku/EMA signal alignment"""
+        try:
+            # Extract signals from feature vector
+            tenkan_kijun_signal = feat_vec[2]
+            price_cloud_signal = feat_vec[3]
+            future_cloud_signal = feat_vec[4]
+            ema_cross_signal = feat_vec[5]
+            tenkan_momentum = feat_vec[6]
+            kijun_momentum = feat_vec[7]
+            normalized_volume = feat_vec[1]
+            lwpe = feat_vec[8]
+            
+            # Base confidence from model
+            action_prob = float(probs[0, action])
+            value_confidence = min(1.0, abs(float(value[0])) / 2.0)
+            
+            # Signal alignment confidence
+            ichimoku_alignment = self._calculate_ichimoku_alignment(
+                tenkan_kijun_signal, price_cloud_signal, future_cloud_signal, action
+            )
+            
+            ema_alignment = self._calculate_ema_alignment(ema_cross_signal, action)
+            
+            momentum_alignment = self._calculate_momentum_alignment(
+                tenkan_momentum, kijun_momentum, action
+            )
+            
+            volume_confidence = self._calculate_volume_confidence(normalized_volume, lwpe)
+            
+            # Weighted combination
+            signal_confidence = (
+                self.config.ICHIMOKU_WEIGHT * ichimoku_alignment +
+                self.config.EMA_WEIGHT * ema_alignment +
+                self.config.MOMENTUM_WEIGHT * momentum_alignment +
+                self.config.VOLUME_WEIGHT * volume_confidence +
+                self.config.LWPE_WEIGHT * (lwpe if 0 <= lwpe <= 1 else 0.5)
+            )
+            
+            # Combine model and signal confidence
+            combined_confidence = (
+                0.4 * action_prob +
+                0.3 * signal_confidence +
+                0.3 * value_confidence
+            )
+            
+            # Apply confidence bounds and smoothing
+            confidence = np.clip(combined_confidence, 0.15, 0.85)
+            
+            # Add small noise for exploration
+            noise = np.random.uniform(-0.05, 0.05)
+            confidence = np.clip(confidence + noise, 0.15, 0.85)
+            
+            return confidence
+            
+        except Exception as e:
+            log.debug(f"Confidence calculation error: {e}")
+            return 0.33
+
+    def _calculate_ichimoku_alignment(self, tenkan_kijun, price_cloud, future_cloud, action):
+        """Calculate how well Ichimoku signals align with action"""
+        if action == 0:  # Hold
+            return 0.5
+        
+        expected_direction = 1 if action == 1 else -1  # Long=1, Short=-1
+        
+        alignments = []
+        if tenkan_kijun != 0:
+            alignments.append(1.0 if tenkan_kijun == expected_direction else 0.0)
+        if price_cloud != 0:
+            alignments.append(1.0 if price_cloud == expected_direction else 0.0)
+        if future_cloud != 0:
+            alignments.append(1.0 if future_cloud == expected_direction else 0.0)
+            
+        return np.mean(alignments) if alignments else 0.5
+
+    def _calculate_ema_alignment(self, ema_signal, action):
+        """Calculate EMA signal alignment"""
+        if action == 0 or ema_signal == 0:
+            return 0.5
+        
+        expected_direction = 1 if action == 1 else -1
+        return 1.0 if ema_signal == expected_direction else 0.0
+
+    def _calculate_momentum_alignment(self, tenkan_momentum, kijun_momentum, action):
+        """Calculate momentum alignment"""
+        if action == 0:
+            return 0.5
+        
+        expected_direction = 1 if action == 1 else -1
+        
+        alignments = []
+        if tenkan_momentum != 0:
+            alignments.append(1.0 if tenkan_momentum == expected_direction else 0.0)
+        if kijun_momentum != 0:
+            alignments.append(1.0 if kijun_momentum == expected_direction else 0.0)
+            
+        return np.mean(alignments) if alignments else 0.5
+
+    def _calculate_volume_confidence(self, normalized_volume, lwpe):
+        """Calculate volume-based confidence"""
+        # Higher volume generally increases confidence
+        volume_conf = min(1.0, abs(normalized_volume) / 2.0)
+        
+        # LWPE near 0.5 indicates balanced market, extreme values indicate direction
+        lwpe_conf = abs(lwpe - 0.5) * 2 if 0 <= lwpe <= 1 else 0
+        
+        return (volume_conf + lwpe_conf) / 2
 
     def add_experience(self, state, action, reward, next_state):
         self.experience_buffer.append((state, action, reward, next_state))
@@ -212,3 +352,7 @@ class RLAgent:
             
             return loss
         return 0.0
+
+    def get_feature_importance_summary(self):
+        """Get summary of which features are most important"""
+        return self.feature_importance
