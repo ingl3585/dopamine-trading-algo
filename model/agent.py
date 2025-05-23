@@ -289,44 +289,92 @@ class RLAgent:
             return 0.33
 
     def _calculate_ichimoku_alignment(self, tenkan_kijun, price_cloud, future_cloud, action):
-        """Calculate how well Ichimoku signals align with action"""
+        """Enhanced Ichimoku alignment calculation with neutral signal support"""
         if action == 0:  # Hold
             return 0.5
         
         expected_direction = 1 if action == 1 else -1  # Long=1, Short=-1
         
         alignments = []
-        if tenkan_kijun != 0:
-            alignments.append(1.0 if tenkan_kijun == expected_direction else 0.0)
-        if price_cloud != 0:
-            alignments.append(1.0 if price_cloud == expected_direction else 0.0)
-        if future_cloud != 0:
-            alignments.append(1.0 if future_cloud == expected_direction else 0.0)
-            
-        return np.mean(alignments) if alignments else 0.5
+        weights = []
+        
+        # Tenkan/Kijun signal
+        if tenkan_kijun == expected_direction:
+            alignments.append(1.0)
+        elif tenkan_kijun == -expected_direction:
+            alignments.append(0.0)
+        elif tenkan_kijun == 0:
+            alignments.append(0.5)  # Neutral
+        weights.append(0.4)
+        
+        # Price vs Cloud signal
+        if price_cloud == expected_direction:
+            alignments.append(1.0)
+        elif price_cloud == -expected_direction:
+            alignments.append(0.0)
+        elif price_cloud == 0:
+            alignments.append(0.3)  # Inside cloud - less confident
+        weights.append(0.4)
+        
+        # Future cloud signal
+        if future_cloud == expected_direction:
+            alignments.append(1.0)
+        elif future_cloud == -expected_direction:
+            alignments.append(0.0)
+        elif future_cloud == 0:
+            alignments.append(0.5)  # Neutral cloud
+        weights.append(0.2)
+        
+        # Weighted average
+        if alignments and weights:
+            total_weight = sum(weights)
+            weighted_sum = sum(a * w for a, w in zip(alignments, weights))
+            return weighted_sum / total_weight
+        
+        return 0.5
 
     def _calculate_ema_alignment(self, ema_signal, action):
-        """Calculate EMA signal alignment"""
-        if action == 0 or ema_signal == 0:
+        """Enhanced EMA signal alignment with neutral support"""
+        if action == 0:  # Hold
             return 0.5
         
         expected_direction = 1 if action == 1 else -1
-        return 1.0 if ema_signal == expected_direction else 0.0
+        
+        if ema_signal == expected_direction:
+            return 1.0
+        elif ema_signal == -expected_direction:
+            return 0.0
+        elif ema_signal == 0:
+            return 0.4  # Neutral EMA - slightly negative for decision making
+        
+        return 0.5
 
     def _calculate_momentum_alignment(self, tenkan_momentum, kijun_momentum, action):
-        """Calculate momentum alignment"""
-        if action == 0:
+        """Enhanced momentum alignment calculation with neutral support"""
+        if action == 0:  # Hold
             return 0.5
         
         expected_direction = 1 if action == 1 else -1
         
         alignments = []
-        if tenkan_momentum != 0:
-            alignments.append(1.0 if tenkan_momentum == expected_direction else 0.0)
-        if kijun_momentum != 0:
-            alignments.append(1.0 if kijun_momentum == expected_direction else 0.0)
-            
-        return np.mean(alignments) if alignments else 0.5
+        
+        # Tenkan momentum
+        if tenkan_momentum == expected_direction:
+            alignments.append(1.0)
+        elif tenkan_momentum == -expected_direction:
+            alignments.append(0.0)
+        elif tenkan_momentum == 0:
+            alignments.append(0.5)  # Flat momentum
+        
+        # Kijun momentum
+        if kijun_momentum == expected_direction:
+            alignments.append(1.0)
+        elif kijun_momentum == -expected_direction:
+            alignments.append(0.0)
+        elif kijun_momentum == 0:
+            alignments.append(0.5)  # Flat momentum
+        
+        return sum(alignments) / len(alignments) if alignments else 0.5
 
     def _calculate_volume_confidence(self, normalized_volume, lwpe):
         """Calculate volume-based confidence"""

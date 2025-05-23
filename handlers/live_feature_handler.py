@@ -55,7 +55,7 @@ class LiveFeatureHandler:
             self._log_periodic_summary()
 
     def _validate_feature_vector(self, feat):
-        """Validate incoming feature vector"""
+        """Enhanced validation for ternary signals"""
         try:
             if not isinstance(feat, (list, tuple)) or len(feat) != 9:
                 return False
@@ -69,12 +69,28 @@ class LiveFeatureHandler:
             lwpe = feat[8]
             if not (0 <= lwpe <= 1):
                 log.debug(f"LWPE out of range: {lwpe}")
+                feat[8] = max(0, min(1, lwpe))  # Auto-correct
             
-            # Check signals are in expected range (-1, 0, 1)
-            signal_indices = [2, 3, 4, 5, 6, 7]  # All signal features
-            for i in signal_indices:
-                if feat[i] not in [-1, 0, 1]:
-                    log.debug(f"Signal {i} out of range: {feat[i]}")
+            # Enhanced signal validation - expect ternary signals
+            signal_indices = [2, 3, 4, 5, 6, 7]
+            signal_names = ['tenkan_kijun', 'price_cloud', 'future_cloud', 'ema_cross', 'tenkan_momentum', 'kijun_momentum']
+            
+            neutral_count = 0
+            for i, name in zip(signal_indices, signal_names):
+                signal_val = round(feat[i])  # Round for precision issues
+                
+                if signal_val not in [-1, 0, 1]:
+                    log.warning(f"Signal {name} out of range: {feat[i]}, clamping")
+                    signal_val = max(-1, min(1, signal_val))
+                
+                feat[i] = float(signal_val)
+                
+                if signal_val == 0:
+                    neutral_count += 1
+            
+            # Log if we see good neutral signal distribution
+            if neutral_count > 0:
+                log.debug(f"Received {neutral_count} neutral signals - enhanced signal processing active")
             
             return True
             

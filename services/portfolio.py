@@ -107,56 +107,90 @@ class Portfolio:
             return base_confidence
 
     def _get_ichimoku_alignment_score(self, action, signal_data):
-        """Calculate Ichimoku signal alignment score"""
+        """Enhanced Ichimoku signal alignment with neutral handling"""
         try:
+            if action == 0:  # Hold action
+                return 0.5
+                
             expected_direction = 1 if action == 1 else -1
             
             alignments = []
+            weights = []
             
-            # Tenkan/Kijun cross
+            # Tenkan/Kijun cross (highest weight)
             if 'tenkan_kijun_signal' in signal_data:
                 signal = signal_data['tenkan_kijun_signal']
-                if signal != 0:
-                    alignments.append(1.0 if signal == expected_direction else 0.0)
+                if signal == expected_direction:
+                    alignments.append(1.0)
+                elif signal == -expected_direction:
+                    alignments.append(0.0)
+                else:  # signal == 0 (neutral)
+                    alignments.append(0.5)
+                weights.append(0.4)
             
-            # Price vs Cloud
+            # Price vs Cloud (high weight)
             if 'price_cloud_signal' in signal_data:
                 signal = signal_data['price_cloud_signal']
-                if signal != 0:
-                    alignments.append(1.0 if signal == expected_direction else 0.0)
+                if signal == expected_direction:
+                    alignments.append(1.0)
+                elif signal == -expected_direction:
+                    alignments.append(0.0)
+                else:  # signal == 0 (neutral/inside cloud)
+                    alignments.append(0.3)  # Slight penalty for uncertain position
+                weights.append(0.4)
             
-            # Future Cloud color
+            # Future Cloud color (moderate weight)
             if 'future_cloud_signal' in signal_data:
                 signal = signal_data['future_cloud_signal']
-                if signal != 0:
-                    alignments.append(1.0 if signal == expected_direction else 0.0)
+                if signal == expected_direction:
+                    alignments.append(1.0)
+                elif signal == -expected_direction:
+                    alignments.append(0.0)
+                else:  # signal == 0 (neutral cloud)
+                    alignments.append(0.5)
+                weights.append(0.2)
             
-            return sum(alignments) / len(alignments) if alignments else 0.5
-            
+            if alignments:
+                # Weighted average
+                total_weight = sum(weights)
+                weighted_sum = sum(a * w for a, w in zip(alignments, weights))
+                return weighted_sum / total_weight
+            else:
+                return 0.5
+                
         except Exception as e:
             log.debug(f"Ichimoku alignment calculation error: {e}")
             return 0.5
 
     def _get_ema_alignment_score(self, action, signal_data):
-        """Calculate EMA signal alignment score"""
+        """Enhanced EMA signal alignment with neutral handling"""
         try:
+            if action == 0:  # Hold action
+                return 0.5
+                
             if 'ema_cross_signal' not in signal_data:
                 return 0.5
             
             ema_signal = signal_data['ema_cross_signal']
-            if ema_signal == 0:
-                return 0.5
-            
             expected_direction = 1 if action == 1 else -1
-            return 1.0 if ema_signal == expected_direction else 0.0
             
+            if ema_signal == expected_direction:
+                return 1.0
+            elif ema_signal == -expected_direction:
+                return 0.0
+            else:  # ema_signal == 0 (neutral)
+                return 0.4  # Slight penalty for neutral EMA
+                
         except Exception as e:
             log.debug(f"EMA alignment calculation error: {e}")
             return 0.5
 
     def _get_momentum_alignment_score(self, action, signal_data):
-        """Calculate momentum signal alignment score"""
+        """Enhanced momentum signal alignment with neutral handling"""
         try:
+            if action == 0:  # Hold action
+                return 0.5
+                
             expected_direction = 1 if action == 1 else -1
             
             alignments = []
@@ -164,14 +198,22 @@ class Portfolio:
             # Tenkan momentum
             if 'tenkan_momentum' in signal_data:
                 momentum = signal_data['tenkan_momentum']
-                if momentum != 0:
-                    alignments.append(1.0 if momentum == expected_direction else 0.0)
+                if momentum == expected_direction:
+                    alignments.append(1.0)
+                elif momentum == -expected_direction:
+                    alignments.append(0.0)
+                else:  # momentum == 0 (flat)
+                    alignments.append(0.5)
             
             # Kijun momentum
             if 'kijun_momentum' in signal_data:
                 momentum = signal_data['kijun_momentum']
-                if momentum != 0:
-                    alignments.append(1.0 if momentum == expected_direction else 0.0)
+                if momentum == expected_direction:
+                    alignments.append(1.0)
+                elif momentum == -expected_direction:
+                    alignments.append(0.0)
+                else:  # momentum == 0 (flat)
+                    alignments.append(0.5)
             
             return sum(alignments) / len(alignments) if alignments else 0.5
             

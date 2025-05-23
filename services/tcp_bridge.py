@@ -168,7 +168,7 @@ class TCPBridge:
             log.warning(f"Feature processing error: {e}")
 
     def _validate_features(self, features):
-        """Validate incoming feature vector for Ichimoku/EMA system"""
+        """Enhanced validation for ternary Ichimoku/EMA signals"""
         try:
             # Check if features is a list/array
             if not isinstance(features, (list, tuple)):
@@ -180,11 +180,16 @@ class TCPBridge:
                 log.debug(f"Feature count mismatch: expected {self.expected_feature_count}, got {len(features)}")
                 return False
             
-            # Check for numeric values
+            # Check for numeric values and clean up
+            cleaned_features = []
             for i, feat in enumerate(features):
                 if not isinstance(feat, (int, float)):
                     log.debug(f"Non-numeric feature at index {i}: {type(feat)}")
                     return False
+                cleaned_features.append(float(feat))
+            
+            # Update the original features list
+            features[:] = cleaned_features
             
             # Basic sanity checks for specific features
             close_price = features[0]
@@ -192,18 +197,35 @@ class TCPBridge:
                 log.debug(f"Invalid close price: {close_price}")
                 return False
             
-            # Check LWPE range (index 8)
+            # Enhanced LWPE validation
             lwpe = features[8]
             if not (0 <= lwpe <= 1):
-                log.debug(f"LWPE out of range: {lwpe}")
-                # Allow but warn - LWPE can sometimes be calculated outside normal range
+                log.debug(f"LWPE out of range: {lwpe}, clipping to [0,1]")
+                features[8] = max(0, min(1, lwpe))  # Clip to valid range
             
-            # Check signal values are in expected range (-1, 0, 1)
-            signal_indices = [2, 3, 4, 5, 6, 7]  # Ichimoku and EMA signals
-            for idx in signal_indices:
-                if idx < len(features) and features[idx] not in [-1, 0, 1]:
-                    log.debug(f"Signal at index {idx} out of range: {features[idx]}")
-                    # Allow but warn - signals might have intermediate values
+            # Enhanced signal validation for ternary signals (-1, 0, 1)
+            signal_indices = [2, 3, 4, 5, 6, 7]  # All signal features
+            signal_names = ['tenkan_kijun', 'price_cloud', 'future_cloud', 'ema_cross', 'tenkan_momentum', 'kijun_momentum']
+            
+            for idx, name in zip(signal_indices, signal_names):
+                if idx < len(features):
+                    signal_val = features[idx]
+                    
+                    # Round to nearest valid signal value for floating point precision issues
+                    rounded_signal = round(signal_val)
+                    
+                    # Validate range
+                    if rounded_signal not in [-1, 0, 1]:
+                        log.warning(f"{name} signal out of range: {signal_val} -> clamping")
+                        # Clamp to valid range
+                        if rounded_signal > 1:
+                            rounded_signal = 1
+                        elif rounded_signal < -1:
+                            rounded_signal = -1
+                        else:
+                            rounded_signal = 0
+                    
+                    features[idx] = float(rounded_signal)
             
             return True
             

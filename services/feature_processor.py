@@ -89,61 +89,89 @@ class FeatureProcessor:
         return feat
 
     def _extract_signals(self, feat):
-        """Extract signal values for reward calculation"""
+        """Extract and validate signal values for reward calculation"""
         try:
-            return {
-                'tenkan_kijun': feat[2],
-                'price_cloud': feat[3],
-                'future_cloud': feat[4],
-                'ema_cross': feat[5],
-                'tenkan_momentum': feat[6],
-                'kijun_momentum': feat[7],
+            signals = {
+                'tenkan_kijun': int(round(feat[2])),
+                'price_cloud': int(round(feat[3])),
+                'future_cloud': int(round(feat[4])),
+                'ema_cross': int(round(feat[5])),
+                'tenkan_momentum': int(round(feat[6])),
+                'kijun_momentum': int(round(feat[7])),
                 'normalized_volume': feat[1],
                 'lwpe': feat[8]
             }
-        except IndexError:
-            log.warning("Feature vector incomplete for signal extraction")
-            return {}
+            
+            # Validate all signals are in valid range
+            for signal_name, signal_value in signals.items():
+                if signal_name not in ['normalized_volume', 'lwpe']:
+                    if signal_value not in [-1, 0, 1]:
+                        log.warning(f"Invalid {signal_name} signal: {signal_value}, setting to 0")
+                        signals[signal_name] = 0
+            
+            return signals
+            
+        except (IndexError, ValueError) as e:
+            log.warning(f"Feature vector incomplete for signal extraction: {e}")
+            return {
+                'tenkan_kijun': 0, 'price_cloud': 0, 'future_cloud': 0,
+                'ema_cross': 0, 'tenkan_momentum': 0, 'kijun_momentum': 0,
+                'normalized_volume': 0, 'lwpe': 0.5
+            }
 
     def get_signal_summary(self):
-        """Get current signal state summary"""
+        """Enhanced signal state summary with neutral signal handling"""
         if self.last_signals is None:
             return "No signals available"
         
         summary = []
         
-        # Ichimoku signals
-        if self.last_signals.get('tenkan_kijun', 0) > 0:
+        # Ichimoku signals with neutral handling
+        tk_signal = self.last_signals.get('tenkan_kijun', 0)
+        if tk_signal > 0:
             summary.append("Tenkan>Kijun (Bullish)")
-        elif self.last_signals.get('tenkan_kijun', 0) < 0:
+        elif tk_signal < 0:
             summary.append("Tenkan<Kijun (Bearish)")
+        else:
+            summary.append("Tenkan≈Kijun (Neutral)")
         
-        if self.last_signals.get('price_cloud', 0) > 0:
+        # Price vs Cloud
+        pc_signal = self.last_signals.get('price_cloud', 0)
+        if pc_signal > 0:
             summary.append("Price above Cloud")
-        elif self.last_signals.get('price_cloud', 0) < 0:
+        elif pc_signal < 0:
             summary.append("Price below Cloud")
         else:
-            summary.append("Price in Cloud")
+            summary.append("Price in Cloud (Neutral)")
         
-        # EMA signal
-        if self.last_signals.get('ema_cross', 0) > 0:
+        # EMA signal with neutral handling
+        ema_signal = self.last_signals.get('ema_cross', 0)
+        if ema_signal > 0:
             summary.append("EMA Bullish")
-        elif self.last_signals.get('ema_cross', 0) < 0:
+        elif ema_signal < 0:
             summary.append("EMA Bearish")
+        else:
+            summary.append("EMA Neutral")
         
-        # Momentum
+        # Momentum signals
         momentum_signals = []
-        if self.last_signals.get('tenkan_momentum', 0) > 0:
+        tm_signal = self.last_signals.get('tenkan_momentum', 0)
+        if tm_signal > 0:
             momentum_signals.append("Tenkan+")
-        elif self.last_signals.get('tenkan_momentum', 0) < 0:
+        elif tm_signal < 0:
             momentum_signals.append("Tenkan-")
+        else:
+            momentum_signals.append("Tenkan=")
             
-        if self.last_signals.get('kijun_momentum', 0) > 0:
+        km_signal = self.last_signals.get('kijun_momentum', 0)
+        if km_signal > 0:
             momentum_signals.append("Kijun+")
-        elif self.last_signals.get('kijun_momentum', 0) < 0:
+        elif km_signal < 0:
             momentum_signals.append("Kijun-")
+        else:
+            momentum_signals.append("Kijun=")
         
         if momentum_signals:
             summary.append(f"Momentum: {', '.join(momentum_signals)}")
         
-        return " | ".join(summary) if summary else "Neutral signals"
+        return " | ".join(summary) if summary else "All signals neutral"
