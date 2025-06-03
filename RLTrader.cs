@@ -96,7 +96,16 @@ namespace NinjaTrader.NinjaScript.Strategies
         [NinjaScriptProperty]
         [Range(0.1, 1.0)]
         [Display(Name = "Min Confidence", Description = "Minimum confidence threshold for trading", Order = 7, GroupName = "Risk Management")]
-        public double MinConfidence { get; set; } = 0.6;
+        public double MinConfidence { get; set; } = 0.45;
+		
+		[NinjaScriptProperty]
+		[Display(Name = "Enable Trend Filter", Description = "Block counter-trend trades", Order = 9, GroupName = "Risk Management")]
+		public bool EnableTrendFilter { get; set; } = true;
+		
+		[NinjaScriptProperty]
+		[Range(20, 100)]
+		[Display(Name = "Trend Period", Description = "Period for trend analysis", Order = 10, GroupName = "Risk Management")]
+		public int TrendPeriod { get; set; } = 50;
 
         [NinjaScriptProperty]
         [Display(Name = "Enable Logging", Description = "Enable detailed logging", Order = 8, GroupName = "Debug")]
@@ -521,7 +530,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        var signalLocalTime = signalDateTime.ToLocalTime();
 		        var currentTime = DateTime.Now;
 		        var timeDiff = (currentTime - signalLocalTime).TotalSeconds;
-
+		
 		        if (Math.Abs(timeDiff) > 120)
 		        {
 		            if (EnableLogging)
@@ -529,12 +538,27 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            return false;
 		        }
 		        
-		        // Check confidence threshold
+		        // FIXED: Use new lower confidence threshold
 		        if (signal.Confidence < MinConfidence)
 		        {
 		            if (EnableLogging)
 		                Print($"Signal confidence {signal.Confidence:F3} below threshold {MinConfidence:F3}");
 		            return false;
+		        }
+		        
+		        // ADDED: Trend filter validation
+		        if (EnableTrendFilter)
+		        {
+		            int trendDirection = GetTrendDirection();
+		            
+		            // Block counter-trend trades
+		            if ((signal.Action == 1 && trendDirection == -1) || 
+		                (signal.Action == 2 && trendDirection == 1))
+		            {
+		                if (EnableLogging)
+		                    Print($"Signal blocked by trend filter: action={signal.Action}, trend={trendDirection}");
+		                return false;
+		            }
 		        }
 		        
 		        return true;
@@ -554,24 +578,41 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        {
 		            return;
 		        }
-
+		        
+		        // ADDED: Trend filter to prevent counter-trend trades
+		        int trendDirection = GetTrendDirection();
+		        
 		        switch (signal.Action)
 		        {
 		            case 1: // BUY
+		                // Don't buy in strong downtrend
+		                if (trendDirection == -1)
+		                {
+		                    if (EnableLogging)
+		                        Print($"Blocked LONG signal - Strong downtrend detected");
+		                    return;
+		                }
 		                EnterLong(signal.Size, "IchimokuEMA_Long");
 		                if (EnableLogging)
-		                    Print($"Executing LONG: size={signal.Size}, conf={signal.Confidence:F3}");
+		                    Print($"Executing LONG: size={signal.Size}, conf={signal.Confidence:F3}, trend={trendDirection}");
 		                break;
 		                
 		            case 2: // SELL
+		                // Don't sell in strong uptrend
+		                if (trendDirection == 1)
+		                {
+		                    if (EnableLogging)
+		                        Print($"Blocked SHORT signal - Strong uptrend detected");
+		                    return;
+		                }
 		                EnterShort(signal.Size, "IchimokuEMA_Short");
 		                if (EnableLogging)
-		                    Print($"Executing SHORT: size={signal.Size}, conf={signal.Confidence:F3}");
+		                    Print($"Executing SHORT: size={signal.Size}, conf={signal.Confidence:F3}, trend={trendDirection}");
 		                break;
 		                
 		            default: // HOLD
 		                if (EnableLogging)
-		                    Print($"HOLD signal: conf={signal.Confidence:F3}");
+		                    Print($"HOLD signal: conf={signal.Confidence:F3}, trend={trendDirection}");
 		                break;
 		        }
 		    }
@@ -776,9 +817,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            
 		        double diff = tenkan - kijun;
 		        
-		        // Use percentage-based threshold for neutral signal
-		        double priceRange = Math.Max(High[0] - Low[0], Close[0] * 0.0001);
-		        double threshold = priceRange * 0.5;
+		        // FIXED: Use proper percentage-based threshold (0.1% instead of 0.01%)
+		        double threshold = Close[0] * 0.001; // 0.1% of current price
 		        
 		        if (diff > threshold)
 		            return 1.0;   // Bullish
@@ -797,24 +837,24 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
-		        if (CurrentBar < SenkouPeriod)
+		        if (CurrentBar < SenkouPeriod + 26) // Need extra bars for displacement
 		            return 0;
 		            
-		        // Calculate Senkou Span A: (Tenkan-sen + Kijun-sen) / 2, plotted 26 periods ahead
-		        double tenkanHigh = MAX(High, TenkanPeriod)[0];
-		        double tenkanLow = MIN(Low, TenkanPeriod)[0];
-		        double tenkan = (tenkanHigh + tenkanLow) / 2;
+		        // Calculate Senkou Span A from 26 bars ago (for current cloud position)
+		        double tenkanHigh26 = MAX(High, TenkanPeriod)[26];
+		        double tenkanLow26 = MIN(Low, TenkanPeriod)[26];
+		        double tenkan26 = (tenkanHigh26 + tenkanLow26) / 2;
 		        
-		        double kijunHigh = MAX(High, KijunPeriod)[0];
-		        double kijunLow = MIN(Low, KijunPeriod)[0];
-		        double kijun = (kijunHigh + kijunLow) / 2;
+		        double kijunHigh26 = MAX(High, KijunPeriod)[26];
+		        double kijunLow26 = MIN(Low, KijunPeriod)[26];
+		        double kijun26 = (kijunHigh26 + kijunLow26) / 2;
 		        
-		        double senkouA = (tenkan + kijun) / 2;
+		        double senkouA = (tenkan26 + kijun26) / 2;
 		        
-		        // Calculate Senkou Span B: (52-period high + 52-period low) / 2, plotted 26 periods ahead
-		        double senkouBHigh = MAX(High, SenkouPeriod)[0];
-		        double senkouBLow = MIN(Low, SenkouPeriod)[0];
-		        double senkouB = (senkouBHigh + senkouBLow) / 2;
+		        // Calculate Senkou Span B from 26 bars ago (for current cloud position)
+		        double senkouBHigh26 = MAX(High, SenkouPeriod)[26];
+		        double senkouBLow26 = MIN(Low, SenkouPeriod)[26];
+		        double senkouB = (senkouBHigh26 + senkouBLow26) / 2;
 		        
 		        if (senkouA == 0 || senkouB == 0)
 		            return 0;
@@ -823,8 +863,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        double cloudBottom = Math.Min(senkouA, senkouB);
 		        double cloudThickness = cloudTop - cloudBottom;
 		        
-		        // Add buffer zone for cleaner signals
-		        double buffer = cloudThickness * 0.1; // 10% of cloud thickness
+		        // FIXED: Larger buffer zone for cleaner signals (0.2% instead of 10% of thickness)
+		        double buffer = Close[0] * 0.002; // 0.2% of current price
 		        
 		        if (Close[0] > cloudTop + buffer)
 		            return 1.0; // Clearly above cloud (bullish)
@@ -895,8 +935,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            return 0;
 		            
 		        double diff = fastEma - slowEma;
-		        double avgEma = (fastEma + slowEma) / 2;
-		        double threshold = avgEma * 0.0002; // 0.02% threshold for neutral zone
+		        
+		        // FIXED: Use 0.05% threshold instead of 0.02%
+		        double threshold = Close[0] * 0.0005; // 0.05% threshold for neutral zone
 		        
 		        if (diff > threshold)
 		            return 1.0;   // Fast above slow (bullish)
@@ -915,7 +956,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
-		        if (CurrentBar < TenkanPeriod + 5)
+		        if (CurrentBar < TenkanPeriod + 8) // Increased lookback
 		            return 0;
 		            
 		        // Calculate current Tenkan-sen
@@ -923,16 +964,18 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        double currentTenkanLow = MIN(Low, TenkanPeriod)[0];
 		        double currentTenkan = (currentTenkanHigh + currentTenkanLow) / 2;
 		        
-		        // Calculate previous Tenkan-sen (3 bars ago)
-		        double previousTenkanHigh = MAX(High, TenkanPeriod)[3];
-		        double previousTenkanLow = MIN(Low, TenkanPeriod)[3];
+		        // FIXED: Use 5-bar lookback instead of 3
+		        double previousTenkanHigh = MAX(High, TenkanPeriod)[5];
+		        double previousTenkanLow = MIN(Low, TenkanPeriod)[5];
 		        double previousTenkan = (previousTenkanHigh + previousTenkanLow) / 2;
 		        
 		        if (currentTenkan == 0 || previousTenkan == 0)
 		            return 0;
 		            
 		        double change = currentTenkan - previousTenkan;
-		        double threshold = currentTenkan * 0.0001; // 0.01% momentum threshold
+		        
+		        // FIXED: Use 0.05% momentum threshold instead of 0.01%
+		        double threshold = currentTenkan * 0.0005; // 0.05% momentum threshold
 		        
 		        if (change > threshold)
 		            return 1.0;   // Rising momentum
@@ -1001,6 +1044,56 @@ namespace NinjaTrader.NinjaScript.Strategies
                 features.LWPE,
                 features.IsLive ? 1 : 0);
         }
+		
+		private bool IsInStrongTrend()
+		{
+		    try
+		    {
+		        if (CurrentBar < 50)
+		            return false;
+		            
+		        // Check if in strong uptrend
+		        double highestHigh = MAX(High, 50)[0];
+		        double lowestLow = MIN(Low, 50)[0];
+		        double pricePosition = (Close[0] - lowestLow) / (highestHigh - lowestLow);
+		        
+		        // Strong uptrend: price in top 20% of 50-bar range
+		        bool strongUptrend = pricePosition > 0.8;
+		        
+		        // Strong downtrend: price in bottom 20% of 50-bar range  
+		        bool strongDowntrend = pricePosition < 0.2;
+		        
+		        return strongUptrend || strongDowntrend;
+		    }
+		    catch
+		    {
+		        return false;
+		    }
+		}
+		
+		private int GetTrendDirection()
+		{
+		    try
+		    {
+		        if (CurrentBar < 50)
+		            return 0;
+		            
+		        double highestHigh = MAX(High, 50)[0];
+		        double lowestLow = MIN(Low, 50)[0];
+		        double pricePosition = (Close[0] - lowestLow) / (highestHigh - lowestLow);
+		        
+		        if (pricePosition > 0.8)
+		            return 1;  // Strong uptrend
+		        else if (pricePosition < 0.2)
+		            return -1; // Strong downtrend
+		        else
+		            return 0;  // No clear trend
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
         
         #endregion
         
