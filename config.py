@@ -5,49 +5,55 @@ class Config:
     FEATURE_FILE = r"C:\\Users\\ingle\\OneDrive\\Desktop\\Actor_Critic_ML_NT\\features\\features.csv"
     MODEL_PATH   = r"C:\\Users\\ingle\\OneDrive\\Desktop\\Actor_Critic_ML_NT\\model\\actor_critic_model.pth"
 
-    # Model architecture - Optimized for enhanced Ichimoku/EMA features
+    # Model architecture - Optimized for Ichimoku/EMA features
     INPUT_DIM   = 9     # close, volume, tenkan_kijun, price_cloud, future_cloud, ema_cross, tenkan_momentum, kijun_momentum, lwpe
     HIDDEN_DIM  = 128   # Sufficient for 9 ternary signal inputs
     ACTION_DIM  = 3     # Hold, Long, Short
     LOOKBACK    = 1
 
-    # Training parameters - Adjusted for ternary signal complexity
+    # Training parameters - Focused on signal quality
     BATCH_SIZE  = 32
     GAMMA       = 0.95
     ENTROPY_COEF= 0.05
     LR          = 1e-4
 
-    # Position sizing
-    BASE_SIZE   = 3
-    MAX_SIZE    = 8
-    MIN_SIZE    = 1
+    # REMOVED: Position sizing parameters (now handled by NinjaScript)
+    # BASE_SIZE, MAX_SIZE, MIN_SIZE moved to NinjaScript properties
 
-    # Prediction parameters - Adjusted for better neutral signal handling
-    TEMPERATURE = 1.2  # Reduced from 1.8 for less randomness
+    # Prediction parameters - Optimized for signal confidence
+    TEMPERATURE = 1.2  # For exploration during signal generation
 
-    # Enhanced feature weights for ternary signal confidence calculation
-    ICHIMOKU_WEIGHT = 0.30     # Increased weight for enhanced Ichimoku signals
-    EMA_WEIGHT = 0.20          # Weight for EMA signals  
-    MOMENTUM_WEIGHT = 0.15     # Weight for momentum signals (can be neutral)
-    VOLUME_WEIGHT = 0.15       # Weight for volume signals
-    LWPE_WEIGHT = 0.20         # Weight for LWPE signals
+    # Enhanced feature weights for signal confidence calculation
+    ICHIMOKU_WEIGHT = 0.30     # Ichimoku signals weight
+    EMA_WEIGHT = 0.20          # EMA signals weight
+    MOMENTUM_WEIGHT = 0.15     # Momentum signals weight
+    VOLUME_WEIGHT = 0.15       # Volume signals weight
+    LWPE_WEIGHT = 0.20         # LWPE signals weight
 
-    # Enhanced risk management with neutral signal considerations
-    CONFIDENCE_THRESHOLD = 0.45  # Lower threshold to allow more trades
+    # Signal quality thresholds - used for confidence calculation only
+    CONFIDENCE_THRESHOLD = 0.45  # Minimum confidence for signal generation
     
-    # Signal quality thresholds
-    MIN_SIGNAL_ALIGNMENT = 0.5  # Reduced from 0.6
-    NEUTRAL_SIGNAL_PENALTY = 0.05  # Reduced from 0.1
+    # Signal quality parameters
+    MIN_SIGNAL_ALIGNMENT = 0.5
+    NEUTRAL_SIGNAL_PENALTY = 0.05
     
     # Feature normalization bounds
     PRICE_NORMALIZATION = True
     VOLUME_LOOKBACK = 20
     
     # Enhanced signal processing parameters
-    SIGNAL_SMOOTHING = True      # Enable signal smoothing to reduce noise
-    NEUTRAL_ZONE_SIZE = 0.001    # Wider neutral zone (0.1%)
-    MOMENTUM_LOOKBACK = 5        # Longer momentum lookback
+    SIGNAL_SMOOTHING = True
+    NEUTRAL_ZONE_SIZE = 0.001
+    MOMENTUM_LOOKBACK = 5
     
     # Validation parameters
-    MAX_NEUTRAL_SIGNALS = 6      # Increased from 4 to be less restrictive
-    SIGNAL_VALIDATION_STRICT = False  # Changed to False for looser validation
+    MAX_NEUTRAL_SIGNALS = 6
+    SIGNAL_VALIDATION_STRICT = False
+    
+    # NEW: Signal quality parameters for NinjaScript communication
+    EXCELLENT_QUALITY_THRESHOLD = 0.85  # For "excellent" signal quality
+    GOOD_QUALITY_THRESHOLD = 0.70       # For "good" signal quality
+    POOR_QUALITY_THRESHOLD = 0.50       # Below this is "poor" signal quality
+    
+    # Signal generation mode
+    PURE_ML_MODE = True  # All position management in NinjaScript

@@ -49,7 +49,7 @@ class TCPBridge:
             self.ssock, sig_addr = self._sig_srv.accept()
             log.info(f"Signal connection established from {sig_addr}")
             
-            log.info("NinjaTrader connected successfully")
+            log.info("NinjaTrader connected successfully - Pure ML mode active")
             
         except Exception as e:
             log.error(f"Connection establishment failed: {e}")
@@ -234,11 +234,11 @@ class TCPBridge:
             return False
 
     def send_signal(self, sig: dict):
-        """Send trading signal to NinjaTrader with enhanced error handling"""
+        """Send pure ML signal to NinjaTrader with new protocol validation"""
         try:
             # Validate signal before sending
             if not self._validate_signal(sig):
-                log.warning(f"Invalid signal not sent: {sig}")
+                log.warning(f"Invalid ML signal not sent: {sig}")
                 return False
             
             # Serialize and send
@@ -246,7 +246,7 @@ class TCPBridge:
             self.ssock.sendall(struct.pack('<I', len(blob)) + blob)
             
             self.signal_count += 1
-            log.debug(f"Signal #{self.signal_count} sent successfully")
+            log.debug(f"ML Signal #{self.signal_count} sent successfully")
             
             return True
             
@@ -258,9 +258,10 @@ class TCPBridge:
             return False
 
     def _validate_signal(self, sig):
-        """Validate outgoing signal"""
+        """Validate outgoing ML signal with new protocol"""
         try:
-            required_fields = ["action", "confidence", "size", "timestamp", "signal_id"]
+            # NEW PROTOCOL: action, confidence, signal_quality, timestamp
+            required_fields = ["action", "confidence", "signal_quality", "timestamp"]
             
             for field in required_fields:
                 if field not in sig:
@@ -276,8 +277,15 @@ class TCPBridge:
                 log.warning(f"Invalid confidence: {sig['confidence']}")
                 return False
             
-            if sig["size"] < 0 or sig["size"] > 100:
-                log.warning(f"Invalid size: {sig['size']}")
+            # Validate signal quality
+            valid_qualities = ["excellent", "good", "mixed", "poor", "neutral"]
+            if sig["signal_quality"] not in valid_qualities:
+                log.warning(f"Invalid signal quality: {sig['signal_quality']}")
+                return False
+            
+            # Validate timestamp
+            if not isinstance(sig["timestamp"], (int, float)) or sig["timestamp"] <= 0:
+                log.warning(f"Invalid timestamp: {sig['timestamp']}")
                 return False
             
             return True
@@ -290,7 +298,7 @@ class TCPBridge:
         """Log TCP bridge statistics"""
         try:
             log.info(f"TCP Statistics: Features={self.feature_count}, "
-                    f"Signals={self.signal_count}, "
+                    f"ML Signals={self.signal_count}, "
                     f"Position Updates={self.position_updates}, "
                     f"Errors={self.connection_errors}, "
                     f"Invalid Features={self.invalid_features}")
@@ -309,7 +317,8 @@ class TCPBridge:
                 'invalid_features': self.invalid_features,
                 'current_position': self._current_position,
                 'connected': self.fsock is not None and self.ssock is not None,
-                'running': self._running
+                'running': self._running,
+                'protocol_version': 'pure_ml_v1.0'
             }
         except:
             return {'error': 'Status unavailable'}

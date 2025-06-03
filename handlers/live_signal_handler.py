@@ -6,6 +6,11 @@ import logging
 log = logging.getLogger(__name__)
 
 class LiveSignalHandler:
+    """
+    Simplified signal handler that sends pure ML signals to NinjaScript.
+    All position sizing and risk management moved to NinjaScript.
+    """
+    
     def __init__(self, cfg, agent, portfolio, tcp, logger):
         self.cfg = cfg
         self.agent = agent
@@ -15,217 +20,227 @@ class LiveSignalHandler:
         self.signal_counter = 0
         self.last_signal_time = 0
         
-        # Enhanced tracking for Ichimoku/EMA signals
+        # Simplified tracking for pure ML signals
         self.signal_history = []
         self.performance_tracker = {
             'total_signals': 0,
-            'ichimoku_signals': 0,
-            'ema_signals': 0,
-            'mixed_signals': 0,
-            'high_confidence_signals': 0
+            'high_confidence_signals': 0,
+            'excellent_quality_signals': 0,
+            'good_quality_signals': 0,
+            'poor_quality_signals': 0
         }
 
     def dispatch_signal(self, action: int, confidence: float, signal_features=None):
         """
-        Dispatch trading signal with enhanced Ichimoku/EMA analysis
+        Dispatch pure ML signal to NinjaScript with enhanced signal quality analysis.
+        NinjaScript handles all position sizing, stops, targets, and risk management.
         
         Args:
-            action: Trading action (0=hold, 1=long, 2=short)
-            confidence: Model confidence
-            signal_features: Dict with current Ichimoku/EMA signal values
+            action: Trading action (0=hold/exit, 1=long, 2=short)
+            confidence: Model confidence (0.0-1.0)
+            signal_features: Dict with current signal values for quality analysis
         """
-        # Update current position
+        # Update position tracking (for reward calculation only)
         self.portfolio.update_position(self.tcp._current_position)
 
-        # Extract signal data for position sizing
-        signal_data = self._extract_signal_data(signal_features)
-        
-        # Calculate position size with signal enhancement
-        size = self.portfolio.calculate_position_size(action, confidence, signal_data)
-
-        # Analyze signal quality
-        signal_quality = self._analyze_signal_quality(action, confidence, signal_data)
+        # Analyze signal quality for NinjaScript decision making
+        signal_quality = self._analyze_signal_quality(action, confidence, signal_features)
 
         current_time = time.time()
         self.signal_counter += 1
         timestamp = int(current_time)
         
-        # Create signal payload
-        sig = {
+        # Create simplified signal payload for NinjaScript
+        signal = {
             "action": action,
             "confidence": round(confidence, 3),
-            "size": size,
-            "timestamp": timestamp,
-            "signal_id": self.signal_counter
+            "signal_quality": signal_quality,  # NinjaScript uses this for exit strategy
+            "timestamp": timestamp
         }
 
         try:
-            # Send signal to NinjaTrader
-            self.tcp.send_signal(sig)
+            # Send pure ML signal to NinjaScript
+            self.tcp.send_signal(signal)
             self.last_signal_time = current_time
             
-            # Enhanced logging with signal analysis
-            action_name = "Long" if action == 1 else ("Short" if action == 2 else "Hold")
+            # Log the signal
+            action_name = "Long" if action == 1 else ("Short" if action == 2 else "Hold/Exit")
             
-            log.info(f"Signal sent - {action_name}: size={size}, conf={confidence:.3f}, "
-                    f"quality={signal_quality}, id={self.signal_counter}, timestamp={timestamp}")
+            log.info(f"ML Signal #{self.signal_counter}: {action_name} | "
+                    f"Confidence: {confidence:.3f} | Quality: {signal_quality} | "
+                    f"Timestamp: {timestamp}")
             
-            # Log signal details if significant
-            if size > 0 and signal_data:
-                self._log_signal_details(action_name, signal_data, signal_quality)
+            # Log signal details if action signal
+            if action != 0 and signal_features:
+                self._log_signal_details(action_name, signal_features, signal_quality)
             
             # Update performance tracking
-            self._update_performance_tracking(action, confidence, signal_data, size)
+            self._update_performance_tracking(action, confidence, signal_quality)
             
-            # Store signal history
-            self._store_signal_history(sig, signal_data, signal_quality)
+            # Store signal history for analysis
+            self._store_signal_history(signal, signal_features, signal_quality)
                     
         except Exception as e:
-            log.error(f"Failed to send signal: {e}")
+            log.error(f"Failed to send ML signal: {e}")
 
-    def _extract_signal_data(self, signal_features):
-        """Extract signal data from feature processor"""
-        if not signal_features:
-            return None
-        
+    def _analyze_signal_quality(self, action, confidence, signal_features):
+        """
+        Analyze signal quality for NinjaScript position management decisions.
+        Returns: "excellent", "good", "mixed", "poor", or "neutral"
+        """
         try:
-            # Map feature processor signals to portfolio format
-            return {
-                'tenkan_kijun_signal': signal_features.get('tenkan_kijun', 0),
-                'price_cloud_signal': signal_features.get('price_cloud', 0),
-                'future_cloud_signal': signal_features.get('future_cloud', 0),
-                'ema_cross_signal': signal_features.get('ema_cross', 0),
-                'tenkan_momentum': signal_features.get('tenkan_momentum', 0),
-                'kijun_momentum': signal_features.get('kijun_momentum', 0),
-                'normalized_volume': signal_features.get('normalized_volume', 0),
-                'lwpe': signal_features.get('lwpe', 0.5)
-            }
-        except Exception as e:
-            log.warning(f"Signal data extraction failed: {e}")
-            return None
-
-    def _analyze_signal_quality(self, action, confidence, signal_data):
-        """Analyze the quality of the trading signal"""
-        try:
-            if action == 0 or not signal_data:
+            if action == 0:  # Hold/Exit signal
                 return "neutral"
+            
+            if not signal_features:
+                return "poor"
             
             expected_direction = 1 if action == 1 else -1
             
-            # Count aligned signals
-            aligned_signals = 0
-            total_signals = 0
+            # Count aligned signals with enhanced weighting
+            alignment_score = 0.0
+            total_weight = 0.0
             
-            signal_checks = [
-                ('tenkan_kijun_signal', 'Tenkan/Kijun'),
-                ('price_cloud_signal', 'Price/Cloud'),
-                ('ema_cross_signal', 'EMA Cross'),
-                ('tenkan_momentum', 'Tenkan Momentum'),
-                ('kijun_momentum', 'Kijun Momentum')
+            # Major signals (higher weight)
+            major_signals = [
+                ('tenkan_kijun', 0.3),
+                ('price_cloud', 0.3),
+                ('ema_cross', 0.25)
             ]
             
-            for signal_key, signal_name in signal_checks:
-                if signal_key in signal_data and signal_data[signal_key] != 0:
-                    total_signals += 1
-                    if signal_data[signal_key] == expected_direction:
-                        aligned_signals += 1
+            # Minor signals (lower weight)
+            minor_signals = [
+                ('tenkan_momentum', 0.075),
+                ('kijun_momentum', 0.075)
+            ]
             
-            if total_signals == 0:
-                return "no_signals"
+            all_signals = major_signals + minor_signals
             
-            alignment_ratio = aligned_signals / total_signals
+            for signal_key, weight in all_signals:
+                if signal_key in signal_features:
+                    signal_value = signal_features[signal_key]
+                    total_weight += weight
+                    
+                    if signal_value == expected_direction:
+                        alignment_score += weight  # Full alignment
+                    elif signal_value == 0:
+                        alignment_score += weight * 0.5  # Neutral gets half credit
+                    # Opposing signals get 0 credit
             
-            # Determine signal quality
-            if alignment_ratio >= 0.8 and confidence >= 0.7:
+            # Calculate alignment percentage
+            if total_weight > 0:
+                alignment_pct = alignment_score / total_weight
+            else:
+                return "poor"
+            
+            # Volume and LWPE boost
+            volume_boost = 0.0
+            if 'normalized_volume' in signal_features:
+                vol = abs(signal_features['normalized_volume'])
+                if vol > 1.5:  # High volume
+                    volume_boost += 0.1
+            
+            if 'lwpe' in signal_features:
+                lwpe = signal_features['lwpe']
+                # LWPE extremes indicate strong directional flow
+                if abs(lwpe - 0.5) > 0.3:
+                    volume_boost += 0.1
+            
+            # Final quality determination with confidence weighting
+            final_score = (alignment_pct * 0.7) + (confidence * 0.2) + (volume_boost * 0.1)
+            
+            if final_score >= 0.85:
                 return "excellent"
-            elif alignment_ratio >= 0.6 and confidence >= 0.6:
+            elif final_score >= 0.7:
                 return "good"
-            elif alignment_ratio >= 0.4:
+            elif final_score >= 0.5:
                 return "mixed"
             else:
                 return "poor"
                 
         except Exception as e:
             log.debug(f"Signal quality analysis failed: {e}")
-            return "unknown"
+            return "poor"
 
-    def _log_signal_details(self, action_name, signal_data, quality):
-        """Log detailed signal information"""
+    def _log_signal_details(self, action_name, signal_features, quality):
+        """Log detailed ML signal information"""
         try:
             details = []
             
             # Ichimoku signals
-            if signal_data.get('tenkan_kijun_signal', 0) != 0:
-                direction = "Bull" if signal_data['tenkan_kijun_signal'] > 0 else "Bear"
-                details.append(f"TenkanKijun:{direction}")
+            ichimoku_signals = []
+            if signal_features.get('tenkan_kijun', 0) != 0:
+                direction = "Bull" if signal_features['tenkan_kijun'] > 0 else "Bear"
+                ichimoku_signals.append(f"TK:{direction}")
             
-            if signal_data.get('price_cloud_signal', 0) != 0:
-                position = "Above" if signal_data['price_cloud_signal'] > 0 else "Below"
-                details.append(f"Cloud:{position}")
+            if signal_features.get('price_cloud', 0) != 0:
+                position = "Above" if signal_features['price_cloud'] > 0 else "Below"
+                ichimoku_signals.append(f"Cloud:{position}")
+            
+            if signal_features.get('future_cloud', 0) != 0:
+                color = "Green" if signal_features['future_cloud'] > 0 else "Red"
+                ichimoku_signals.append(f"Future:{color}")
+            
+            if ichimoku_signals:
+                details.append(f"Ichimoku: {','.join(ichimoku_signals)}")
             
             # EMA signal
-            if signal_data.get('ema_cross_signal', 0) != 0:
-                direction = "Bull" if signal_data['ema_cross_signal'] > 0 else "Bear"
+            if signal_features.get('ema_cross', 0) != 0:
+                direction = "Bull" if signal_features['ema_cross'] > 0 else "Bear"
                 details.append(f"EMA:{direction}")
             
             # Momentum
             momentum_details = []
-            if signal_data.get('tenkan_momentum', 0) != 0:
-                direction = "+" if signal_data['tenkan_momentum'] > 0 else "-"
+            if signal_features.get('tenkan_momentum', 0) != 0:
+                direction = "+" if signal_features['tenkan_momentum'] > 0 else "-"
                 momentum_details.append(f"T{direction}")
             
-            if signal_data.get('kijun_momentum', 0) != 0:
-                direction = "+" if signal_data['kijun_momentum'] > 0 else "-"
+            if signal_features.get('kijun_momentum', 0) != 0:
+                direction = "+" if signal_features['kijun_momentum'] > 0 else "-"
                 momentum_details.append(f"K{direction}")
             
             if momentum_details:
                 details.append(f"Momentum:{','.join(momentum_details)}")
             
-            # Volume and LWPE
-            lwpe = signal_data.get('lwpe', 0.5)
+            # Market condition indicators
+            lwpe = signal_features.get('lwpe', 0.5)
             details.append(f"LWPE:{lwpe:.3f}")
             
+            vol = signal_features.get('normalized_volume', 0)
+            if abs(vol) > 1.0:
+                details.append(f"Vol:{'High' if vol > 0 else 'Low'}")
+            
             if details:
-                log.info(f"  Signal details: {' | '.join(details)} | Quality: {quality}")
+                log.info(f"  Signal Details: {' | '.join(details)} | Quality: {quality}")
                 
         except Exception as e:
             log.debug(f"Signal detail logging failed: {e}")
 
-    def _update_performance_tracking(self, action, confidence, signal_data, size):
+    def _update_performance_tracking(self, action, confidence, quality):
         """Update performance tracking statistics"""
         try:
             self.performance_tracker['total_signals'] += 1
             
-            if size > 0:  # Only count actual trades
-                # Count signal types
-                if signal_data:
-                    ichimoku_count = sum(1 for key in ['tenkan_kijun_signal', 'price_cloud_signal'] 
-                                       if signal_data.get(key, 0) != 0)
-                    ema_count = 1 if signal_data.get('ema_cross_signal', 0) != 0 else 0
-                    
-                    if ichimoku_count >= 2:
-                        self.performance_tracker['ichimoku_signals'] += 1
-                    elif ema_count > 0:
-                        self.performance_tracker['ema_signals'] += 1
-                    else:
-                        self.performance_tracker['mixed_signals'] += 1
-                
-                if confidence >= 0.7:
-                    self.performance_tracker['high_confidence_signals'] += 1
+            if confidence >= 0.7:
+                self.performance_tracker['high_confidence_signals'] += 1
+            
+            # Track quality distribution
+            quality_key = f'{quality}_quality_signals'
+            if quality_key in self.performance_tracker:
+                self.performance_tracker[quality_key] += 1
             
         except Exception as e:
             log.debug(f"Performance tracking update failed: {e}")
 
-    def _store_signal_history(self, signal, signal_data, quality):
+    def _store_signal_history(self, signal, signal_features, quality):
         """Store signal in history for analysis"""
         try:
             history_entry = {
                 'timestamp': signal['timestamp'],
                 'action': signal['action'],
                 'confidence': signal['confidence'],
-                'size': signal['size'],
                 'quality': quality,
-                'signal_data': signal_data.copy() if signal_data else None
+                'signal_features': signal_features.copy() if signal_features else None
             }
             
             self.signal_history.append(history_entry)
@@ -238,29 +253,33 @@ class LiveSignalHandler:
             log.debug(f"Signal history storage failed: {e}")
 
     def get_performance_summary(self):
-        """Get performance summary"""
+        """Get ML signal performance summary"""
         try:
             total = self.performance_tracker['total_signals']
             if total == 0:
-                return "No signals dispatched yet"
+                return "No ML signals dispatched yet"
             
             summary = f"""
-            Signal Performance Summary:
+            ML Signal Performance Summary:
             Total Signals: {total}
-            Ichimoku-based: {self.performance_tracker['ichimoku_signals']} ({self.performance_tracker['ichimoku_signals']/total*100:.1f}%)
-            EMA-based: {self.performance_tracker['ema_signals']} ({self.performance_tracker['ema_signals']/total*100:.1f}%)
-            Mixed Signals: {self.performance_tracker['mixed_signals']} ({self.performance_tracker['mixed_signals']/total*100:.1f}%)
-            High Confidence: {self.performance_tracker['high_confidence_signals']} ({self.performance_tracker['high_confidence_signals']/total*100:.1f}%)
+            High Confidence (≥0.7): {self.performance_tracker['high_confidence_signals']} ({self.performance_tracker['high_confidence_signals']/total*100:.1f}%)
+            
+            Signal Quality Distribution:
+            - Excellent: {self.performance_tracker['excellent_quality_signals']} ({self.performance_tracker['excellent_quality_signals']/total*100:.1f}%)
+            - Good: {self.performance_tracker['good_quality_signals']} ({self.performance_tracker['good_quality_signals']/total*100:.1f}%)
+            - Poor: {self.performance_tracker['poor_quality_signals']} ({self.performance_tracker['poor_quality_signals']/total*100:.1f}%)
+            
+            Note: Position sizing, stops, targets handled by NinjaScript
             """
             
-            # Recent signal quality distribution
+            # Recent signal quality trend
             if self.signal_history:
                 recent_qualities = [s['quality'] for s in self.signal_history[-20:]]
                 quality_dist = {}
                 for q in recent_qualities:
                     quality_dist[q] = quality_dist.get(q, 0) + 1
                 
-                summary += f"  Recent Quality: {quality_dist}\n"
+                summary += f"Recent Quality Trend: {quality_dist}\n"
             
             return summary.strip()
             
@@ -269,5 +288,43 @@ class LiveSignalHandler:
             return "Performance summary unavailable"
 
     def get_recent_signals(self, count=10):
-        """Get recent signals for analysis"""
+        """Get recent ML signals for analysis"""
         return self.signal_history[-count:] if self.signal_history else []
+
+    def get_signal_quality_stats(self):
+        """Get detailed signal quality statistics for monitoring"""
+        try:
+            if not self.signal_history:
+                return {}
+            
+            recent_signals = self.signal_history[-50:]  # Last 50 signals
+            
+            quality_counts = {}
+            confidence_by_quality = {}
+            
+            for signal in recent_signals:
+                quality = signal['quality']
+                confidence = signal['confidence']
+                
+                if quality not in quality_counts:
+                    quality_counts[quality] = 0
+                    confidence_by_quality[quality] = []
+                
+                quality_counts[quality] += 1
+                confidence_by_quality[quality].append(confidence)
+            
+            # Calculate average confidence by quality
+            avg_confidence_by_quality = {}
+            for quality, confidences in confidence_by_quality.items():
+                avg_confidence_by_quality[quality] = sum(confidences) / len(confidences)
+            
+            return {
+                'total_recent_signals': len(recent_signals),
+                'quality_distribution': quality_counts,
+                'avg_confidence_by_quality': avg_confidence_by_quality,
+                'overall_avg_confidence': sum(s['confidence'] for s in recent_signals) / len(recent_signals)
+            }
+            
+        except Exception as e:
+            log.warning(f"Signal quality stats generation failed: {e}")
+            return {}

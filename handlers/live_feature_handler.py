@@ -48,7 +48,7 @@ class LiveFeatureHandler:
             return
 
         # Live trading logic
-        self._handle_live_trading(action, conf)
+        self._handle_live_trading(action, conf, feat)
 
         # Periodic logging and maintenance
         if self.step_counter % self.signal_summary_interval == 0:
@@ -105,8 +105,8 @@ class LiveFeatureHandler:
             log.debug(f"Historical processing: step {self.step_counter}, "
                      f"action={action}, conf={conf:.3f}")
 
-    def _handle_live_trading(self, action, conf):
-        """Handle live trading decisions"""
+    def _handle_live_trading(self, action, conf, feat):
+        """Handle live trading decisions with signal features"""
         # Initial training check
         if self.trainer.should_train_initial():
             log.info("Performing initial training with Ichimoku/EMA features before live trading")
@@ -123,8 +123,11 @@ class LiveFeatureHandler:
             log.debug(f"Confidence {conf:.3f} below threshold {self.cfg.CONFIDENCE_THRESHOLD}, holding")
             action = 0  # Force hold for low confidence
 
-        # Dispatch trading signal
-        self.dispatcher.dispatch_signal(action, conf)
+        # Extract signal features for quality analysis
+        signal_features = self._extract_signal_features(feat)
+
+        # Dispatch trading signal with features for quality analysis
+        self.dispatcher.dispatch_signal(action, conf, signal_features)
 
         # Online learning
         if self.trainer.should_train_online():
@@ -134,6 +137,27 @@ class LiveFeatureHandler:
         if self.trainer.should_train_batch():
             log.info("Performing batch training on accumulated Ichimoku/EMA data")
             self.trainer.train_batch()
+
+    def _extract_signal_features(self, feat):
+        """Extract signal features from feature vector for quality analysis"""
+        try:
+            if len(feat) < 9:
+                return None
+            
+            return {
+                'close': feat[0],
+                'normalized_volume': feat[1],
+                'tenkan_kijun': feat[2],
+                'price_cloud': feat[3],
+                'future_cloud': feat[4],
+                'ema_cross': feat[5],
+                'tenkan_momentum': feat[6],
+                'kijun_momentum': feat[7],
+                'lwpe': feat[8]
+            }
+        except Exception as e:
+            log.warning(f"Signal feature extraction failed: {e}")
+            return None
 
     def _log_periodic_summary(self):
         """Log periodic summary of signals and performance"""
@@ -160,6 +184,14 @@ class LiveFeatureHandler:
                             f"ichimoku_bull={stats.get('ichimoku_bullish_signals', 0)}, "
                             f"ema_bull={stats.get('ema_bullish', 0)}")
             
+            # Signal quality statistics from dispatcher
+            if hasattr(self.dispatcher, 'get_signal_quality_stats'):
+                quality_stats = self.dispatcher.get_signal_quality_stats()
+                if quality_stats:
+                    total_signals = quality_stats.get('total_recent_signals', 0)
+                    avg_conf = quality_stats.get('overall_avg_confidence', 0)
+                    log.info(f"Signal quality: {total_signals} recent, avg_conf={avg_conf:.3f}")
+            
         except Exception as e:
             log.warning(f"Periodic summary logging failed: {e}")
 
@@ -172,11 +204,16 @@ class LiveFeatureHandler:
                 'experience_buffer_size': len(self.trainer.agent.experience_buffer),
                 'current_signals': self.processor.get_signal_summary(),
                 'feature_importance': self.trainer.agent.get_feature_importance_summary(),
-                'last_price': self.trainer.last_price
+                'last_price': self.trainer.last_price,
+                'architecture_mode': 'pure_ml_signal_generation'
             }
             
             if hasattr(self.trainer.logger, 'get_feature_statistics'):
                 report['feature_statistics'] = self.trainer.logger.get_feature_statistics()
+            
+            # Add signal quality stats
+            if hasattr(self.dispatcher, 'get_signal_quality_stats'):
+                report['signal_quality_stats'] = self.dispatcher.get_signal_quality_stats()
             
             return report
             
