@@ -34,7 +34,6 @@ class Config:
 
     # Enhanced risk management with neutral signal considerations
     CONFIDENCE_THRESHOLD = 0.45  # Lower threshold to allow more trades
-    MAX_DRAWDOWN_PCT = 0.02     # 2% max drawdown per trade
     
     # Signal quality thresholds
     MIN_SIGNAL_ALIGNMENT = 0.5  # Reduced from 0.6
