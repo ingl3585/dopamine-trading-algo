@@ -1,4 +1,4 @@
-// Multi-Timeframe RLTrader.cs - 27 Feature Implementation
+// RLTrader.cs
 
 using System;
 using System.Globalization;
@@ -21,7 +21,7 @@ using System.Windows.Media;
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
-    public class RLTraderMultiTimeframe : Strategy
+    public class RLTrader : Strategy
     {
         #region Private Fields
         
@@ -325,8 +325,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    AddPlot(Brushes.Yellow, "5m Momentum");
 		    AddPlot(Brushes.Cyan, "1m Entry");
 		    
-		    // Entry configuration for multiple exits
-		    BarsRequiredToTrade = Math.Max(Math.Max(SenkouPeriod15, SenkouPeriod5), SenkouPeriod1) + 5;
+		    // CRITICAL: Set BarsRequiredToTrade high enough for all timeframes
+		    int maxPeriod = Math.Max(Math.Max(SenkouPeriod15, SenkouPeriod5), SenkouPeriod1);
+		    BarsRequiredToTrade = maxPeriod + 50; // Extra buffer for safety
+		    
 		    EntriesPerDirection = 1;
 		    EntryHandling = EntryHandling.AllEntries;
 		    
@@ -369,13 +371,26 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
+		        // Wait for data series to be available
+		        if (BarsArray.Length < 3)
+		        {
+		            Print("Multi-timeframe data series not yet available");
+		            return;
+		        }
+		        
 		        // 15-minute indicators (BarsArray[1])
-		        emaFast15 = EMA(BarsArray[1], EmaFastPeriod15);
-		        emaSlow15 = EMA(BarsArray[1], EmaSlowPeriod15);
+		        if (BarsArray[1] != null)
+		        {
+		            emaFast15 = EMA(BarsArray[1], EmaFastPeriod15);
+		            emaSlow15 = EMA(BarsArray[1], EmaSlowPeriod15);
+		        }
 		        
 		        // 5-minute indicators (BarsArray[2])
-		        emaFast5 = EMA(BarsArray[2], EmaFastPeriod5);
-		        emaSlow5 = EMA(BarsArray[2], EmaSlowPeriod5);
+		        if (BarsArray[2] != null)
+		        {
+		            emaFast5 = EMA(BarsArray[2], EmaFastPeriod5);
+		            emaSlow5 = EMA(BarsArray[2], EmaSlowPeriod5);
+		        }
 		        
 		        // 1-minute indicators (primary BarsArray[0])
 		        emaFast1 = EMA(BarsArray[0], EmaFastPeriod1);
@@ -519,9 +534,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
-		        // Only process on primary timeframe (1-minute)
+		        // CRITICAL: Only process on primary timeframe (1-minute)
 		        if (BarsInProgress != 0)
 		            return;
+		            
+		        // SAFETY CHECK: Ensure all data series have sufficient data
+		        if (!IsDataSeriesReady())
+		        {
+		            if (EnableLogging && CurrentBar % 100 == 0)
+		                Print($"Data series not ready: Bar {CurrentBar}");
+		            return;
+		        }
 		            
 		        UpdatePlots();
 		        
@@ -532,12 +555,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        }
 		        else
 		        {
-		            SendSingleTimeframeFeatureVector(); // Fallback to original 9-feature
+		            SendSingleTimeframeFeatureVector();
 		        }
 		        
 		        if (!IsReadyForTrading())
 		            return;
-
+		
 		        // Manage existing positions first
 		        ManageExistingPositions();
 		        
@@ -545,8 +568,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        ProcessLatestSignal();
 		        SendPositionUpdate();
 		        
-		        // Visual updates
-		        if (CurrentBar >= BarsRequiredToTrade)
+		        // Visual updates - ONLY if sufficient data
+		        if (IsDataSeriesReady() && CurrentBar >= BarsRequiredToTrade)
 		        {
 		            PlotMultiTimeframeInfo();
 		        }
@@ -560,6 +583,50 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    catch (Exception ex)
 		    {
 		        Print($"OnBarUpdate error: {ex.Message}");
+		    }
+		}
+		
+		private bool IsDataSeriesReady()
+		{
+		    try
+		    {
+		        // Check if we have enough bars on all timeframes
+		        int requiredBars = Math.Max(Math.Max(SenkouPeriod15, SenkouPeriod5), SenkouPeriod1) + 30;
+		        
+		        // Check primary series (1-minute)
+		        if (CurrentBar < requiredBars)
+		            return false;
+		        
+		        // Basic array checks to prevent crashes
+		        if (CurrentBars.Length < 3)
+		            return false;
+		        
+		        // Check 15-minute series (BarsArray[1])
+		        if (CurrentBars[1] < (requiredBars / 15))
+		            return false;
+		            
+		        // Check 5-minute series (BarsArray[2])  
+		        if (CurrentBars[2] < (requiredBars / 5))
+		            return false;
+		        
+		        // Basic null checks to prevent crashes
+		        if (Closes[1] == null || Closes[2] == null)
+		            return false;
+		            
+		        if (Highs[1] == null || Highs[2] == null)
+		            return false;
+		            
+		        if (Lows[1] == null || Lows[2] == null)
+		            return false;
+		            
+		        if (Volumes[1] == null || Volumes[2] == null)
+		            return false;
+		            
+		        return true;
+		    }
+		    catch
+		    {
+		        return false;
 		    }
 		}
 
@@ -748,159 +815,179 @@ namespace NinjaTrader.NinjaScript.Strategies
             return signals > 0 ? Math.Max(-1, Math.Min(1, alignment / signals)) : 0;
         }
 
-        private double CalculateNormalizedVolume(int seriesIndex, int lookback)
-        {
-            try
-            {
-                if (CurrentBars[seriesIndex] < lookback)
-                    return 0;
-                    
-                double currentVol = Volumes[seriesIndex][0];
-                double avgVol = 0;
-                
-                for (int i = 0; i < lookback; i++)
-                {
-                    avgVol += Volumes[seriesIndex][i];
-                }
-                avgVol /= lookback;
-                
-                if (avgVol == 0) return 0;
-                
-                return (currentVol - avgVol) / avgVol;
-            }
-            catch
-            {
-                return 0;
-            }
-        }
+		private double CalculateNormalizedVolume(int seriesIndex, int lookback)
+		{
+		    try
+		    {
+		        // SAFETY: Check if we have enough data
+		        if (seriesIndex >= CurrentBars.Length)
+		            return 0;
+		            
+		        if (CurrentBars[seriesIndex] < lookback)
+		            return 0;
+		            
+		        // SAFETY: Check if volumes array exists
+		        if (Volumes[seriesIndex] == null)
+		            return 0;
+		            
+		        double currentVol = Volumes[seriesIndex][0];
+		        double avgVol = 0;
+		        
+		        for (int i = 0; i < lookback && i <= CurrentBars[seriesIndex]; i++)
+		        {
+		            avgVol += Volumes[seriesIndex][i];
+		        }
+		        avgVol /= lookback;
+		        
+		        if (avgVol == 0) return 0;
+		        
+		        return (currentVol - avgVol) / avgVol;
+		    }
+		    catch (Exception ex)
+		    {
+		        if (EnableLogging)
+		            Print($"CalculateNormalizedVolume error for series {seriesIndex}: {ex.Message}");
+		        return 0;
+		    }
+		}
 
-        private MultiTimeframeFeatures GetDefaultMultiTimeframeFeatures()
-        {
-            double lwpeValue;
-            lock (lwpeLock)
-            {
-                lwpeValue = currentLWPE;
-            }
-            
-            return new MultiTimeframeFeatures
-            {
-                // 15-minute defaults
-                Close15m = Closes[1]?[0] ?? 0,
-                NormalizedVolume15m = 0,
-                TenkanKijunSignal15m = 0,
-                PriceCloudSignal15m = 0,
-                FutureCloudSignal15m = 0,
-                EmaCrossSignal15m = 0,
-                TenkanMomentum15m = 0,
-                KijunMomentum15m = 0,
-                LWPE15m = lwpeValue,
-                
-                // 5-minute defaults
-                Close5m = Closes[2]?[0] ?? 0,
-                NormalizedVolume5m = 0,
-                TenkanKijunSignal5m = 0,
-                PriceCloudSignal5m = 0,
-                FutureCloudSignal5m = 0,
-                EmaCrossSignal5m = 0,
-                TenkanMomentum5m = 0,
-                KijunMomentum5m = 0,
-                LWPE5m = lwpeValue,
-                
-                // 1-minute defaults
-                Close1m = Close[0],
-                NormalizedVolume1m = 0,
-                TenkanKijunSignal1m = 0,
-                PriceCloudSignal1m = 0,
-                FutureCloudSignal1m = 0,
-                EmaCrossSignal1m = 0,
-                TenkanMomentum1m = 0,
-                KijunMomentum1m = 0,
-                LWPE1m = lwpeValue,
-                
-                // Alignment signals
-                Trend15m = 0,
-                Momentum5m = 0,
-                Entry1m = 0,
-                
-                IsLive = State == State.Realtime
-            };
-        }
+		private MultiTimeframeFeatures GetDefaultMultiTimeframeFeatures()
+		{
+		    double lwpeValue;
+		    lock (lwpeLock)
+		    {
+		        lwpeValue = currentLWPE;
+		    }
+		    
+		    return new MultiTimeframeFeatures
+		    {
+		        // 15-minute defaults - SAFE ACCESS ONLY
+		        Close15m = (CurrentBars.Length > 1 && CurrentBars[1] >= 0) ? Closes[1][0] : Close[0],
+		        NormalizedVolume15m = 0,
+		        TenkanKijunSignal15m = 0,
+		        PriceCloudSignal15m = 0,
+		        FutureCloudSignal15m = 0,
+		        EmaCrossSignal15m = 0,
+		        TenkanMomentum15m = 0,
+		        KijunMomentum15m = 0,
+		        LWPE15m = lwpeValue,
+		        
+		        // 5-minute defaults - SAFE ACCESS ONLY  
+		        Close5m = (CurrentBars.Length > 2 && CurrentBars[2] >= 0) ? Closes[2][0] : Close[0],
+		        NormalizedVolume5m = 0,
+		        TenkanKijunSignal5m = 0,
+		        PriceCloudSignal5m = 0,
+		        FutureCloudSignal5m = 0,
+		        EmaCrossSignal5m = 0,
+		        TenkanMomentum5m = 0,
+		        KijunMomentum5m = 0,
+		        LWPE5m = lwpeValue,
+		        
+		        // 1-minute defaults (unchanged)
+		        Close1m = Close[0],
+		        NormalizedVolume1m = 0,
+		        TenkanKijunSignal1m = 0,
+		        PriceCloudSignal1m = 0,
+		        FutureCloudSignal1m = 0,
+		        EmaCrossSignal1m = 0,
+		        TenkanMomentum1m = 0,
+		        KijunMomentum1m = 0,
+		        LWPE1m = lwpeValue,
+		        
+		        // Alignment signals
+		        Trend15m = 0,
+		        Momentum5m = 0,
+		        Entry1m = 0,
+		        
+		        IsLive = State == State.Realtime
+		    };
+		}
 
         // Multi-timeframe Ichimoku calculations
-        private double GetTenkanKijunSignal(int seriesIndex, int tenkanPeriod, int kijunPeriod)
-        {
-            try
-            {
-                if (CurrentBars[seriesIndex] < Math.Max(tenkanPeriod, kijunPeriod))
-                    return 0;
-                    
-                double tenkanHigh = MAX(Highs[seriesIndex], tenkanPeriod)[0];
-                double tenkanLow = MIN(Lows[seriesIndex], tenkanPeriod)[0];
-                double tenkan = (tenkanHigh + tenkanLow) / 2;
-                
-                double kijunHigh = MAX(Highs[seriesIndex], kijunPeriod)[0];
-                double kijunLow = MIN(Lows[seriesIndex], kijunPeriod)[0];
-                double kijun = (kijunHigh + kijunLow) / 2;
-                
-                if (tenkan == 0 || kijun == 0)
-                    return 0;
-                    
-                double diff = tenkan - kijun;
-                double threshold = Closes[seriesIndex][0] * 0.001;
-                
-                if (diff > threshold)
-                    return 1.0;
-                else if (diff < -threshold)
-                    return -1.0;
-                else
-                    return 0.0;
-            }
-            catch
-            {
-                return 0;
-            }
-        }
+		private double GetTenkanKijunSignal(int seriesIndex, int tenkanPeriod, int kijunPeriod)
+		{
+		    try
+		    {
+		        // ONLY ADD: Basic bounds check to prevent crash
+		        if (seriesIndex >= CurrentBars.Length || CurrentBars[seriesIndex] < Math.Max(tenkanPeriod, kijunPeriod))
+		            return 0;
+		            
+		        if (Highs[seriesIndex] == null || Lows[seriesIndex] == null)
+		            return 0;
+		            
+		        // YOUR ORIGINAL LOGIC UNCHANGED
+		        double tenkanHigh = MAX(Highs[seriesIndex], tenkanPeriod)[0];
+		        double tenkanLow = MIN(Lows[seriesIndex], tenkanPeriod)[0];
+		        double tenkan = (tenkanHigh + tenkanLow) / 2;
+		        
+		        double kijunHigh = MAX(Highs[seriesIndex], kijunPeriod)[0];
+		        double kijunLow = MIN(Lows[seriesIndex], kijunPeriod)[0];
+		        double kijun = (kijunHigh + kijunLow) / 2;
+		        
+		        if (tenkan == 0 || kijun == 0)
+		            return 0;
+		            
+		        double diff = tenkan - kijun;
+		        double threshold = Closes[seriesIndex][0] * 0.001;
+		        
+		        if (diff > threshold)
+		            return 1.0;
+		        else if (diff < -threshold)
+		            return -1.0;
+		        else
+		            return 0.0;
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
         
-        private double GetPriceCloudSignal(int seriesIndex, int tenkanPeriod, int kijunPeriod, int senkouPeriod)
-        {
-            try
-            {
-                if (CurrentBars[seriesIndex] < senkouPeriod + 26)
-                    return 0;
-                    
-                double tenkanHigh26 = MAX(Highs[seriesIndex], tenkanPeriod)[26];
-                double tenkanLow26 = MIN(Lows[seriesIndex], tenkanPeriod)[26];
-                double tenkan26 = (tenkanHigh26 + tenkanLow26) / 2;
-                
-                double kijunHigh26 = MAX(Highs[seriesIndex], kijunPeriod)[26];
-                double kijunLow26 = MIN(Lows[seriesIndex], kijunPeriod)[26];
-                double kijun26 = (kijunHigh26 + kijunLow26) / 2;
-                
-                double senkouA = (tenkan26 + kijun26) / 2;
-                
-                double senkouBHigh26 = MAX(Highs[seriesIndex], senkouPeriod)[26];
-                double senkouBLow26 = MIN(Lows[seriesIndex], senkouPeriod)[26];
-                double senkouB = (senkouBHigh26 + senkouBLow26) / 2;
-                
-                if (senkouA == 0 || senkouB == 0)
-                    return 0;
-                    
-                double cloudTop = Math.Max(senkouA, senkouB);
-                double cloudBottom = Math.Min(senkouA, senkouB);
-                double buffer = Closes[seriesIndex][0] * 0.002;
-                
-                if (Closes[seriesIndex][0] > cloudTop + buffer)
-                    return 1.0;
-                else if (Closes[seriesIndex][0] < cloudBottom - buffer)
-                    return -1.0;
-                else
-                    return 0.0;
-            }
-            catch
-            {
-                return 0;
-            }
-        }
+		private double GetPriceCloudSignal(int seriesIndex, int tenkanPeriod, int kijunPeriod, int senkouPeriod)
+		{
+		    try
+		    {
+		        // ONLY ADD: Basic bounds check to prevent crash
+		        if (seriesIndex >= CurrentBars.Length || CurrentBars[seriesIndex] < senkouPeriod + 26)
+		            return 0;
+		            
+		        if (Highs[seriesIndex] == null || Lows[seriesIndex] == null || Closes[seriesIndex] == null)
+		            return 0;
+		            
+		        // YOUR ORIGINAL LOGIC UNCHANGED
+		        double tenkanHigh26 = MAX(Highs[seriesIndex], tenkanPeriod)[26];
+		        double tenkanLow26 = MIN(Lows[seriesIndex], tenkanPeriod)[26];
+		        double tenkan26 = (tenkanHigh26 + tenkanLow26) / 2;
+		        
+		        double kijunHigh26 = MAX(Highs[seriesIndex], kijunPeriod)[26];
+		        double kijunLow26 = MIN(Lows[seriesIndex], kijunPeriod)[26];
+		        double kijun26 = (kijunHigh26 + kijunLow26) / 2;
+		        
+		        double senkouA = (tenkan26 + kijun26) / 2;
+		        
+		        double senkouBHigh26 = MAX(Highs[seriesIndex], senkouPeriod)[26];
+		        double senkouBLow26 = MIN(Lows[seriesIndex], senkouPeriod)[26];
+		        double senkouB = (senkouBHigh26 + senkouBLow26) / 2;
+		        
+		        if (senkouA == 0 || senkouB == 0)
+		            return 0;
+		            
+		        double cloudTop = Math.Max(senkouA, senkouB);
+		        double cloudBottom = Math.Min(senkouA, senkouB);
+		        double buffer = Closes[seriesIndex][0] * 0.002;
+		        
+		        if (Closes[seriesIndex][0] > cloudTop + buffer)
+		            return 1.0;
+		        else if (Closes[seriesIndex][0] < cloudBottom - buffer)
+		            return -1.0;
+		        else
+		            return 0.0;
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
         
         private double GetFutureCloudSignal(int seriesIndex, int tenkanPeriod, int kijunPeriod, int senkouPeriod)
         {
@@ -1324,40 +1411,51 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
         
-        private void UpdatePlots()
-        {
-            try
-            {
-                lock (lwpeLock)
-                {
-                    Values[0][0] = currentLWPE;
-                }
-                
-                double qualityValue = 0.5;
-                switch (lastSignalQuality.ToLower())
-                {
-                    case "excellent": qualityValue = 1.0; break;
-                    case "good": qualityValue = 0.75; break;
-                    case "poor": qualityValue = 0.25; break;
-                    default: qualityValue = 0.5; break;
-                }
-                Values[1][0] = qualityValue;
-                Values[2][0] = Math.Abs(GetCurrentPosition());
-                
-                // Multi-timeframe plots
-                if (EnableMultiTimeframe && lastFeatures != null)
-                {
-                    Values[3][0] = lastFeatures.Trend15m;     // 15m trend
-                    Values[4][0] = lastFeatures.Momentum5m;   // 5m momentum
-                    Values[5][0] = lastFeatures.Entry1m;      // 1m entry
-                }
-            }
-            catch (Exception ex)
-            {
-                if (EnableLogging)
-                    Print($"Plot update error: {ex.Message}");
-            }
-        }
+		private void UpdatePlots()
+		{
+		    try
+		    {
+		        // SAFETY: Only update plots if data is ready
+		        if (!IsDataSeriesReady())
+		            return;
+		            
+		        lock (lwpeLock)
+		        {
+		            Values[0][0] = currentLWPE;
+		        }
+		        
+		        double qualityValue = 0.5;
+		        switch (lastSignalQuality.ToLower())
+		        {
+		            case "excellent": qualityValue = 1.0; break;
+		            case "good": qualityValue = 0.75; break;
+		            case "poor": qualityValue = 0.25; break;
+		            default: qualityValue = 0.5; break;
+		        }
+		        Values[1][0] = qualityValue;
+		        Values[2][0] = Math.Abs(GetCurrentPosition());
+		        
+		        // Multi-timeframe plots - only if enabled and data available
+		        if (EnableMultiTimeframe && lastFeatures != null)
+		        {
+		            Values[3][0] = lastFeatures.Trend15m;     // 15m trend
+		            Values[4][0] = lastFeatures.Momentum5m;   // 5m momentum
+		            Values[5][0] = lastFeatures.Entry1m;      // 1m entry
+		        }
+		        else
+		        {
+		            // Default values when multi-timeframe not ready
+		            Values[3][0] = 0;
+		            Values[4][0] = 0; 
+		            Values[5][0] = 0;
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        if (EnableLogging)
+		            Print($"Plot update error: {ex.Message}");
+		    }
+		}
         
         private bool IsReadyForTrading()
         {
@@ -1679,54 +1777,58 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    }
 		}
 
-        private void PlotMultiTimeframeInfo()
-        {
-            try
-            {
-                if (Position.MarketPosition != MarketPosition.Flat && entryPrice > 0)
-                {
-                    Draw.HorizontalLine(this, "EntryLine", entryPrice, Brushes.Yellow);
-                    
-                    if (stopLossPrice > 0)
-                    {
-                        Draw.HorizontalLine(this, "StopLossLine", stopLossPrice, Brushes.Red);
-                    }
-                    
-                    if (takeProfitPrice > 0)
-                    {
-                        Draw.HorizontalLine(this, "TakeProfitLine", takeProfitPrice, Brushes.Lime);
-                    }
-                    
-                    if (isTrailingStopActive && trailingStopPrice > 0)
-                    {
-                        Draw.HorizontalLine(this, "TrailingStopLine", trailingStopPrice, Brushes.Orange);
-                    }
-
-                    string positionInfo = $"Pos: {Position.Quantity} | Conf: {lastSignalConfidence:F2} | Qual: {lastSignalQuality}";
-                    
-                    if (EnableMultiTimeframe && lastFeatures != null)
-                    {
-                        positionInfo += $"\n15m: {lastFeatures.Trend15m:F2} | 5m: {lastFeatures.Momentum5m:F2} | 1m: {lastFeatures.Entry1m:F2}";
-                    }
-                    
-                    Draw.TextFixed(this, "PositionInfo", positionInfo, TextPosition.TopLeft, 
-                                 Brushes.White, new NinjaTrader.Gui.Tools.SimpleFont("Arial", 10), Brushes.Black, Brushes.Transparent, 0);
-                }
-                else
-                {
-                    RemoveDrawObject("EntryLine");
-                    RemoveDrawObject("StopLossLine");
-                    RemoveDrawObject("TakeProfitLine");
-                    RemoveDrawObject("TrailingStopLine");
-                    RemoveDrawObject("PositionInfo");
-                }
-            }
-            catch (Exception ex)
-            {
-                if (EnableLogging)
-                    Print($"Multi-timeframe plotting error: {ex.Message}");
-            }
-        }
+		private void PlotMultiTimeframeInfo()
+		{
+		    try
+		    {
+		        // SAFETY: Only plot if we have sufficient data
+		        if (!IsDataSeriesReady())
+		            return;
+		            
+		        if (Position.MarketPosition != MarketPosition.Flat && entryPrice > 0)
+		        {
+		            Draw.HorizontalLine(this, "EntryLine", entryPrice, Brushes.Yellow);
+		            
+		            if (stopLossPrice > 0)
+		            {
+		                Draw.HorizontalLine(this, "StopLossLine", stopLossPrice, Brushes.Red);
+		            }
+		            
+		            if (takeProfitPrice > 0)
+		            {
+		                Draw.HorizontalLine(this, "TakeProfitLine", takeProfitPrice, Brushes.Lime);
+		            }
+		            
+		            if (isTrailingStopActive && trailingStopPrice > 0)
+		            {
+		                Draw.HorizontalLine(this, "TrailingStopLine", trailingStopPrice, Brushes.Orange);
+		            }
+		
+		            string positionInfo = $"Pos: {Position.Quantity} | Conf: {lastSignalConfidence:F2} | Qual: {lastSignalQuality}";
+		            
+		            if (EnableMultiTimeframe && lastFeatures != null)
+		            {
+		                positionInfo += $"\n15m: {lastFeatures.Trend15m:F2} | 5m: {lastFeatures.Momentum5m:F2} | 1m: {lastFeatures.Entry1m:F2}";
+		            }
+		            
+		            Draw.TextFixed(this, "PositionInfo", positionInfo, TextPosition.TopLeft, 
+		                         Brushes.White, new NinjaTrader.Gui.Tools.SimpleFont("Arial", 10), Brushes.Black, Brushes.Transparent, 0);
+		        }
+		        else
+		        {
+		            RemoveDrawObject("EntryLine");
+		            RemoveDrawObject("StopLossLine");
+		            RemoveDrawObject("TakeProfitLine");
+		            RemoveDrawObject("TrailingStopLine");
+		            RemoveDrawObject("PositionInfo");
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        if (EnableLogging)
+		            Print($"Multi-timeframe plotting error: {ex.Message}");
+		    }
+		}
 
         private void LogMultiTimeframeStatus()
         {
