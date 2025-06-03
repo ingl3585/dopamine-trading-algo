@@ -25,6 +25,22 @@ namespace NinjaTrader.NinjaScript.Strategies
     {
         #region Private Fields
         
+        // Position Management
+        private double entryPrice = 0;
+        private double stopLossPrice = 0;
+        private double takeProfitPrice = 0;
+        private double trailingStopPrice = 0;
+        private bool isTrailingStopActive = false;
+        private double lastSignalConfidence = 0;
+        private string lastSignalQuality = "";
+        private int currentPositionSize = 0;
+        private DateTime lastEntryTime = DateTime.MinValue;
+        
+        // Exit tracking
+        private bool hasStopLoss = false;
+        private bool hasTakeProfit = false;
+        private List<string> activeOrders = new List<string>();
+        
         // Indicators
         private EMA emaFast;
         private EMA emaSlow;
@@ -49,6 +65,10 @@ namespace NinjaTrader.NinjaScript.Strategies
         // Performance tracking
         private int signalCount = 0;
         private int tradesExecuted = 0;
+        private int stopLossHits = 0;
+        private int takeProfitHits = 0;
+        private int trailingStopHits = 0;
+        private int scaleOutExecutions = 0;
         private DateTime strategyStartTime;
         
         // Serialization
@@ -69,46 +89,94 @@ namespace NinjaTrader.NinjaScript.Strategies
         public double RiskPercent { get; set; } = 0.01;
 
         [NinjaScriptProperty]
+        [Range(1, 100)]
+        [Display(Name = "Stop Loss Ticks", Description = "Stop loss distance in ticks", Order = 2, GroupName = "Exit Management")]
+        public int StopLossTicks { get; set; } = 20;
+
+        [NinjaScriptProperty]
+        [Range(1, 200)]
+        [Display(Name = "Take Profit Ticks", Description = "Take profit distance in ticks", Order = 3, GroupName = "Exit Management")]
+        public int TakeProfitTicks { get; set; } = 40;
+
+        [NinjaScriptProperty]
+        [Range(1, 50)]
+        [Display(Name = "Trailing Stop Ticks", Description = "Trailing stop distance in ticks", Order = 4, GroupName = "Exit Management")]
+        public int TrailingStopTicks { get; set; } = 15;
+
+        [NinjaScriptProperty]
+        [Range(0.1, 1.0)]
+        [Display(Name = "High Confidence Threshold", Description = "Confidence threshold for scaling vs full exit", Order = 5, GroupName = "Exit Management")]
+        public double HighConfidenceThreshold { get; set; } = 0.75;
+
+        [NinjaScriptProperty]
+        [Range(10, 90)]
+        [Display(Name = "Scale Out Percentage", Description = "Percentage to scale out on partial exits", Order = 6, GroupName = "Exit Management")]
+        public int ScaleOutPercentage { get; set; } = 50;
+
+        [NinjaScriptProperty]
+        [Range(1, 20)]
+        [Display(Name = "Max Position Size", Description = "Maximum position size", Order = 7, GroupName = "Position Sizing")]
+        public int MaxPositionSize { get; set; } = 10;
+
+        [NinjaScriptProperty]
+        [Range(1, 10)]
+        [Display(Name = "Base Position Size", Description = "Base position size for low confidence", Order = 8, GroupName = "Position Sizing")]
+        public int BasePositionSize { get; set; } = 3;
+
+        [NinjaScriptProperty]
         [Range(5, 50)]
-        [Display(Name = "EMA Fast Period", Description = "Fast EMA period", Order = 2, GroupName = "Indicators")]
+        [Display(Name = "EMA Fast Period", Description = "Fast EMA period", Order = 9, GroupName = "Indicators")]
         public int EmaFastPeriod { get; set; } = 12;
 
         [NinjaScriptProperty]
         [Range(10, 100)]
-        [Display(Name = "EMA Slow Period", Description = "Slow EMA period", Order = 3, GroupName = "Indicators")]
+        [Display(Name = "EMA Slow Period", Description = "Slow EMA period", Order = 10, GroupName = "Indicators")]
         public int EmaSlowPeriod { get; set; } = 26;
 
         [NinjaScriptProperty]
         [Range(5, 20)]
-        [Display(Name = "Tenkan Period", Description = "Ichimoku Tenkan period", Order = 4, GroupName = "Indicators")]
+        [Display(Name = "Tenkan Period", Description = "Ichimoku Tenkan period", Order = 11, GroupName = "Indicators")]
         public int TenkanPeriod { get; set; } = 9;
 
         [NinjaScriptProperty]
         [Range(15, 50)]
-        [Display(Name = "Kijun Period", Description = "Ichimoku Kijun period", Order = 5, GroupName = "Indicators")]
+        [Display(Name = "Kijun Period", Description = "Ichimoku Kijun period", Order = 12, GroupName = "Indicators")]
         public int KijunPeriod { get; set; } = 26;
 
         [NinjaScriptProperty]
         [Range(25, 100)]
-        [Display(Name = "Senkou Period", Description = "Ichimoku Senkou period", Order = 6, GroupName = "Indicators")]
+        [Display(Name = "Senkou Period", Description = "Ichimoku Senkou period", Order = 13, GroupName = "Indicators")]
         public int SenkouPeriod { get; set; } = 52;
 
         [NinjaScriptProperty]
         [Range(0.1, 1.0)]
-        [Display(Name = "Min Confidence", Description = "Minimum confidence threshold for trading", Order = 7, GroupName = "Risk Management")]
+        [Display(Name = "Min Confidence", Description = "Minimum confidence threshold for trading", Order = 14, GroupName = "Signal Filtering")]
         public double MinConfidence { get; set; } = 0.45;
 		
 		[NinjaScriptProperty]
-		[Display(Name = "Enable Trend Filter", Description = "Block counter-trend trades", Order = 9, GroupName = "Risk Management")]
+		[Display(Name = "Enable Trend Filter", Description = "Block counter-trend trades", Order = 15, GroupName = "Signal Filtering")]
 		public bool EnableTrendFilter { get; set; } = true;
 		
 		[NinjaScriptProperty]
 		[Range(20, 100)]
-		[Display(Name = "Trend Period", Description = "Period for trend analysis", Order = 10, GroupName = "Risk Management")]
+		[Display(Name = "Trend Period", Description = "Period for trend analysis", Order = 16, GroupName = "Signal Filtering")]
 		public int TrendPeriod { get; set; } = 50;
 
         [NinjaScriptProperty]
-        [Display(Name = "Enable Logging", Description = "Enable detailed logging", Order = 8, GroupName = "Debug")]
+        [Display(Name = "Enable Trailing Stops", Description = "Enable trailing stop functionality", Order = 17, GroupName = "Exit Management")]
+        public bool EnableTrailingStops { get; set; } = true;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Enable Scale Outs", Description = "Enable partial position scaling", Order = 18, GroupName = "Exit Management")]
+        public bool EnableScaleOuts { get; set; } = true;
+
+        [NinjaScriptProperty]
+        [Range(5, 300)]
+        [Display(Name = "Min Hold Time Seconds", Description = "Minimum time to hold position", Order = 19, GroupName = "Exit Management")]
+        public int MinHoldTimeSeconds { get; set; } = 30;
+
+        [NinjaScriptProperty]
+        [Display(Name = "Enable Logging", Description = "Enable detailed logging", Order = 20, GroupName = "Debug")]
         public bool EnableLogging { get; set; } = true;
         
         #endregion
@@ -142,7 +210,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                             InitializeSockets();
                         }
                         strategyStartTime = DateTime.Now;
-                        Print($"RLTrader #{instanceId} started in real-time mode with Ichimoku/EMA features");
+                        Print($"RLTrader #{instanceId} started with complete exit management");
+                        LogExitParameters();
                         break;
                         
                     case State.Terminated:
@@ -158,51 +227,79 @@ namespace NinjaTrader.NinjaScript.Strategies
         
 		private void ConfigureDefaults()
 		{
-		    // Assign unique instance ID
 		    instanceId = ++instanceCounter;
 		    
 		    Name = "RLTrader";
-		    Description = "Reinforcement Learning Trading Strategy with Ichimoku/EMA Features v2.1";
+		    Description = "RL Trading Strategy with Complete Exit Management v3.0";
 		    Calculate = Calculate.OnBarClose;
 		    
 		    // Chart configuration
-		    IsOverlay = false;  // Set to FALSE so it shows in a separate panel
+		    IsOverlay = false;
 		    DisplayInDataBox = true;
 		    
-		    // LWPE and Signal Quality plots
+		    // Enhanced plots for exit management
 		    AddPlot(Brushes.Blue, "LWPE");
 		    AddPlot(Brushes.Green, "Signal Quality");
+		    AddPlot(Brushes.Orange, "Position Size");
+		    AddPlot(Brushes.Red, "Stop Loss");
+		    AddPlot(Brushes.Lime, "Take Profit");
 		    
-		    // Entry configuration
+		    // Entry configuration for multiple exits
 		    BarsRequiredToTrade = Math.Max(SenkouPeriod + 5, EmaSlowPeriod + 5);
-		    EntriesPerDirection = 10;
+		    EntriesPerDirection = 1; // Single entry, multiple exits
 		    EntryHandling = EntryHandling.AllEntries;
 		    
-		    // Reset state flags for new instance
+		    // Reset state
 		    isTerminated = false;
 		    socketsStarted = false;
 		    running = false;
-		    signalCount = 0;
-		    tradesExecuted = 0;
+		    ResetPositionTracking();
 		}
+
+        private void LogExitParameters()
+        {
+            if (!EnableLogging) return;
+            
+            Print("=== Exit Management Configuration ===");
+            Print($"Stop Loss: {StopLossTicks} ticks");
+            Print($"Take Profit: {TakeProfitTicks} ticks");
+            Print($"Trailing Stop: {TrailingStopTicks} ticks (Enabled: {EnableTrailingStops})");
+            Print($"High Confidence Threshold: {HighConfidenceThreshold:F2}");
+            Print($"Scale Out: {ScaleOutPercentage}% (Enabled: {EnableScaleOuts})");
+            Print($"Max Position: {MaxPositionSize}, Base: {BasePositionSize}");
+            Print($"Min Hold Time: {MinHoldTimeSeconds} seconds");
+        }
+
+        private void ResetPositionTracking()
+        {
+            entryPrice = 0;
+            stopLossPrice = 0;
+            takeProfitPrice = 0;
+            trailingStopPrice = 0;
+            isTrailingStopActive = false;
+            currentPositionSize = 0;
+            lastSignalConfidence = 0;
+            lastSignalQuality = "";
+            hasStopLoss = false;
+            hasTakeProfit = false;
+            activeOrders.Clear();
+            lastEntryTime = DateTime.MinValue;
+        }
         
 		private void InitializeIndicators()
 		{
 		    try
 		    {
-		        // Initialize EMAs
 		        emaFast = EMA(EmaFastPeriod);
 		        emaSlow = EMA(EmaSlowPeriod);
 		        lwpeSeries = new Series<double>(this);
 		        
-		        // Add only EMAs to the main price chart
-		        // Ichimoku will be calculated manually 
 		        AddChartIndicator(emaFast);
 		        AddChartIndicator(emaSlow);
 		        
 		        if (EnableLogging)
 		        {
-		            Print($"Initialized indicators - EMA({EmaFastPeriod},{EmaSlowPeriod}), Ichimoku calculated manually");
+		            Print($"Indicators initialized with exit management");
 		        }
 		    }
 		    catch (Exception ex)
@@ -213,17 +310,14 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         private void InitializeSockets()
         {
-            if (socketsStarted)
-            {
-                return;
-            }
+            if (socketsStarted) return;
             
             try
             {
                 ConnectToSockets();
                 StartBackgroundThreads();
                 socketsStarted = true;
-                Print($"RLTrader #{instanceId} connected to Python service - Ready for Ichimoku/EMA signals");
+                Print($"RLTrader #{instanceId} connected - Ready for ML signals with exit management");
             }
             catch (Exception ex)
             {
@@ -245,15 +339,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
             }
             
-            if (!shouldCleanup)
-            {
-                return;
-            }
+            if (!shouldCleanup) return;
             
             if (socketsStarted)
             {
-                LogPerformanceSummary();
-                Print($"RLTrader #{instanceId} shutting down");
+                LogFinalPerformance();
             }
             
             running = false;
@@ -270,19 +360,20 @@ namespace NinjaTrader.NinjaScript.Strategies
             
             DisposeSockets();
         }
-        
-        private void LogPerformanceSummary()
+
+        private void LogFinalPerformance()
         {
             try
             {
                 if (strategyStartTime != DateTime.MinValue)
                 {
                     TimeSpan uptime = DateTime.Now - strategyStartTime;
-                    Print($"=== Performance Summary ===");
+                    Print($"=== Final Performance ===");
                     Print($"Uptime: {uptime.TotalHours:F1} hours");
-                    Print($"Signals processed: {signalCount}");
-                    Print($"Trades executed: {tradesExecuted}");
-                    Print($"Current position: {GetCurrentPosition()}");
+                    Print($"Signals: {signalCount}, Trades: {tradesExecuted}");
+                    Print($"Stop Losses: {stopLossHits}, Take Profits: {takeProfitHits}");
+                    Print($"Trailing Stops: {trailingStopHits}, Scale Outs: {scaleOutExecutions}");
+                    Print($"Current Position: {GetCurrentPosition()}");
                 }
             }
             catch (Exception ex)
@@ -293,7 +384,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         #endregion
         
-        #region Socket Management
+        #region Socket Management (Simplified)
         
         private void ConnectToSockets()
         {
@@ -331,20 +422,14 @@ namespace NinjaTrader.NinjaScript.Strategies
             
             foreach (var socket in sockets)
             {
-                try
-                {
-                    socket?.Close();
-                }
-                catch (Exception ex)
-                {
-                    Print($"Error closing socket: {ex.Message}");
-                }
+                try { socket?.Close(); }
+                catch (Exception ex) { Print($"Error closing socket: {ex.Message}"); }
             }
         }
         
         #endregion
         
-        #region Main Trading Logic
+        #region Main Trading Logic with Exit Management
         
 		protected override void OnBarUpdate()
 		{
@@ -353,19 +438,23 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        UpdatePlots();
 		        SendFeatureVector();
 		        
-		        // ADD signal arrows to chart
-		        if (CurrentBar >= BarsRequiredToTrade)
-		        {
-		            PlotSignalArrows();  // <-- ADD THIS LINE
-		        }
-		        
 		        if (!IsReadyForTrading())
 		            return;
-		            
+
+		        // Manage existing positions first
+		        ManageExistingPositions();
+		        
+		        // Process new signals
 		        ProcessLatestSignal();
 		        SendPositionUpdate();
 		        
-		        // Periodic status logging
+		        // Visual updates
+		        if (CurrentBar >= BarsRequiredToTrade)
+		        {
+		            PlotPositionInfo();
+		        }
+		        
+		        // Periodic logging
 		        if (CurrentBar % 100 == 0 && EnableLogging)
 		        {
 		            LogCurrentStatus();
@@ -376,76 +465,218 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        Print($"OnBarUpdate error: {ex.Message}");
 		    }
 		}
+
+        private void ManageExistingPositions()
+        {
+            if (Position.MarketPosition == MarketPosition.Flat)
+            {
+                if (currentPositionSize != 0)
+                {
+                    // Position was closed, reset tracking
+                    ResetPositionTracking();
+                    if (EnableLogging)
+                        Print("Position closed - reset tracking");
+                }
+                return;
+            }
+
+            // Update trailing stops
+            if (EnableTrailingStops && isTrailingStopActive)
+            {
+                UpdateTrailingStop();
+            }
+
+            // Check for scale out opportunities
+            if (EnableScaleOuts && ShouldScaleOut())
+            {
+                ExecuteScaleOut();
+            }
+
+            // Emergency exit on conflicting signals
+            if (ShouldEmergencyExit())
+            {
+                ExecuteEmergencyExit();
+            }
+        }
+
+        private void UpdateTrailingStop()
+        {
+            if (Position.MarketPosition == MarketPosition.Flat) return;
+
+            try
+            {
+                double currentPrice = Close[0];
+                double newTrailingPrice = 0;
+
+                if (Position.MarketPosition == MarketPosition.Long)
+                {
+                    newTrailingPrice = currentPrice - (TrailingStopTicks * TickSize);
+                    
+                    if (newTrailingPrice > trailingStopPrice || trailingStopPrice == 0)
+                    {
+                        trailingStopPrice = newTrailingPrice;
+                        
+                        if (EnableLogging)
+                            Print($"Trailing stop updated to {trailingStopPrice:F2} (price: {currentPrice:F2})");
+                    }
+
+                    // Check if trailing stop hit
+                    if (currentPrice <= trailingStopPrice)
+                    {
+                        ExitLong("TrailingStop");
+                        trailingStopHits++;
+                        if (EnableLogging)
+                            Print($"Trailing stop executed at {currentPrice:F2}");
+                    }
+                }
+                else if (Position.MarketPosition == MarketPosition.Short)
+                {
+                    newTrailingPrice = currentPrice + (TrailingStopTicks * TickSize);
+                    
+                    if (newTrailingPrice < trailingStopPrice || trailingStopPrice == 0)
+                    {
+                        trailingStopPrice = newTrailingPrice;
+                        
+                        if (EnableLogging)
+                            Print($"Trailing stop updated to {trailingStopPrice:F2} (price: {currentPrice:F2})");
+                    }
+
+                    // Check if trailing stop hit
+                    if (currentPrice >= trailingStopPrice)
+                    {
+                        ExitShort("TrailingStop");
+                        trailingStopHits++;
+                        if (EnableLogging)
+                            Print($"Trailing stop executed at {currentPrice:F2}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"Trailing stop update error: {ex.Message}");
+            }
+        }
+
+        private bool ShouldScaleOut()
+        {
+            if (Position.MarketPosition == MarketPosition.Flat) return false;
+            if (Position.Quantity <= 1) return false;
+            if (lastSignalConfidence < HighConfidenceThreshold) return false;
+
+            double currentPrice = Close[0];
+            double profitTicks = 0;
+
+            if (Position.MarketPosition == MarketPosition.Long)
+            {
+                profitTicks = (currentPrice - entryPrice) / TickSize;
+            }
+            else
+            {
+                profitTicks = (entryPrice - currentPrice) / TickSize;
+            }
+
+            // Scale out when halfway to take profit target
+            return profitTicks >= (TakeProfitTicks * 0.5);
+        }
+
+        private void ExecuteScaleOut()
+        {
+            try
+            {
+                int scaleOutQuantity = Math.Max(1, (Position.Quantity * ScaleOutPercentage) / 100);
+                
+                if (Position.MarketPosition == MarketPosition.Long)
+                {
+                    ExitLong(scaleOutQuantity, "ScaleOut", "ML_Long");
+                }
+                else if (Position.MarketPosition == MarketPosition.Short)
+                {
+                    ExitShort(scaleOutQuantity, "ScaleOut", "ML_Short");
+                }
+
+                scaleOutExecutions++;
+                
+                if (EnableLogging)
+                    Print($"Scale out executed: {scaleOutQuantity} contracts at {Close[0]:F2}");
+
+                // Activate trailing stop on remaining position
+                if (EnableTrailingStops && !isTrailingStopActive)
+                {
+                    isTrailingStopActive = true;
+                    trailingStopPrice = 0; // Will be set on next update
+                    if (EnableLogging)
+                        Print("Trailing stop activated after scale out");
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"Scale out execution error: {ex.Message}");
+            }
+        }
+
+        private bool ShouldEmergencyExit()
+        {
+            // Exit if confidence drops significantly or signal quality becomes poor
+            return (lastSignalConfidence > 0 && lastSignalConfidence < 0.3) ||
+                   lastSignalQuality == "poor";
+        }
+
+        private void ExecuteEmergencyExit()
+        {
+            try
+            {
+                if (Position.MarketPosition == MarketPosition.Long)
+                {
+                    ExitLong("EmergencyExit");
+                }
+                else if (Position.MarketPosition == MarketPosition.Short)
+                {
+                    ExitShort("EmergencyExit");
+                }
+
+                if (EnableLogging)
+                    Print($"Emergency exit executed due to poor signal quality");
+            }
+            catch (Exception ex)
+            {
+                Print($"Emergency exit error: {ex.Message}");
+            }
+        }
         
 		private void UpdatePlots()
 		{
 		    try
 		    {
-		        // Plot LWPE value
+		        // LWPE
 		        lock (lwpeLock)
 		        {
 		            Values[0][0] = currentLWPE;
 		        }
 		        
-		        // Calculate and plot signal quality
-		        double signalQuality = CalculateSignalQuality();
-		        Values[1][0] = signalQuality;
+		        // Signal Quality (convert string to numeric)
+		        double qualityValue = 0.5;
+		        switch (lastSignalQuality.ToLower())
+		        {
+		            case "excellent": qualityValue = 1.0; break;
+		            case "good": qualityValue = 0.75; break;
+		            case "poor": qualityValue = 0.25; break;
+		            default: qualityValue = 0.5; break;
+		        }
+		        Values[1][0] = qualityValue;
+		        
+		        // Position Size
+		        Values[2][0] = Math.Abs(GetCurrentPosition());
+		        
+		        // Stop Loss Price
+		        Values[3][0] = stopLossPrice;
+		        
+		        // Take Profit Price
+		        Values[4][0] = takeProfitPrice;
 		    }
 		    catch (Exception ex)
 		    {
 		        if (EnableLogging)
 		            Print($"Plot update error: {ex.Message}");
-		    }
-		}
-        
-		private double CalculateSignalQuality()
-		{
-		    try
-		    {
-		        if (CurrentBar < BarsRequiredToTrade)
-		            return 0.5;
-		        
-		        double quality = 0.0;
-		        int signalCount = 0;
-		        
-		        // Get all signals
-		        double tkSignal = GetTenkanKijunSignal();
-		        double pcSignal = GetPriceCloudSignal();
-		        double fcSignal = GetFutureCloudSignal();
-		        double emaSignal = GetEmaCrossSignal();
-		        double tmSignal = GetTenkanMomentum();
-		        double kmSignal = GetKijunMomentum();
-		        
-		        // Weight signals by importance
-		        var signals = new[]
-		        {
-		            new { value = tkSignal, weight = 0.25 },
-		            new { value = pcSignal, weight = 0.25 },
-		            new { value = emaSignal, weight = 0.20 },
-		            new { value = fcSignal, weight = 0.15 },
-		            new { value = tmSignal, weight = 0.075 },
-		            new { value = kmSignal, weight = 0.075 }
-		        };
-		        
-		        double totalWeight = 0;
-		        double weightedSum = 0;
-		        
-		        foreach (var signal in signals)
-		        {
-		            if (signal.value != 0) // Only count active signals
-		            {
-		                // Convert signal to quality score (1 for bullish, 0 for bearish, 0.5 for neutral)
-		                double signalQuality = signal.value > 0 ? 1.0 : 0.0;
-		                weightedSum += signalQuality * signal.weight;
-		                totalWeight += signal.weight;
-		            }
-		        }
-		        
-		        return totalWeight > 0 ? weightedSum / totalWeight : 0.5;
-		    }
-		    catch
-		    {
-		        return 0.5;
 		    }
 		}
         
@@ -455,196 +686,400 @@ namespace NinjaTrader.NinjaScript.Strategies
 		           socketsStarted && 
 		           running;
 		}
-        
-		private void LogCurrentStatus()
-		{
-		    try
-		    {
-		        var features = CalculateFeatures();
-		        
-		        // Create array of all signals
-		        var signals = new[] { 
-		            features.TenkanKijunSignal, 
-		            features.PriceCloudSignal, 
-		            features.FutureCloudSignal, 
-		            features.EmaCrossSignal,
-		            features.TenkanMomentum, 
-		            features.KijunMomentum 
-		        };
-		        
-		        // Count signals manually (no LINQ needed)
-		        int bullish = 0;
-		        int bearish = 0;
-		        int neutral = 0;
-		        
-		        for (int i = 0; i < signals.Length; i++)
-		        {
-		            if (signals[i] > 0)
-		                bullish++;
-		            else if (signals[i] < 0)
-		                bearish++;
-		            else
-		                neutral++;
-		        }
-		        
-		        Print($"Bar {CurrentBar}: Bull={bullish}, Bear={bearish}, Neutral={neutral}, " +
-		              $"LWPE={features.LWPE:F3}, Pos={GetCurrentPosition()}");
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Status logging error: {ex.Message}");
-		    }
-		}
-        
-		private void ProcessLatestSignal()
-		{
-		    var signal = GetLatestSignal();
-		    
-		    if (signal == null)
-		    {
-		        return;
-		    }
-		    
-		    if (IsSignalValid(signal))
-		    {
-		        ExecuteSignal(signal);
-		        UpdateLastSignalTime(signal);
-		        signalCount++;
-		    }
-		}
-		
-		private SignalData GetLatestSignal()
-		{
-		    lock (signalLock)
-		    {
-		        return latestSignal;
-		    }
-		}
-		
-		private bool IsSignalValid(SignalData signal)
-		{
-		    try
-		    {
-		        // Check timestamp validity
-		        var signalDateTime = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(signal.Timestamp);
-		        var signalLocalTime = signalDateTime.ToLocalTime();
-		        var currentTime = DateTime.Now;
-		        var timeDiff = (currentTime - signalLocalTime).TotalSeconds;
-		
-		        if (Math.Abs(timeDiff) > 120)
-		        {
-		            if (EnableLogging)
-		                Print($"Signal expired: {timeDiff:F1}s old");
-		            return false;
-		        }
-		        
-		        // FIXED: Use new lower confidence threshold
-		        if (signal.Confidence < MinConfidence)
-		        {
-		            if (EnableLogging)
-		                Print($"Signal confidence {signal.Confidence:F3} below threshold {MinConfidence:F3}");
-		            return false;
-		        }
-		        
-		        // ADDED: Trend filter validation
-		        if (EnableTrendFilter)
-		        {
-		            int trendDirection = GetTrendDirection();
-		            
-		            // Block counter-trend trades
-		            if ((signal.Action == 1 && trendDirection == -1) || 
-		                (signal.Action == 2 && trendDirection == 1))
-		            {
-		                if (EnableLogging)
-		                    Print($"Signal blocked by trend filter: action={signal.Action}, trend={trendDirection}");
-		                return false;
-		            }
-		        }
-		        
-		        return true;
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Signal validation error: {ex.Message}");
-		        return false;
-		    }
-		}
-		
-		private void ExecuteSignal(SignalData signal)
-		{
-		    try
-		    {
-		        if (signal.Size <= 0 || signal.Size > 20)
-		        {
-		            return;
-		        }
-		        
-		        // ADDED: Trend filter to prevent counter-trend trades
-		        int trendDirection = GetTrendDirection();
-		        
-		        switch (signal.Action)
-		        {
-		            case 1: // BUY
-		                // Don't buy in strong downtrend
-		                if (trendDirection == -1)
-		                {
-		                    if (EnableLogging)
-		                        Print($"Blocked LONG signal - Strong downtrend detected");
-		                    return;
-		                }
-		                EnterLong(signal.Size, "IchimokuEMA_Long");
-		                if (EnableLogging)
-		                    Print($"Executing LONG: size={signal.Size}, conf={signal.Confidence:F3}, trend={trendDirection}");
-		                break;
-		                
-		            case 2: // SELL
-		                // Don't sell in strong uptrend
-		                if (trendDirection == 1)
-		                {
-		                    if (EnableLogging)
-		                        Print($"Blocked SHORT signal - Strong uptrend detected");
-		                    return;
-		                }
-		                EnterShort(signal.Size, "IchimokuEMA_Short");
-		                if (EnableLogging)
-		                    Print($"Executing SHORT: size={signal.Size}, conf={signal.Confidence:F3}, trend={trendDirection}");
-		                break;
-		                
-		            default: // HOLD
-		                if (EnableLogging)
-		                    Print($"HOLD signal: conf={signal.Confidence:F3}, trend={trendDirection}");
-		                break;
-		        }
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Signal execution error: {ex.Message}");
-		    }
-		}
-		
+
+        private void ProcessLatestSignal()
+        {
+            var signal = GetLatestSignal();
+            
+            if (signal == null) return;
+            
+            if (IsSignalValid(signal))
+            {
+                ExecuteSignal(signal);
+                UpdateLastSignalTime(signal);
+                signalCount++;
+            }
+        }
+
+        private SignalData GetLatestSignal()
+        {
+            lock (signalLock)
+            {
+                return latestSignal;
+            }
+        }
+
+        private bool IsSignalValid(SignalData signal)
+        {
+            try
+            {
+                // Time validation
+                var signalDateTime = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(signal.Timestamp);
+                var signalLocalTime = signalDateTime.ToLocalTime();
+                var timeDiff = (DateTime.Now - signalLocalTime).TotalSeconds;
+
+                if (Math.Abs(timeDiff) > 120)
+                {
+                    if (EnableLogging)
+                        Print($"Signal expired: {timeDiff:F1}s old");
+                    return false;
+                }
+                
+                // Confidence validation
+                if (signal.Confidence < MinConfidence)
+                {
+                    if (EnableLogging)
+                        Print($"Signal confidence {signal.Confidence:F3} below threshold {MinConfidence:F3}");
+                    return false;
+                }
+
+                // Don't take new signals too quickly
+                if (lastEntryTime != DateTime.MinValue && 
+                    (DateTime.Now - lastEntryTime).TotalSeconds < MinHoldTimeSeconds)
+                {
+                    if (EnableLogging)
+                        Print($"Signal blocked by minimum hold time");
+                    return false;
+                }
+                
+                // Trend filter validation
+                if (EnableTrendFilter)
+                {
+                    int trendDirection = GetTrendDirection();
+                    
+                    if ((signal.Action == 1 && trendDirection == -1) || 
+                        (signal.Action == 2 && trendDirection == 1))
+                    {
+                        if (EnableLogging)
+                            Print($"Signal blocked by trend filter");
+                        return false;
+                    }
+                }
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Print($"Signal validation error: {ex.Message}");
+                return false;
+            }
+        }
+
+        private void ExecuteSignal(SignalData signal)
+        {
+            try
+            {
+                // Store signal info for position management
+                lastSignalConfidence = signal.Confidence;
+                lastSignalQuality = signal.Quality ?? "unknown";
+
+                // Calculate position size based on confidence
+                int positionSize = CalculatePositionSize(signal.Confidence);
+                
+                if (positionSize <= 0)
+                {
+                    if (EnableLogging)
+                        Print($"Calculated position size is 0 for confidence {signal.Confidence:F3}");
+                    return;
+                }
+
+                switch (signal.Action)
+                {
+                    case 1: // BUY
+                        if (Position.MarketPosition != MarketPosition.Long)
+                        {
+                            // Close any short position first
+                            if (Position.MarketPosition == MarketPosition.Short)
+                            {
+                                ExitShort("ReverseToLong");
+                            }
+                            
+                            EnterLong(positionSize, "ML_Long");
+                            SetupExitOrders(signal, positionSize, true);
+                            
+                            if (EnableLogging)
+                                Print($"LONG Entry: size={positionSize}, conf={signal.Confidence:F3}, quality={signal.Quality}");
+                        }
+                        break;
+                        
+                    case 2: // SELL
+                        if (Position.MarketPosition != MarketPosition.Short)
+                        {
+                            // Close any long position first
+                            if (Position.MarketPosition == MarketPosition.Long)
+                            {
+                                ExitLong("ReverseToShort");
+                            }
+                            
+                            EnterShort(positionSize, "ML_Short");
+                            SetupExitOrders(signal, positionSize, false);
+                            
+                            if (EnableLogging)
+                                Print($"SHORT Entry: size={positionSize}, conf={signal.Confidence:F3}, quality={signal.Quality}");
+                        }
+                        break;
+                        
+                    case 0: // HOLD/EXIT
+                        if (Position.MarketPosition != MarketPosition.Flat)
+                        {
+                            // Determine exit strategy based on confidence
+                            if (signal.Confidence < HighConfidenceThreshold)
+                            {
+                                // Low confidence - full exit
+                                if (Position.MarketPosition == MarketPosition.Long)
+                                    ExitLong("ML_Exit");
+                                else
+                                    ExitShort("ML_Exit");
+                                
+                                if (EnableLogging)
+                                    Print($"FULL EXIT: conf={signal.Confidence:F3}, quality={signal.Quality}");
+                            }
+                            else if (EnableScaleOuts && Position.Quantity > 1)
+                            {
+                                // High confidence - partial exit
+                                int exitSize = Math.Max(1, Position.Quantity / 2);
+                                
+                                if (Position.MarketPosition == MarketPosition.Long)
+                                    ExitLong(exitSize, "ML_PartialExit", "ML_Long");
+                                else
+                                    ExitShort(exitSize, "ML_PartialExit", "ML_Short");
+                                
+                                if (EnableLogging)
+                                    Print($"PARTIAL EXIT: size={exitSize}, conf={signal.Confidence:F3}");
+                            }
+                        }
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"Signal execution error: {ex.Message}");
+            }
+        }
+
+        private int CalculatePositionSize(double confidence)
+        {
+            // Simple confidence-based sizing
+            if (confidence < MinConfidence) return 0;
+            
+            double sizeMultiplier = 1.0;
+            
+            if (confidence >= 0.8)
+                sizeMultiplier = 2.0;
+            else if (confidence >= 0.7)
+                sizeMultiplier = 1.5;
+            else if (confidence >= 0.6)
+                sizeMultiplier = 1.2;
+            else
+                sizeMultiplier = 1.0;
+            
+            int calculatedSize = (int)(BasePositionSize * sizeMultiplier);
+            return Math.Min(calculatedSize, MaxPositionSize);
+        }
+
+        private void SetupExitOrders(SignalData signal, int positionSize, bool isLong)
+        {
+            try
+            {
+                entryPrice = Close[0];
+                currentPositionSize = positionSize;
+                lastEntryTime = DateTime.Now;
+                
+                // Calculate stop loss and take profit prices
+                if (isLong)
+                {
+                    stopLossPrice = entryPrice - (StopLossTicks * TickSize);
+                    takeProfitPrice = entryPrice + (TakeProfitTicks * TickSize);
+                }
+                else
+                {
+                    stopLossPrice = entryPrice + (StopLossTicks * TickSize);
+                    takeProfitPrice = entryPrice - (TakeProfitTicks * TickSize);
+                }
+
+                // Set exit orders
+                if (isLong)
+                {
+                    SetStopLoss("ML_Long", CalculationMode.Price, stopLossPrice, false);
+                    SetProfitTarget("ML_Long", CalculationMode.Price, takeProfitPrice);
+                }
+                else
+                {
+                    SetStopLoss("ML_Short", CalculationMode.Price, stopLossPrice, false);
+                    SetProfitTarget("ML_Short", CalculationMode.Price, takeProfitPrice);
+                }
+
+                hasStopLoss = true;
+                hasTakeProfit = true;
+
+                // Initialize trailing stop if high confidence
+                if (EnableTrailingStops && signal.Confidence >= HighConfidenceThreshold)
+                {
+                    isTrailingStopActive = true;
+                    trailingStopPrice = 0; // Will be set on first update
+                    
+                    if (EnableLogging)
+                        Print($"Trailing stop will activate for high confidence trade");
+                }
+
+                if (EnableLogging)
+                {
+                    Print($"Exit orders set - SL: {stopLossPrice:F2}, TP: {takeProfitPrice:F2}, Entry: {entryPrice:F2}");
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"Exit order setup error: {ex.Message}");
+            }
+        }
+
 		protected override void OnExecutionUpdate(Execution execution, string executionId, double price, int quantity, MarketPosition marketPosition, string orderId, DateTime time)
 		{
-		    if (execution.Order != null)
+		    try
 		    {
-		        tradesExecuted++;
-		        Print($"FILL #{tradesExecuted}: {execution.Order.Name} {quantity} @ {price:F2} | Position: {GetCurrentPosition()}");
-		        
-		        Core.Globals.RandomDispatcher.BeginInvoke(new Action(() =>
+		        if (execution.Order != null)
 		        {
-		            SendPositionUpdate();
-		        }));
+		            string orderName = execution.Order.Name;
+		            tradesExecuted++;
+
+		            // Track exit types
+		            if (orderName.Contains("Stop"))
+		            {
+		                stopLossHits++;
+		                if (EnableLogging)
+		                    Print($"STOP LOSS HIT #{stopLossHits}: {quantity} @ {price:F2}");
+		            }
+		            else if (orderName.Contains("Profit") || orderName.Contains("Target"))
+		            {
+		                takeProfitHits++;
+		                if (EnableLogging)
+		                    Print($"TAKE PROFIT HIT #{takeProfitHits}: {quantity} @ {price:F2}");
+		            }
+		            else if (orderName.Contains("TrailingStop"))
+		            {
+		                trailingStopHits++;
+		                if (EnableLogging)
+		                    Print($"TRAILING STOP HIT #{trailingStopHits}: {quantity} @ {price:F2}");
+		            }
+		            else if (orderName.Contains("ScaleOut"))
+		            {
+		                if (EnableLogging)
+		                    Print($"SCALE OUT EXECUTED: {quantity} @ {price:F2}");
+		            }
+		            else
+		            {
+		                if (EnableLogging)
+		                    Print($"ENTRY FILL #{tradesExecuted}: {orderName} {quantity} @ {price:F2}");
+		            }
+
+		            // Update position tracking
+		            if (marketPosition == MarketPosition.Flat)
+		            {
+		                ResetPositionTracking();
+		                if (EnableLogging)
+		                    Print($"Position FLAT - tracking reset");
+		            }
+
+		            // Send position update to Python
+		            Core.Globals.RandomDispatcher.BeginInvoke(new Action(() =>
+		            {
+		                SendPositionUpdate();
+		            }));
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Execution update error: {ex.Message}");
 		    }
 		}
-        
-		private void UpdateLastSignalTime(SignalData signal)
-		{
-		    lastProcessedTimestamp = signal.Timestamp;
-		    lastSignalTime = Time[0];
-		}
+
+        private void PlotPositionInfo()
+        {
+            try
+            {
+                if (Position.MarketPosition != MarketPosition.Flat && entryPrice > 0)
+                {
+                    // Plot entry line
+                    Draw.HorizontalLine(this, "EntryLine", entryPrice, Brushes.Yellow);
+                    
+                    // Plot stop loss line
+                    if (stopLossPrice > 0)
+                    {
+                        Draw.HorizontalLine(this, "StopLossLine", stopLossPrice, Brushes.Red);
+                    }
+                    
+                    // Plot take profit line
+                    if (takeProfitPrice > 0)
+                    {
+                        Draw.HorizontalLine(this, "TakeProfitLine", takeProfitPrice, Brushes.Lime);
+                    }
+                    
+                    // Plot trailing stop if active
+                    if (isTrailingStopActive && trailingStopPrice > 0)
+                    {
+                        Draw.HorizontalLine(this, "TrailingStopLine", trailingStopPrice, Brushes.Orange);
+                    }
+
+                    // Add position info text
+                    string positionInfo = $"Pos: {Position.Quantity} | Conf: {lastSignalConfidence:F2} | Qual: {lastSignalQuality}";
+                    Draw.TextFixed(this, "PositionInfo", positionInfo, TextPosition.TopLeft, 
+                                 Brushes.White, new NinjaTrader.Gui.Tools.SimpleFont("Arial", 10), Brushes.Black, Brushes.Transparent, 0);
+                }
+                else
+                {
+                    // Remove lines when flat
+                    RemoveDrawObject("EntryLine");
+                    RemoveDrawObject("StopLossLine");
+                    RemoveDrawObject("TakeProfitLine");
+                    RemoveDrawObject("TrailingStopLine");
+                    RemoveDrawObject("PositionInfo");
+                }
+            }
+            catch (Exception ex)
+            {
+                if (EnableLogging)
+                    Print($"Position plotting error: {ex.Message}");
+            }
+        }
+
+        private void LogCurrentStatus()
+        {
+            try
+            {
+                var features = CalculateFeatures();
+                
+                string positionStatus = Position.MarketPosition == MarketPosition.Flat ? "FLAT" :
+                                      $"{Position.MarketPosition} {Position.Quantity}";
+
+                Print($"Bar {CurrentBar}: {positionStatus} | LWPE={features.LWPE:F3} | " +
+                      $"LastConf={lastSignalConfidence:F3} | Signals={signalCount} | Trades={tradesExecuted}");
+                      
+                if (Position.MarketPosition != MarketPosition.Flat)
+                {
+                    double unrealizedPnL = Position.GetUnrealizedProfitLoss(PerformanceUnit.Currency, Close[0]);
+                    Print($"  PnL: {unrealizedPnL:C} | Entry: {entryPrice:F2} | Current: {Close[0]:F2}");
+                    
+                    if (isTrailingStopActive)
+                    {
+                        Print($"  Trailing Stop: {trailingStopPrice:F2} (Active)");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"Status logging error: {ex.Message}");
+            }
+        }
+
+        private void UpdateLastSignalTime(SignalData signal)
+        {
+            lastProcessedTimestamp = signal.Timestamp;
+            lastSignalTime = Time[0];
+        }
         
         #endregion
         
-        #region Market Data Handling
+        #region Market Data and Feature Processing (Unchanged)
         
         protected override void OnMarketData(MarketDataEventArgs e)
         {
@@ -703,11 +1138,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                     Print($"Tick send error: {ex.Message}");
             }
         }
-        
-        #endregion
-        
-        #region Feature Vector Transmission
-        
+
         private void SendFeatureVector()
         {
             if (sendSock?.Connected != true)
@@ -730,36 +1161,26 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             try
             {
-                // Volume normalization
                 double volMean = SMA(Volume, 20)[0];
                 double volStd = StdDev(Volume, 20)[0];
                 double normalizedVolume = volStd != 0 ? (Volume[0] - volMean) / volStd : 0;
                 
-                // LWPE value
                 double lwpeValue;
                 lock (lwpeLock)
                 {
                     lwpeValue = currentLWPE;
                 }
                 
-                // Calculate all Ichimoku signals
-                double tenkanKijunSignal = GetTenkanKijunSignal();
-                double priceCloudSignal = GetPriceCloudSignal();
-                double futureCloudSignal = GetFutureCloudSignal();
-                double emaCrossSignal = GetEmaCrossSignal();
-                double tenkanMomentum = GetTenkanMomentum();
-                double kijunMomentum = GetKijunMomentum();
-                
                 return new FeatureVector
                 {
                     Close = Close[0],
                     NormalizedVolume = normalizedVolume,
-                    TenkanKijunSignal = tenkanKijunSignal,
-                    PriceCloudSignal = priceCloudSignal,
-                    FutureCloudSignal = futureCloudSignal,
-                    EmaCrossSignal = emaCrossSignal,
-                    TenkanMomentum = tenkanMomentum,
-                    KijunMomentum = kijunMomentum,
+                    TenkanKijunSignal = GetTenkanKijunSignal(),
+                    PriceCloudSignal = GetPriceCloudSignal(),
+                    FutureCloudSignal = GetFutureCloudSignal(),
+                    EmaCrossSignal = GetEmaCrossSignal(),
+                    TenkanMomentum = GetTenkanMomentum(),
+                    KijunMomentum = GetKijunMomentum(),
                     LWPE = lwpeValue,
                     IsLive = State == State.Realtime
                 };
@@ -794,7 +1215,8 @@ namespace NinjaTrader.NinjaScript.Strategies
                 IsLive = State == State.Realtime
             };
         }
-        
+
+        // Ichimoku calculation methods (unchanged from original)
 		private double GetTenkanKijunSignal()
 		{
 		    try
@@ -802,12 +1224,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        if (CurrentBar < Math.Max(TenkanPeriod, KijunPeriod))
 		            return 0;
 		            
-		        // Calculate Tenkan-sen (Conversion Line): (9-period high + 9-period low) / 2
 		        double tenkanHigh = MAX(High, TenkanPeriod)[0];
 		        double tenkanLow = MIN(Low, TenkanPeriod)[0];
 		        double tenkan = (tenkanHigh + tenkanLow) / 2;
 		        
-		        // Calculate Kijun-sen (Base Line): (26-period high + 26-period low) / 2
 		        double kijunHigh = MAX(High, KijunPeriod)[0];
 		        double kijunLow = MIN(Low, KijunPeriod)[0];
 		        double kijun = (kijunHigh + kijunLow) / 2;
@@ -816,16 +1236,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            return 0;
 		            
 		        double diff = tenkan - kijun;
-		        
-		        // FIXED: Use proper percentage-based threshold (0.1% instead of 0.01%)
-		        double threshold = Close[0] * 0.001; // 0.1% of current price
+		        double threshold = Close[0] * 0.001;
 		        
 		        if (diff > threshold)
-		            return 1.0;   // Bullish
+		            return 1.0;
 		        else if (diff < -threshold)
-		            return -1.0;  // Bearish
+		            return -1.0;
 		        else
-		            return 0.0;   // Neutral
+		            return 0.0;
 		    }
 		    catch
 		    {
@@ -837,10 +1255,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
-		        if (CurrentBar < SenkouPeriod + 26) // Need extra bars for displacement
+		        if (CurrentBar < SenkouPeriod + 26)
 		            return 0;
 		            
-		        // Calculate Senkou Span A from 26 bars ago (for current cloud position)
 		        double tenkanHigh26 = MAX(High, TenkanPeriod)[26];
 		        double tenkanLow26 = MIN(Low, TenkanPeriod)[26];
 		        double tenkan26 = (tenkanHigh26 + tenkanLow26) / 2;
@@ -851,7 +1268,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        
 		        double senkouA = (tenkan26 + kijun26) / 2;
 		        
-		        // Calculate Senkou Span B from 26 bars ago (for current cloud position)
 		        double senkouBHigh26 = MAX(High, SenkouPeriod)[26];
 		        double senkouBLow26 = MIN(Low, SenkouPeriod)[26];
 		        double senkouB = (senkouBHigh26 + senkouBLow26) / 2;
@@ -861,17 +1277,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            
 		        double cloudTop = Math.Max(senkouA, senkouB);
 		        double cloudBottom = Math.Min(senkouA, senkouB);
-		        double cloudThickness = cloudTop - cloudBottom;
-		        
-		        // FIXED: Larger buffer zone for cleaner signals (0.2% instead of 10% of thickness)
-		        double buffer = Close[0] * 0.002; // 0.2% of current price
+		        double buffer = Close[0] * 0.002;
 		        
 		        if (Close[0] > cloudTop + buffer)
-		            return 1.0; // Clearly above cloud (bullish)
+		            return 1.0;
 		        else if (Close[0] < cloudBottom - buffer)
-		            return -1.0; // Clearly below cloud (bearish)
+		            return -1.0;
 		        else
-		            return 0.0; // Inside cloud or near edges (neutral)
+		            return 0.0;
 		    }
 		    catch
 		    {
@@ -886,7 +1299,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        if (CurrentBar < SenkouPeriod)
 		            return 0;
 		            
-		        // Calculate current Senkou spans (these represent the "future" cloud)
 		        double tenkanHigh = MAX(High, TenkanPeriod)[0];
 		        double tenkanLow = MIN(Low, TenkanPeriod)[0];
 		        double tenkan = (tenkanHigh + tenkanLow) / 2;
@@ -906,14 +1318,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            
 		        double diff = futureA - futureB;
 		        double avgPrice = (futureA + futureB) / 2;
-		        double threshold = avgPrice * 0.0001; // 0.01% threshold
+		        double threshold = avgPrice * 0.0001;
 		        
 		        if (diff > threshold)
-		            return 1.0;  // Green cloud (bullish)
+		            return 1.0;
 		        else if (diff < -threshold)
-		            return -1.0; // Red cloud (bearish)
+		            return -1.0;
 		        else
-		            return 0.0;  // Neutral cloud
+		            return 0.0;
 		    }
 		    catch
 		    {
@@ -935,16 +1347,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            return 0;
 		            
 		        double diff = fastEma - slowEma;
-		        
-		        // FIXED: Use 0.05% threshold instead of 0.02%
-		        double threshold = Close[0] * 0.0005; // 0.05% threshold for neutral zone
+		        double threshold = Close[0] * 0.0005;
 		        
 		        if (diff > threshold)
-		            return 1.0;   // Fast above slow (bullish)
+		            return 1.0;
 		        else if (diff < -threshold)
-		            return -1.0;  // Fast below slow (bearish)
+		            return -1.0;
 		        else
-		            return 0.0;   // EMAs converging (neutral)
+		            return 0.0;
 		    }
 		    catch
 		    {
@@ -956,15 +1366,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
-		        if (CurrentBar < TenkanPeriod + 8) // Increased lookback
+		        if (CurrentBar < TenkanPeriod + 8)
 		            return 0;
 		            
-		        // Calculate current Tenkan-sen
 		        double currentTenkanHigh = MAX(High, TenkanPeriod)[0];
 		        double currentTenkanLow = MIN(Low, TenkanPeriod)[0];
 		        double currentTenkan = (currentTenkanHigh + currentTenkanLow) / 2;
 		        
-		        // FIXED: Use 5-bar lookback instead of 3
 		        double previousTenkanHigh = MAX(High, TenkanPeriod)[5];
 		        double previousTenkanLow = MIN(Low, TenkanPeriod)[5];
 		        double previousTenkan = (previousTenkanHigh + previousTenkanLow) / 2;
@@ -973,16 +1381,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            return 0;
 		            
 		        double change = currentTenkan - previousTenkan;
-		        
-		        // FIXED: Use 0.05% momentum threshold instead of 0.01%
-		        double threshold = currentTenkan * 0.0005; // 0.05% momentum threshold
+		        double threshold = currentTenkan * 0.0005;
 		        
 		        if (change > threshold)
-		            return 1.0;   // Rising momentum
+		            return 1.0;
 		        else if (change < -threshold)
-		            return -1.0;  // Falling momentum
+		            return -1.0;
 		        else
-		            return 0.0;   // Flat momentum
+		            return 0.0;
 		    }
 		    catch
 		    {
@@ -997,12 +1403,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        if (CurrentBar < KijunPeriod + 5)
 		            return 0;
 		            
-		        // Calculate current Kijun-sen
 		        double currentKijunHigh = MAX(High, KijunPeriod)[0];
 		        double currentKijunLow = MIN(Low, KijunPeriod)[0];
 		        double currentKijun = (currentKijunHigh + currentKijunLow) / 2;
 		        
-		        // Calculate previous Kijun-sen (3 bars ago)
 		        double previousKijunHigh = MAX(High, KijunPeriod)[3];
 		        double previousKijunLow = MIN(Low, KijunPeriod)[3];
 		        double previousKijun = (previousKijunHigh + previousKijunLow) / 2;
@@ -1011,14 +1415,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            return 0;
 		            
 		        double change = currentKijun - previousKijun;
-		        double threshold = currentKijun * 0.0001; // 0.01% momentum threshold
+		        double threshold = currentKijun * 0.0001;
 		        
 		        if (change > threshold)
-		            return 1.0;   // Rising momentum
+		            return 1.0;
 		        else if (change < -threshold)
-		            return -1.0;  // Falling momentum
+		            return -1.0;
 		        else
-		            return 0.0;   // Flat momentum
+		            return 0.0;
 		    }
 		    catch
 		    {
@@ -1045,32 +1449,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 features.IsLive ? 1 : 0);
         }
 		
-		private bool IsInStrongTrend()
-		{
-		    try
-		    {
-		        if (CurrentBar < 50)
-		            return false;
-		            
-		        // Check if in strong uptrend
-		        double highestHigh = MAX(High, 50)[0];
-		        double lowestLow = MIN(Low, 50)[0];
-		        double pricePosition = (Close[0] - lowestLow) / (highestHigh - lowestLow);
-		        
-		        // Strong uptrend: price in top 20% of 50-bar range
-		        bool strongUptrend = pricePosition > 0.8;
-		        
-		        // Strong downtrend: price in bottom 20% of 50-bar range  
-		        bool strongDowntrend = pricePosition < 0.2;
-		        
-		        return strongUptrend || strongDowntrend;
-		    }
-		    catch
-		    {
-		        return false;
-		    }
-		}
-		
 		private int GetTrendDirection()
 		{
 		    try
@@ -1083,11 +1461,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        double pricePosition = (Close[0] - lowestLow) / (highestHigh - lowestLow);
 		        
 		        if (pricePosition > 0.8)
-		            return 1;  // Strong uptrend
+		            return 1;
 		        else if (pricePosition < 0.2)
-		            return -1; // Strong downtrend
+		            return -1;
 		        else
-		            return 0;  // No clear trend
+		            return 0;
 		    }
 		    catch
 		    {
@@ -1097,7 +1475,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         #endregion
         
-        #region Position Management
+        #region Position Management and Communication
         
 		private void SendPositionUpdate()
 		{
@@ -1132,7 +1510,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         #endregion
         
-        #region Network Communication
+        #region Network Communication (Simplified)
         
         private void SignalReceiveLoop()
         {
@@ -1147,7 +1525,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         break;
                         
                     int messageLength = BitConverter.ToInt32(lengthBuffer, 0);
-                    if (messageLength > 10000) // Sanity check
+                    if (messageLength > 10000)
                         continue;
                         
                     byte[] messageBuffer = new byte[messageLength];
@@ -1215,16 +1593,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 			        latestSignal = new SignalData
 			        {
 			            Action = Convert.ToInt32(signalDict["action"]),
-			            Size = Convert.ToInt32(signalDict["size"]),
 			            Confidence = Convert.ToDouble(signalDict["confidence"]),
-			            Timestamp = Convert.ToInt64(signalDict["timestamp"]),
-			            SignalId = signalDict.ContainsKey("signal_id") ? Convert.ToInt32(signalDict["signal_id"]) : 0
+			            Quality = signalDict.ContainsKey("signal_quality") ? signalDict["signal_quality"].ToString() : "unknown",
+			            Timestamp = Convert.ToInt64(signalDict["timestamp"])
 			        };
 			
 			        if (EnableLogging)
 			        {
-			            string actionName = latestSignal.Action == 1 ? "Long" : (latestSignal.Action == 2 ? "Short" : "Hold");
-			            Print($"Signal #{latestSignal.SignalId}: {actionName}, size={latestSignal.Size}, conf={latestSignal.Confidence:F3}");
+			            string actionName = latestSignal.Action == 1 ? "Long" : (latestSignal.Action == 2 ? "Short" : "Hold/Exit");
+			            Print($"Signal: {actionName}, conf={latestSignal.Confidence:F3}, quality={latestSignal.Quality}");
 			        }
 			    }
 		    }
@@ -1244,7 +1621,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 {
                     lock (lwpeLock)
                     {
-                        currentLWPE = Math.Max(0, Math.Min(1, lwpeValue)); // Clamp to [0,1]
+                        currentLWPE = Math.Max(0, Math.Min(1, lwpeValue));
                     }
                 }
             }
@@ -1283,10 +1660,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private class SignalData
         {
             public int Action { get; set; }
-            public int Size { get; set; }
             public double Confidence { get; set; }
+            public string Quality { get; set; }
             public long Timestamp { get; set; }
-			public int SignalId { get; set; }
         }
         
         private class FeatureVector
@@ -1302,129 +1678,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             public double LWPE { get; set; }
             public bool IsLive { get; set; }
         }
-		
-		private double GetTenkanValue()
-		{
-		    if (CurrentBar < TenkanPeriod) return 0;
-		    double high = MAX(High, TenkanPeriod)[0];
-		    double low = MIN(Low, TenkanPeriod)[0];
-		    return (high + low) / 2;
-		}
-		
-		private double GetKijunValue()
-		{
-		    if (CurrentBar < KijunPeriod) return 0;
-		    double high = MAX(High, KijunPeriod)[0];
-		    double low = MIN(Low, KijunPeriod)[0];
-		    return (high + low) / 2;
-		}
-		
-		private double GetSenkouSpanA()
-		{
-		    return (GetTenkanValue() + GetKijunValue()) / 2;
-		}
-		
-		private double GetSenkouSpanB()
-		{
-		    if (CurrentBar < SenkouPeriod) return 0;
-		    double high = MAX(High, SenkouPeriod)[0];
-		    double low = MIN(Low, SenkouPeriod)[0];
-		    return (high + low) / 2;
-		}
-		
-		private void PlotSignalArrows()
-		{
-		    try
-		    {
-		        // Get current signals
-		        double tkSignal = GetTenkanKijunSignal();
-		        double pcSignal = GetPriceCloudSignal();
-		        double emaSignal = GetEmaCrossSignal();
-		        double fcSignal = GetFutureCloudSignal();
-		        double tmSignal = GetTenkanMomentum();
-		        double kmSignal = GetKijunMomentum();
-		        
-		        // Count aligned signals
-		        double bullishCount = 0;
-		        double bearishCount = 0;
-		        double neutralCount = 0;
-		        
-		        // Major signals (weighted more heavily)
-		        var majorSignals = new[] { tkSignal, pcSignal, emaSignal };
-		        var minorSignals = new[] { fcSignal, tmSignal, kmSignal };
-		        
-		        // Count major signals
-		        foreach (double signal in majorSignals)
-		        {
-		            if (signal > 0) bullishCount++;
-		            else if (signal < 0) bearishCount++;
-		            else neutralCount++;
-		        }
-		        
-		        // Add minor signals with half weight
-		        foreach (double signal in minorSignals)
-		        {
-		            if (signal > 0) bullishCount += 0.5;
-		            else if (signal < 0) bearishCount += 0.5;
-		            else neutralCount += 0.5;
-		        }
-		        
-		        // Calculate signal quality score
-		        double signalQuality = CalculateSignalQuality();
-		        
-		        // Strong bullish setup (2+ major bullish OR high signal quality)
-		        if (bullishCount >= 2 || (bullishCount >= 1.5 && signalQuality > 0.7))
-		        {
-		            Draw.ArrowUp(this, "BullArrow" + CurrentBar, false, 0, Low[0] - 4 * TickSize, Brushes.Lime);
-		            Draw.Text(this, "BullText" + CurrentBar, $"BULL {bullishCount:F1}", 0, Low[0] - 8 * TickSize, Brushes.Lime);
-		            
-		            if (EnableLogging && CurrentBar % 20 == 0)
-		                Print($"BULLISH SETUP: TK={tkSignal}, PC={pcSignal}, EMA={emaSignal}, Quality={signalQuality:F2}");
-		        }
-		        // Strong bearish setup (2+ major bearish OR high signal quality)
-		        else if (bearishCount >= 2 || (bearishCount >= 1.5 && signalQuality < 0.3))
-		        {
-		            Draw.ArrowDown(this, "BearArrow" + CurrentBar, false, 0, High[0] + 4 * TickSize, Brushes.Red);
-		            Draw.Text(this, "BearText" + CurrentBar, $"BEAR {bearishCount:F1}", 0, High[0] + 8 * TickSize, Brushes.Red);
-		            
-		            if (EnableLogging && CurrentBar % 20 == 0)
-		                Print($"BEARISH SETUP: TK={tkSignal}, PC={pcSignal}, EMA={emaSignal}, Quality={signalQuality:F2}");
-		        }
-		        // Mixed/neutral signals (1+ neutral signals OR moderate signal quality)
-		        else if (neutralCount >= 1 || (signalQuality > 0.4 && signalQuality < 0.6))
-		        {
-		            Draw.Diamond(this, "NeutralDiamond" + CurrentBar, false, 0, Close[0], Brushes.Yellow);
-		            Draw.Text(this, "NeutralText" + CurrentBar, $"NEUTRAL {neutralCount:F1}", 0, Close[0] + 2 * TickSize, Brushes.Yellow);
-		            
-		            if (EnableLogging && CurrentBar % 50 == 0)
-		                Print($"NEUTRAL SETUP: TK={tkSignal}, PC={pcSignal}, EMA={emaSignal}, Quality={signalQuality:F2}");
-		        }
-		        
-		        // Add trend strength indicator
-		        if (CurrentBar % 10 == 0) // Every 10 bars
-		        {
-		            string trendStrength = "";
-		            if (signalQuality > 0.8) trendStrength = "STRONG";
-		            else if (signalQuality > 0.6) trendStrength = "MODERATE";
-		            else if (signalQuality < 0.2) trendStrength = "STRONG BEAR";
-		            else if (signalQuality < 0.4) trendStrength = "MODERATE BEAR";
-		            else trendStrength = "WEAK/MIXED";
-		            
-		            if (!string.IsNullOrEmpty(trendStrength))
-		            {
-						Draw.TextFixed(this, "TrendStrength" + CurrentBar, 
-						    $"Trend: {trendStrength} | Quality: {signalQuality:F2}", 
-						    TextPosition.TopRight);
-		            }
-		        }
-		    }
-		    catch (Exception ex)
-		    {
-		        if (EnableLogging)
-		            Print($"Signal arrow error: {ex.Message}");
-		    }
-		}
-        
+
         #endregion
         
         #region Public Methods for Monitoring
@@ -1437,47 +1691,14 @@ namespace NinjaTrader.NinjaScript.Strategies
                        $"Signals: {signalCount} | " +
                        $"Trades: {tradesExecuted} | " +
                        $"Position: {GetCurrentPosition()} | " +
-                       $"Ready: {IsReadyForTrading()} | " +
-                       $"LWPE: {currentLWPE:F3}";
+                       $"SL Hits: {stopLossHits} | " +
+                       $"TP Hits: {takeProfitHits} | " +
+                       $"TS Hits: {trailingStopHits} | " +
+                       $"Scale Outs: {scaleOutExecutions}";
             }
             catch
             {
                 return "Status unavailable";
-            }
-        }
-        
-        public Dictionary<string, object> GetDetailedStatus()
-        {
-            try
-            {
-                var features = CalculateFeatures();
-                
-                return new Dictionary<string, object>
-                {
-                    ["instance_id"] = instanceId,
-                    ["signals_processed"] = signalCount,
-                    ["trades_executed"] = tradesExecuted,
-                    ["current_position"] = GetCurrentPosition(),
-                    ["is_ready"] = IsReadyForTrading(),
-                    ["current_bar"] = CurrentBar,
-                    ["ichimoku_signals"] = new Dictionary<string, object>
-                    {
-                        ["tenkan_kijun"] = features.TenkanKijunSignal,
-                        ["price_cloud"] = features.PriceCloudSignal,
-                        ["future_cloud"] = features.FutureCloudSignal,
-                        ["tenkan_momentum"] = features.TenkanMomentum,
-                        ["kijun_momentum"] = features.KijunMomentum
-                    },
-                    ["ema_signal"] = features.EmaCrossSignal,
-                    ["lwpe"] = features.LWPE,
-                    ["signal_quality"] = CalculateSignalQuality(),
-                    ["uptime_hours"] = strategyStartTime != DateTime.MinValue ? 
-                        (DateTime.Now - strategyStartTime).TotalHours : 0
-                };
-            }
-            catch (Exception ex)
-            {
-                return new Dictionary<string, object> { ["error"] = ex.Message };
             }
         }
         
