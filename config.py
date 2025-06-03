@@ -17,9 +17,6 @@ class Config:
     ENTROPY_COEF= 0.05
     LR          = 1e-4
 
-    # REMOVED: Position sizing parameters (now handled by NinjaScript)
-    # BASE_SIZE, MAX_SIZE, MIN_SIZE moved to NinjaScript properties
-
     # Prediction parameters - Optimized for signal confidence
     TEMPERATURE = 1.2  # For exploration during signal generation
 
