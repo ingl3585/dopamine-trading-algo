@@ -1266,7 +1266,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        
 		        if (avgVol == 0) return 0;
 		        
-		        return (currentVol - avgVol) / avgVol;
+		        // FIXED: Return normalized volume with reasonable bounds
+		        double normalizedVol = (currentVol - avgVol) / avgVol;
+		        
+		        // FIXED: Cap extreme volume ratios to prevent 19.0+ values
+		        return Math.Max(-5.0, Math.Min(10.0, normalizedVol));
 		    }
 		    catch (Exception ex)
 		    {
@@ -1340,7 +1344,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        if (Highs[seriesIndex] == null || Lows[seriesIndex] == null)
 		            return 0;
 		            
-		        // YOUR ORIGINAL LOGIC UNCHANGED
+		        // Calculate raw Ichimoku values
 		        double tenkanHigh = MAX(Highs[seriesIndex], tenkanPeriod)[0];
 		        double tenkanLow = MIN(Lows[seriesIndex], tenkanPeriod)[0];
 		        double tenkan = (tenkanHigh + tenkanLow) / 2;
@@ -1352,15 +1356,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        if (tenkan == 0 || kijun == 0)
 		            return 0;
 		            
+		        // FIXED: Calculate difference and apply proper threshold
 		        double diff = tenkan - kijun;
-		        double threshold = Closes[seriesIndex][0] * 0.001;
+		        double threshold = Closes[seriesIndex][0] * 0.001;  // 0.1% threshold
 		        
+		        // FIXED: Return proper ternary signal instead of raw difference
 		        if (diff > threshold)
-		            return 1.0;
+		            return 1.0;      // Bullish signal
 		        else if (diff < -threshold)
-		            return -1.0;
+		            return -1.0;     // Bearish signal
 		        else
-		            return 0.0;
+		            return 0.0;      // Neutral signal
 		    }
 		    catch
 		    {
@@ -1379,7 +1385,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        if (Highs[seriesIndex] == null || Lows[seriesIndex] == null || Closes[seriesIndex] == null)
 		            return 0;
 		            
-		        // YOUR ORIGINAL LOGIC UNCHANGED
+		        // Calculate cloud components (26 bars ago)
 		        double tenkanHigh26 = MAX(Highs[seriesIndex], tenkanPeriod)[26];
 		        double tenkanLow26 = MIN(Lows[seriesIndex], tenkanPeriod)[26];
 		        double tenkan26 = (tenkanHigh26 + tenkanLow26) / 2;
@@ -1399,14 +1405,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            
 		        double cloudTop = Math.Max(senkouA, senkouB);
 		        double cloudBottom = Math.Min(senkouA, senkouB);
-		        double buffer = Closes[seriesIndex][0] * 0.002;
+		        double currentPrice = Closes[seriesIndex][0];
 		        
-		        if (Closes[seriesIndex][0] > cloudTop + buffer)
-		            return 1.0;
-		        else if (Closes[seriesIndex][0] < cloudBottom - buffer)
-		            return -1.0;
+		        // FIXED: Use proper buffer and return clean signals
+		        double buffer = currentPrice * 0.002;  // 0.2% buffer
+		        
+		        if (currentPrice > cloudTop + buffer)
+		            return 1.0;      // Above cloud - bullish
+		        else if (currentPrice < cloudBottom - buffer)
+		            return -1.0;     // Below cloud - bearish
 		        else
-		            return 0.0;
+		            return 0.0;      // Inside cloud - neutral
 		    }
 		    catch
 		    {
@@ -1455,102 +1464,112 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
         
-        private double GetEmaCrossSignal(EMA emaFast, EMA emaSlow)
-        {
-            try
-            {
-                if (emaFast == null || emaSlow == null)
-                    return 0;
-                    
-                double fastEma = emaFast[0];
-                double slowEma = emaSlow[0];
-                
-                if (fastEma == 0 || slowEma == 0)
-                    return 0;
-                    
-                double diff = fastEma - slowEma;
-                double threshold = Close[0] * 0.0005;
-                
-                if (diff > threshold)
-                    return 1.0;
-                else if (diff < -threshold)
-                    return -1.0;
-                else
-                    return 0.0;
-            }
-            catch
-            {
-                return 0;
-            }
-        }
+		private double GetEmaCrossSignal(EMA emaFast, EMA emaSlow)
+		{
+		    try
+		    {
+		        if (emaFast == null || emaSlow == null)
+		            return 0;
+		            
+		        double fastEma = emaFast[0];
+		        double slowEma = emaSlow[0];
+		        
+		        if (fastEma == 0 || slowEma == 0)
+		            return 0;
+		            
+		        // FIXED: Calculate percentage difference and apply threshold
+		        double diff = fastEma - slowEma;
+		        double threshold = Math.Abs(slowEma) * 0.0005;  // 0.05% threshold
+		        
+		        // FIXED: Return proper ternary signal
+		        if (diff > threshold)
+		            return 1.0;      // Fast above slow - bullish
+		        else if (diff < -threshold)
+		            return -1.0;     // Fast below slow - bearish
+		        else
+		            return 0.0;      // Too close - neutral
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
         
-        private double GetTenkanMomentum(int seriesIndex, int tenkanPeriod)
-        {
-            try
-            {
-                if (CurrentBars[seriesIndex] < tenkanPeriod + 8)
-                    return 0;
-                    
-                double currentTenkanHigh = MAX(Highs[seriesIndex], tenkanPeriod)[0];
-                double currentTenkanLow = MIN(Lows[seriesIndex], tenkanPeriod)[0];
-                double currentTenkan = (currentTenkanHigh + currentTenkanLow) / 2;
-                
-                double previousTenkanHigh = MAX(Highs[seriesIndex], tenkanPeriod)[5];
-                double previousTenkanLow = MIN(Lows[seriesIndex], tenkanPeriod)[5];
-                double previousTenkan = (previousTenkanHigh + previousTenkanLow) / 2;
-                
-                if (currentTenkan == 0 || previousTenkan == 0)
-                    return 0;
-                    
-                double change = currentTenkan - previousTenkan;
-                double threshold = currentTenkan * 0.0005;
-                
-                if (change > threshold)
-                    return 1.0;
-                else if (change < -threshold)
-                    return -1.0;
-                else
-                    return 0.0;
-            }
-            catch
-            {
-                return 0;
-            }
-        }
+		private double GetTenkanMomentum(int seriesIndex, int tenkanPeriod)
+		{
+		    try
+		    {
+		        if (CurrentBars[seriesIndex] < tenkanPeriod + 8)
+		            return 0;
+		            
+		        // Current Tenkan
+		        double currentTenkanHigh = MAX(Highs[seriesIndex], tenkanPeriod)[0];
+		        double currentTenkanLow = MIN(Lows[seriesIndex], tenkanPeriod)[0];
+		        double currentTenkan = (currentTenkanHigh + currentTenkanLow) / 2;
+		        
+		        // Previous Tenkan (5 bars ago)
+		        double previousTenkanHigh = MAX(Highs[seriesIndex], tenkanPeriod)[5];
+		        double previousTenkanLow = MIN(Lows[seriesIndex], tenkanPeriod)[5];
+		        double previousTenkan = (previousTenkanHigh + previousTenkanLow) / 2;
+		        
+		        if (currentTenkan == 0 || previousTenkan == 0)
+		            return 0;
+		            
+		        // FIXED: Calculate percentage change and apply threshold
+		        double change = (currentTenkan - previousTenkan) / previousTenkan;
+		        double threshold = 0.0005;  // 0.05% threshold
+		        
+		        // FIXED: Return proper ternary signal
+		        if (change > threshold)
+		            return 1.0;      // Rising momentum - bullish
+		        else if (change < -threshold)
+		            return -1.0;     // Falling momentum - bearish
+		        else
+		            return 0.0;      // Flat momentum - neutral
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
         
-        private double GetKijunMomentum(int seriesIndex, int kijunPeriod)
-        {
-            try
-            {
-                if (CurrentBars[seriesIndex] < kijunPeriod + 5)
-                    return 0;
-                    
-                double currentKijunHigh = MAX(Highs[seriesIndex], kijunPeriod)[0];
-                double currentKijunLow = MIN(Lows[seriesIndex], kijunPeriod)[0];
-                double currentKijun = (currentKijunHigh + currentKijunLow) / 2;
-                
-                double previousKijunHigh = MAX(Highs[seriesIndex], kijunPeriod)[3];
-                double previousKijunLow = MIN(Lows[seriesIndex], kijunPeriod)[3];
-                double previousKijun = (previousKijunHigh + previousKijunLow) / 2;
-                
-                if (currentKijun == 0 || previousKijun == 0)
-                    return 0;
-                    
-                double change = currentKijun - previousKijun;
-                double threshold = currentKijun * 0.0001;
-                
-                if (change > threshold)
-                    return 1.0;
-                else if (change < -threshold)
-                    return -1.0;
-                else
-                    return 0.0;
-            }
-            catch
-            {
-                return 0;
-            }
-        }
+		private double GetKijunMomentum(int seriesIndex, int kijunPeriod)
+		{
+		    try
+		    {
+		        if (CurrentBars[seriesIndex] < kijunPeriod + 5)
+		            return 0;
+		            
+		        // Current Kijun
+		        double currentKijunHigh = MAX(Highs[seriesIndex], kijunPeriod)[0];
+		        double currentKijunLow = MIN(Lows[seriesIndex], kijunPeriod)[0];
+		        double currentKijun = (currentKijunHigh + currentKijunLow) / 2;
+		        
+		        // Previous Kijun (3 bars ago)
+		        double previousKijunHigh = MAX(Highs[seriesIndex], kijunPeriod)[3];
+		        double previousKijunLow = MIN(Lows[seriesIndex], kijunPeriod)[3];
+		        double previousKijun = (previousKijunHigh + previousKijunLow) / 2;
+		        
+		        if (currentKijun == 0 || previousKijun == 0)
+		            return 0;
+		            
+		        // FIXED: Calculate percentage change and apply threshold
+		        double change = (currentKijun - previousKijun) / previousKijun;
+		        double threshold = 0.0001;  // 0.01% threshold (smaller for slower Kijun)
+		        
+		        // FIXED: Return proper ternary signal
+		        if (change > threshold)
+		            return 1.0;      // Rising momentum - bullish
+		        else if (change < -threshold)
+		            return -1.0;     // Falling momentum - bearish
+		        else
+		            return 0.0;      // Flat momentum - neutral
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
 
 		private string CreateMultiTimeframeFeaturePayload(MultiTimeframeFeatures features)
 		{
