@@ -21,22 +21,31 @@ class LiveFeatureHandler:
 
     def handle_live_feature(self, feat, live):
         """
-        Handle incoming feature vector with Ichimoku/EMA signals
-        
-        Args:
-            feat: Feature vector [close, volume, tenkan_kijun, price_cloud, future_cloud, 
-                                ema_cross, tenkan_momentum, kijun_momentum, lwpe]
-            live: 1 if real-time data, 0 if historical
+        Enhanced feature handling with better logging and validation
         """
         self.step_counter += 1
 
-        # Validate feature vector
+        # Enhanced validation and logging
         if not self._validate_feature_vector(feat):
-            log.warning(f"Invalid feature vector at step {self.step_counter}: {feat}")
+            log.error(f"Step {self.step_counter}: Feature validation failed for vector: {feat[:5] if len(feat) > 5 else feat}...")
             return
 
+        # Log feature vector info periodically
+        if self.step_counter % 100 == 0:
+            log.info(f"Step {self.step_counter}: Processing {len(feat)}-feature vector, live={live}")
+            
+            # Log feature distribution
+            if len(feat) == 27:
+                log.debug("Multi-timeframe features - 15m: trend context, 5m: momentum, 1m: entry timing")
+            else:
+                log.debug("Single timeframe features")
+
         # Process features and get prediction
-        row, action, conf, close = self.processor.process_and_predict(feat)
+        try:
+            row, action, conf, close = self.processor.process_and_predict(feat)
+        except Exception as e:
+            log.error(f"Step {self.step_counter}: Feature processing failed: {e}")
+            return
         
         # Log the processed data
         self.trainer.append(row)
@@ -56,39 +65,135 @@ class LiveFeatureHandler:
 
     def _validate_feature_vector(self, feat):
         """
-        Accept both the old 9‑field and the new 27‑field (3×9) vectors.
-        For 27‑field input we just sanity‑check the *entry (1‑min) slice*
-        – indices 18‑26 – because that’s what drives the RL right now.
+        Enhanced validation for both 9-field and 27-field vectors with better error handling
         """
         try:
             if not isinstance(feat, (list, tuple)):
+                log.warning(f"Feature vector is not list/tuple: {type(feat)}")
                 return False
 
-            if len(feat) == 27:                       # ← new multi‑TF vector
-                entry_slice = feat[18:27]             # 1‑min part
-            elif len(feat) == 9:                      # ← old single‑TF vector
-                entry_slice = feat
+            feat_len = len(feat)
+            log.debug(f"Validating feature vector with {feat_len} elements")
+
+            if feat_len == 27:
+                # Full multi-timeframe vector - validate all three timeframes
+                return self._validate_27_feature_vector(feat)
+            elif feat_len == 9:
+                # Single timeframe vector - validate and expand
+                return self._validate_9_feature_vector(feat)
             else:
+                log.warning(f"Invalid feature vector length: {feat_len}, expected 9 or 27")
                 return False
 
-            close, _, *signals, lwpe = entry_slice
-            if close <= 0 or not (0 <= lwpe <= 1):
-                return False
-
-            # clamp ternary signals in place
-            for i in range(2, 8):                     # the six signal slots
-                v = round(entry_slice[i])
-                entry_slice[i] = float(max(-1, min(1, v)))
-
-            # shove the cleaned slice back into feat if we took one
-            if len(feat) == 27:
-                feat[18:27] = entry_slice
-            else:
-                feat[:] = entry_slice
-
-            return True
         except Exception as e:
-            log.warning(f"Feature validation error: {e}")
+            log.error(f"Feature validation error: {e}")
+            return False
+        
+    def _validate_27_feature_vector(self, feat):
+        """Validate 27-feature multi-timeframe vector"""
+        try:
+            # Validate each 9-feature timeframe block
+            timeframes = [
+                (0, 9, "15m"),   # Trend context
+                (9, 18, "5m"),   # Momentum context  
+                (18, 27, "1m")   # Entry timing
+            ]
+            
+            for start_idx, end_idx, tf_name in timeframes:
+                tf_slice = feat[start_idx:end_idx]
+                if not self._validate_timeframe_slice(tf_slice, tf_name):
+                    log.warning(f"Validation failed for {tf_name} timeframe slice")
+                    return False
+            
+            log.debug("27-feature vector validation passed")
+            return True
+            
+        except Exception as e:
+            log.warning(f"27-feature validation error: {e}")
+            return False
+        
+    def _validate_9_feature_vector(self, feat):
+        """Validate and clean 9-feature vector"""
+        try:
+            return self._validate_timeframe_slice(feat, "single")
+        except Exception as e:
+            log.warning(f"9-feature validation error: {e}")
+            return False
+    
+    def _validate_timeframe_slice(self, tf_slice, tf_name):
+        """Validate a 9-element timeframe slice"""
+        try:
+            if len(tf_slice) != 9:
+                log.warning(f"{tf_name} slice has {len(tf_slice)} elements, expected 9")
+                return False
+            
+            # Validate and clean each element
+            # [0] close price
+            close = float(tf_slice[0])
+            if close <= 0:
+                log.warning(f"{tf_name} close price invalid: {close}")
+                return False
+            tf_slice[0] = close
+            
+            # [1] normalized volume
+            norm_vol = float(tf_slice[1])
+            if abs(norm_vol) > 10:  # Reasonable bounds
+                log.warning(f"{tf_name} normalized volume extreme: {norm_vol}, clamping")
+                tf_slice[1] = max(-10, min(10, norm_vol))
+            else:
+                tf_slice[1] = norm_vol
+            
+            # [2-7] ternary signals - must be -1, 0, or 1
+            signal_names = [
+                "tenkan_kijun", "price_cloud", "future_cloud", 
+                "ema_cross", "tenkan_momentum", "kijun_momentum"
+            ]
+            
+            for i, signal_name in enumerate(signal_names, start=2):
+                try:
+                    signal_val = float(tf_slice[i])
+                    
+                    # Handle NaN/Infinity
+                    if not (abs(signal_val) < float('inf')):
+                        log.warning(f"{tf_name} {signal_name} signal is NaN/Inf, setting to 0")
+                        tf_slice[i] = 0.0
+                        continue
+                    
+                    # Round to nearest integer
+                    rounded_signal = round(signal_val)
+                    
+                    # Clamp to ternary range
+                    if rounded_signal > 1:
+                        clamped_signal = 1
+                    elif rounded_signal < -1:
+                        clamped_signal = -1
+                    else:
+                        clamped_signal = rounded_signal
+                    
+                    if clamped_signal != signal_val:
+                        log.debug(f"{tf_name} {signal_name}: {signal_val} -> {clamped_signal}")
+                    
+                    tf_slice[i] = float(clamped_signal)
+                    
+                except (ValueError, TypeError) as e:
+                    log.warning(f"{tf_name} {signal_name} signal conversion error: {e}, setting to 0")
+                    tf_slice[i] = 0.0
+            
+            # [8] LWPE - must be 0.0 to 1.0
+            try:
+                lwpe = float(tf_slice[8])
+                if not (0 <= lwpe <= 1):
+                    log.warning(f"{tf_name} LWPE out of range: {lwpe}, clamping to [0,1]")
+                    lwpe = max(0.0, min(1.0, lwpe))
+                tf_slice[8] = lwpe
+            except (ValueError, TypeError):
+                log.warning(f"{tf_name} LWPE invalid, setting to 0.5")
+                tf_slice[8] = 0.5
+            
+            return True
+            
+        except Exception as e:
+            log.warning(f"{tf_name} timeframe slice validation error: {e}")
             return False
 
     def _handle_historical_data(self, action, conf):
@@ -133,28 +238,40 @@ class LiveFeatureHandler:
 
     def _extract_signal_features(self, feat):
         """
-        Always pull from the 1‑minute slice when we get a 27‑field vector.
+        Extract signal features, always from 1-minute slice (indices 18-26) for 27-feature vectors
         """
         try:
+            # Determine which slice to use
             if len(feat) == 27:
-                feat = feat[18:27]
+                # Use 1-minute slice (entry timing) - indices 18-26
+                feat_slice = feat[18:27]
+                log.debug("Extracting signals from 1-minute timeframe (27-feature input)")
+            elif len(feat) == 9:
+                # Use entire vector
+                feat_slice = feat
+                log.debug("Extracting signals from single timeframe (9-feature input)")
+            else:
+                log.warning(f"Cannot extract signals from {len(feat)}-element vector")
+                return None
 
-            if len(feat) != 9:
+            if len(feat_slice) != 9:
+                log.warning(f"Signal extraction slice has {len(feat_slice)} elements, expected 9")
                 return None
 
             return {
-                'close':             feat[0],
-                'normalized_volume': feat[1],
-                'tenkan_kijun':      feat[2],
-                'price_cloud':       feat[3],
-                'future_cloud':      feat[4],
-                'ema_cross':         feat[5],
-                'tenkan_momentum':   feat[6],
-                'kijun_momentum':    feat[7],
-                'lwpe':              feat[8],
+                'close':             feat_slice[0],
+                'normalized_volume': feat_slice[1],
+                'tenkan_kijun':      feat_slice[2],
+                'price_cloud':       feat_slice[3],
+                'future_cloud':      feat_slice[4],
+                'ema_cross':         feat_slice[5],
+                'tenkan_momentum':   feat_slice[6],
+                'kijun_momentum':    feat_slice[7],
+                'lwpe':              feat_slice[8],
             }
+            
         except Exception as e:
-            log.warning(f"Signal feature extraction failed: {e}")
+            log.error(f"Signal feature extraction failed: {e}")
             return None
 
     def _log_periodic_summary(self):

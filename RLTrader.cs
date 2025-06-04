@@ -18,6 +18,7 @@ using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using NinjaTrader.NinjaScript.Indicators;
 using System.Windows.Media;
+using NinjaTrader.Gui.Tools; 
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
@@ -270,14 +271,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        switch (State)
 		        {
 		            case State.SetDefaults:
-		                ConfigureDefaults();      // ← **no AddDataSeries here anymore**
+		                ConfigureDefaults();
 		                break;
 		
-		            case State.Configure:        // ← NEW: put extra series & bars‑to‑trade here
+		            case State.Configure:
 		                AddDataSeries(BarsPeriodType.Minute, 15);
 		                AddDataSeries(BarsPeriodType.Minute, 5);
-		
-		                BarsRequiredToTrade = 1;  // instant start; rely on WarmUpBars instead
+		                BarsRequiredToTrade = 1;
 		                break;
 		
 		            case State.DataLoaded:
@@ -293,6 +293,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 		                strategyStartTime = DateTime.Now;
 		                Print($"Multi‑Timeframe RLTrader #{instanceId} started");
 		                LogMultiTimeframeParameters();
+		                
+		                // NEW: Process historical data when transitioning to real-time
+		                Print("Starting historical data processing...");
+		                ProcessHistoricalData();
+		                Print("Historical data processing complete, starting real-time mode");
 		                break;
 		
 		            case State.Terminated:
@@ -318,6 +323,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 		
 		    EntriesPerDirection = 1;
 		    EntryHandling       = EntryHandling.AllEntries;
+		
+		    AddPlot(Brushes.Orange, "LWPE");
+		    AddPlot(Brushes.Cyan, "Signal_Quality");
+		    AddPlot(Brushes.Yellow, "Position_Size");
+		    AddPlot(Brushes.Red, "Trend_15m");
+		    AddPlot(Brushes.Green, "Momentum_5m");
+		    AddPlot(Brushes.Blue, "Entry_1m");
 		
 		    isTerminated   = false;
 		    socketsStarted = false;
@@ -570,65 +582,178 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        // Check if we have enough bars on all timeframes
 		        int requiredBars = Math.Max(Math.Max(SenkouPeriod15, SenkouPeriod5), SenkouPeriod1) + 30;
 		        
-		        // Check primary series (1-minute)
+		        // Check primary series (1-minute) 
 		        if (CurrentBar < requiredBars)
+		        {
+		            if (EnableLogging && CurrentBar % 50 == 0)
+		                Print($"Waiting for 1m data: {CurrentBar}/{requiredBars} bars");
 		            return false;
+		        }
 		        
-		        // Basic array checks to prevent crashes
-		        if (CurrentBars.Length < 3)
+		        // Check if we have all data series
+		        if (BarsArray == null || BarsArray.Length < 3)
+		        {
+		            if (EnableLogging && CurrentBar % 50 == 0)
+		                Print($"BarsArray not ready - have {BarsArray?.Length ?? 0}, need 3 timeframes");
 		            return false;
+		        }
 		        
 		        // Check 15-minute series (BarsArray[1])
-		        if (CurrentBars[1] < (requiredBars / 15))
+		        if (CurrentBars.Length < 2 || CurrentBars[1] < (requiredBars / 15))
+		        {
+		            if (EnableLogging && CurrentBar % 50 == 0)
+		                Print($"Waiting for 15m data: {(CurrentBars.Length > 1 ? CurrentBars[1] : 0)}/{requiredBars/15} bars");
 		            return false;
+		        }
 		            
 		        // Check 5-minute series (BarsArray[2])  
-		        if (CurrentBars[2] < (requiredBars / 5))
+		        if (CurrentBars.Length < 3 || CurrentBars[2] < (requiredBars / 5))
+		        {
+		            if (EnableLogging && CurrentBar % 50 == 0)
+		                Print($"Waiting for 5m data: {(CurrentBars.Length > 2 ? CurrentBars[2] : 0)}/{requiredBars/5} bars");
 		            return false;
+		        }
 		        
-		        // Basic null checks to prevent crashes
-		        if (Closes[1] == null || Closes[2] == null)
+		        // Check that all required arrays exist
+		        if (Closes[1] == null || Closes[2] == null ||
+		            Highs[1] == null || Highs[2] == null ||
+		            Lows[1] == null || Lows[2] == null ||
+		            Volumes[1] == null || Volumes[2] == null)
+		        {
+		            if (EnableLogging && CurrentBar % 50 == 0)
+		                Print("Multi-timeframe data arrays not ready");
 		            return false;
-		            
-		        if (Highs[1] == null || Highs[2] == null)
+		        }
+		        
+		        // Check indicators are ready
+		        if (emaFast15 == null || emaSlow15 == null ||
+		            emaFast5 == null || emaSlow5 == null ||
+		            emaFast1 == null || emaSlow1 == null)
+		        {
+		            if (EnableLogging && CurrentBar % 50 == 0)
+		                Print("Multi-timeframe indicators not ready");
 		            return false;
+		        }
+		        
+		        // Additional safety check - make sure we can actually access the values
+		        try
+		        {
+		            double test15 = Closes[1][0];
+		            double test5 = Closes[2][0];
+		            double test1 = Close[0];
 		            
-		        if (Lows[1] == null || Lows[2] == null)
+		            if (test15 <= 0 || test5 <= 0 || test1 <= 0)
+		            {
+		                if (EnableLogging && CurrentBar % 50 == 0)
+		                    Print($"Invalid price data: 15m={test15}, 5m={test5}, 1m={test1}");
+		                return false;
+		            }
+		        }
+		        catch (Exception ex)
+		        {
+		            if (EnableLogging && CurrentBar % 50 == 0)
+		                Print($"Data access test failed: {ex.Message}");
 		            return false;
-		            
-		        if (Volumes[1] == null || Volumes[2] == null)
-		            return false;
-		            
+		        }
+		        
 		        return true;
 		    }
-		    catch
+		    catch (Exception ex)
 		    {
+		        if (EnableLogging)
+		            Print($"IsDataSeriesReady error: {ex.Message}");
 		        return false;
 		    }
 		}
+		
+		private void ProcessHistoricalData()
+		{
+		    if (!IsDataSeriesReady())
+		    {
+		        Print("Data series not ready for historical processing");
+		        return;
+		    }
+		    
+		    try
+		    {
+		        // Determine how many historical bars to process
+		        int barsToProcess = Math.Min(500, CurrentBar); // Process up to 500 historical bars
+		        int startBar = Math.Max(0, CurrentBar - barsToProcess);
+		        
+		        Print($"Processing {barsToProcess} historical bars from bar {startBar} to {CurrentBar}");
+		        
+		        int processedCount = 0;
+		        
+		        // Loop through historical bars
+		        for (int i = startBar; i < CurrentBar; i++)
+		        {
+		            try
+		            {
+		                // Calculate features for this historical bar
+		                var historicalFeatures = CalculateHistoricalMultiTimeframeFeatures(i);
+		                
+		                if (historicalFeatures != null)
+		                {
+		                    string payload = CreateMultiTimeframeFeaturePayload(historicalFeatures);
+		                    
+		                    // Send historical data (live = 0)
+		                    payload = payload.Replace("\"live\":1", "\"live\":0");
+		                    
+		                    TransmitData(sendSock, payload);
+		                    processedCount++;
+		                    
+		                    // Small delay to avoid overwhelming the Python side
+		                    if (processedCount % 50 == 0)
+		                    {
+		                        Thread.Sleep(10);
+		                        Print($"Processed {processedCount} historical bars...");
+		                    }
+		                }
+		            }
+		            catch (Exception ex)
+		            {
+		                if (EnableLogging)
+		                    Print($"Error processing historical bar {i}: {ex.Message}");
+		            }
+		        }
+		        
+		        Print($"Historical data processing complete: {processedCount} bars sent");
+		        
+		        // Small delay before starting real-time processing
+		        Thread.Sleep(100);
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Historical data processing error: {ex.Message}");
+		    }
+		}
 
-        private void SendMultiTimeframeFeatureVector()
-        {
-            if (sendSock?.Connected != true)
-                return;
-                
-            try
-            {
-                var features = CalculateMultiTimeframeFeatures();
-                string payload = CreateMultiTimeframeFeaturePayload(features);
-                TransmitData(sendSock, payload);
-                
-                if (EnableLogging && CurrentBar % 500 == 0)
-                {
-                    Print($"Sent 27-feature vector: 15m trend={features.Trend15m:F1}, 5m momentum={features.Momentum5m:F1}, 1m entry={features.Entry1m:F1}");
-                }
-            }
-            catch (Exception ex)
-            {
-                if (EnableLogging)
-                    Print($"Multi-timeframe feature transmission error: {ex.Message}");
-            }
-        }
+		private void SendMultiTimeframeFeatureVector()
+		{
+		    if (sendSock?.Connected != true)
+		        return;
+		        
+		    try
+		    {
+		        var features = CalculateMultiTimeframeFeatures();
+		        
+		        // CRITICAL FIX: Update lastFeatures for use in plotting and trend filtering
+		        lastFeatures = features;
+		        
+		        string payload = CreateMultiTimeframeFeaturePayload(features);
+		        TransmitData(sendSock, payload);
+		        
+		        if (EnableLogging && CurrentBar % 500 == 0)
+		        {
+		            Print($"Sent 27-feature vector: 15m trend={features.Trend15m:F1}, 5m momentum={features.Momentum5m:F1}, 1m entry={features.Entry1m:F1}");
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        if (EnableLogging)
+		            Print($"Multi-timeframe feature transmission error: {ex.Message}");
+		    }
+		}
 
         private void SendSingleTimeframeFeatureVector()
         {
@@ -647,62 +772,385 @@ namespace NinjaTrader.NinjaScript.Strategies
                     Print($"Single timeframe feature transmission error: {ex.Message}");
             }
         }
+		
+		private MultiTimeframeFeatures CalculateHistoricalMultiTimeframeFeatures(int barIndex)
+		{
+		    try
+		    {
+		        var features = new MultiTimeframeFeatures();
+		        
+		        // Check if we can safely access all required historical data
+		        if (barIndex < 0 || 
+		            CurrentBars[0] <= barIndex ||
+		            CurrentBars[1] <= (barIndex / 15) ||  // 15-minute bar index
+		            CurrentBars[2] <= (barIndex / 5))     // 5-minute bar index
+		        {
+		            return null;
+		        }
+		        
+		        // Calculate corresponding indices for other timeframes
+		        int bar15Index = Math.Min(barIndex / 15, CurrentBars[1] - 1);
+		        int bar5Index = Math.Min(barIndex / 5, CurrentBars[2] - 1);
+		        
+		        // 15-minute features (using barIndex / 15)
+		        features.Close15m = Closes[1][CurrentBars[1] - bar15Index - 1];
+		        features.NormalizedVolume15m = CalculateHistoricalNormalizedVolume(1, 20, bar15Index);
+		        features.TenkanKijunSignal15m = GetHistoricalTenkanKijunSignal(1, TenkanPeriod15, KijunPeriod15, bar15Index);
+		        features.PriceCloudSignal15m = GetHistoricalPriceCloudSignal(1, TenkanPeriod15, KijunPeriod15, SenkouPeriod15, bar15Index);
+		        features.FutureCloudSignal15m = GetHistoricalFutureCloudSignal(1, TenkanPeriod15, KijunPeriod15, SenkouPeriod15, bar15Index);
+		        features.EmaCrossSignal15m = GetHistoricalEmaCrossSignal(emaFast15, emaSlow15, bar15Index);
+		        features.TenkanMomentum15m = GetHistoricalTenkanMomentum(1, TenkanPeriod15, bar15Index);
+		        features.KijunMomentum15m = GetHistoricalKijunMomentum(1, KijunPeriod15, bar15Index);
+		        features.LWPE15m = 0.5; // Use default for historical
+		        
+		        // 5-minute features (using barIndex / 5)
+		        features.Close5m = Closes[2][CurrentBars[2] - bar5Index - 1];
+		        features.NormalizedVolume5m = CalculateHistoricalNormalizedVolume(2, 20, bar5Index);
+		        features.TenkanKijunSignal5m = GetHistoricalTenkanKijunSignal(2, TenkanPeriod5, KijunPeriod5, bar5Index);
+		        features.PriceCloudSignal5m = GetHistoricalPriceCloudSignal(2, TenkanPeriod5, KijunPeriod5, SenkouPeriod5, bar5Index);
+		        features.FutureCloudSignal5m = GetHistoricalFutureCloudSignal(2, TenkanPeriod5, KijunPeriod5, SenkouPeriod5, bar5Index);
+		        features.EmaCrossSignal5m = GetHistoricalEmaCrossSignal(emaFast5, emaSlow5, bar5Index);
+		        features.TenkanMomentum5m = GetHistoricalTenkanMomentum(2, TenkanPeriod5, bar5Index);
+		        features.KijunMomentum5m = GetHistoricalKijunMomentum(2, KijunPeriod5, bar5Index);
+		        features.LWPE5m = 0.5; // Use default for historical
+		        
+		        // 1-minute features (using barIndex directly)
+		        features.Close1m = Closes[0][CurrentBar - barIndex];
+		        features.NormalizedVolume1m = CalculateHistoricalNormalizedVolume(0, 20, barIndex);
+		        features.TenkanKijunSignal1m = GetHistoricalTenkanKijunSignal(0, TenkanPeriod1, KijunPeriod1, barIndex);
+		        features.PriceCloudSignal1m = GetHistoricalPriceCloudSignal(0, TenkanPeriod1, KijunPeriod1, SenkouPeriod1, barIndex);
+		        features.FutureCloudSignal1m = GetHistoricalFutureCloudSignal(0, TenkanPeriod1, KijunPeriod1, SenkouPeriod1, barIndex);
+		        features.EmaCrossSignal1m = GetHistoricalEmaCrossSignal(emaFast1, emaSlow1, barIndex);
+		        features.TenkanMomentum1m = GetHistoricalTenkanMomentum(0, TenkanPeriod1, barIndex);
+		        features.KijunMomentum1m = GetHistoricalKijunMomentum(0, KijunPeriod1, barIndex);
+		        features.LWPE1m = 0.5; // Use default for historical
+		        
+		        // Calculate multi-timeframe alignment signals
+		        features.Trend15m = CalculateTrendAlignment15m(features);
+		        features.Momentum5m = CalculateMomentumAlignment5m(features);
+		        features.Entry1m = CalculateEntryAlignment1m(features);
+		        
+		        features.IsLive = false; // Historical data
+		        
+		        return features;
+		    }
+		    catch (Exception ex)
+		    {
+		        if (EnableLogging)
+		            Print($"Historical feature calculation error for bar {barIndex}: {ex.Message}");
+		        return null;
+		    }
+		}
+		
+		private double CalculateHistoricalNormalizedVolume(int seriesIndex, int lookback, int barIndex)
+		{
+		    try
+		    {
+		        if (barIndex < lookback || CurrentBars[seriesIndex] <= barIndex)
+		            return 0;
+		            
+		        double currentVol = Volumes[seriesIndex][barIndex];
+		        double avgVol = 0;
+		        
+		        for (int i = 0; i < lookback; i++)
+		        {
+		            if (barIndex + i < CurrentBars[seriesIndex])
+		                avgVol += Volumes[seriesIndex][barIndex + i];
+		        }
+		        avgVol /= lookback;
+		        
+		        return avgVol != 0 ? (currentVol - avgVol) / avgVol : 0;
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
+		
+		private double GetHistoricalTenkanKijunSignal(int seriesIndex, int tenkanPeriod, int kijunPeriod, int barIndex)
+		{
+		    try
+		    {
+		        if (barIndex < Math.Max(tenkanPeriod, kijunPeriod) || CurrentBars[seriesIndex] <= barIndex)
+		            return 0;
+		            
+		        double tenkanHigh = MAX(Highs[seriesIndex], tenkanPeriod)[barIndex];
+		        double tenkanLow = MIN(Lows[seriesIndex], tenkanPeriod)[barIndex];
+		        double tenkan = (tenkanHigh + tenkanLow) / 2;
+		        
+		        double kijunHigh = MAX(Highs[seriesIndex], kijunPeriod)[barIndex];
+		        double kijunLow = MIN(Lows[seriesIndex], kijunPeriod)[barIndex];
+		        double kijun = (kijunHigh + kijunLow) / 2;
+		        
+		        if (tenkan == 0 || kijun == 0)
+		            return 0;
+		            
+		        double diff = tenkan - kijun;
+		        double threshold = Closes[seriesIndex][barIndex] * 0.001;
+		        
+		        if (diff > threshold)
+		            return 1.0;
+		        else if (diff < -threshold)
+		            return -1.0;
+		        else
+		            return 0.0;
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
+		
+		private double GetHistoricalEmaCrossSignal(EMA emaFast, EMA emaSlow, int barIndex)
+		{
+		    try
+		    {
+		        if (emaFast == null || emaSlow == null || barIndex >= emaFast.Count || barIndex >= emaSlow.Count)
+		            return 0;
+		            
+		        double fastEma = emaFast[barIndex];
+		        double slowEma = emaSlow[barIndex];
+		        
+		        if (fastEma == 0 || slowEma == 0)
+		            return 0;
+		            
+		        double diff = fastEma - slowEma;
+		        double threshold = Math.Abs(fastEma) * 0.0005;
+		        
+		        if (diff > threshold)
+		            return 1.0;
+		        else if (diff < -threshold)
+		            return -1.0;
+		        else
+		            return 0.0;
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
+		
+		private double GetHistoricalPriceCloudSignal(int seriesIndex, int tenkanPeriod, int kijunPeriod, int senkouPeriod, int barIndex)
+		{
+		    try
+		    {
+		        if (barIndex < senkouPeriod + 26 || CurrentBars[seriesIndex] <= barIndex)
+		            return 0;
+		            
+		        // Calculate cloud components 26 bars ago from the reference point
+		        int cloudBarIndex = barIndex + 26;
+		        if (cloudBarIndex >= CurrentBars[seriesIndex])
+		            return 0;
+		            
+		        double tenkanHigh26 = MAX(Highs[seriesIndex], tenkanPeriod)[cloudBarIndex];
+		        double tenkanLow26 = MIN(Lows[seriesIndex], tenkanPeriod)[cloudBarIndex];
+		        double tenkan26 = (tenkanHigh26 + tenkanLow26) / 2;
+		        
+		        double kijunHigh26 = MAX(Highs[seriesIndex], kijunPeriod)[cloudBarIndex];
+		        double kijunLow26 = MIN(Lows[seriesIndex], kijunPeriod)[cloudBarIndex];
+		        double kijun26 = (kijunHigh26 + kijunLow26) / 2;
+		        
+		        double senkouA = (tenkan26 + kijun26) / 2;
+		        
+		        double senkouBHigh26 = MAX(Highs[seriesIndex], senkouPeriod)[cloudBarIndex];
+		        double senkouBLow26 = MIN(Lows[seriesIndex], senkouPeriod)[cloudBarIndex];
+		        double senkouB = (senkouBHigh26 + senkouBLow26) / 2;
+		        
+		        if (senkouA == 0 || senkouB == 0)
+		            return 0;
+		            
+		        double cloudTop = Math.Max(senkouA, senkouB);
+		        double cloudBottom = Math.Min(senkouA, senkouB);
+		        double currentPrice = Closes[seriesIndex][barIndex];
+		        double buffer = currentPrice * 0.002;
+		        
+		        if (currentPrice > cloudTop + buffer)
+		            return 1.0;
+		        else if (currentPrice < cloudBottom - buffer)
+		            return -1.0;
+		        else
+		            return 0.0;
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
+		
+		private double GetHistoricalFutureCloudSignal(int seriesIndex, int tenkanPeriod, int kijunPeriod, int senkouPeriod, int barIndex)
+		{
+		    try
+		    {
+		        if (barIndex < senkouPeriod || CurrentBars[seriesIndex] <= barIndex)
+		            return 0;
+		            
+		        double tenkanHigh = MAX(Highs[seriesIndex], tenkanPeriod)[barIndex];
+		        double tenkanLow = MIN(Lows[seriesIndex], tenkanPeriod)[barIndex];
+		        double tenkan = (tenkanHigh + tenkanLow) / 2;
+		        
+		        double kijunHigh = MAX(Highs[seriesIndex], kijunPeriod)[barIndex];
+		        double kijunLow = MIN(Lows[seriesIndex], kijunPeriod)[barIndex];
+		        double kijun = (kijunHigh + kijunLow) / 2;
+		        
+		        double futureA = (tenkan + kijun) / 2;
+		        
+		        double futureBHigh = MAX(Highs[seriesIndex], senkouPeriod)[barIndex];
+		        double futureBLow = MIN(Lows[seriesIndex], senkouPeriod)[barIndex];
+		        double futureB = (futureBHigh + futureBLow) / 2;
+		        
+		        if (futureA == 0 || futureB == 0)
+		            return 0;
+		            
+		        double diff = futureA - futureB;
+		        double avgPrice = (futureA + futureB) / 2;
+		        double threshold = avgPrice * 0.0001;
+		        
+		        if (diff > threshold)
+		            return 1.0;
+		        else if (diff < -threshold)
+		            return -1.0;
+		        else
+		            return 0.0;
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
+		
+		private double GetHistoricalTenkanMomentum(int seriesIndex, int tenkanPeriod, int barIndex)
+		{
+		    try
+		    {
+		        if (barIndex < tenkanPeriod + 8 || CurrentBars[seriesIndex] <= barIndex + 5)
+		            return 0;
+		            
+		        // Current Tenkan at barIndex
+		        double currentTenkanHigh = MAX(Highs[seriesIndex], tenkanPeriod)[barIndex];
+		        double currentTenkanLow = MIN(Lows[seriesIndex], tenkanPeriod)[barIndex];
+		        double currentTenkan = (currentTenkanHigh + currentTenkanLow) / 2;
+		        
+		        // Previous Tenkan 5 bars earlier
+		        double previousTenkanHigh = MAX(Highs[seriesIndex], tenkanPeriod)[barIndex + 5];
+		        double previousTenkanLow = MIN(Lows[seriesIndex], tenkanPeriod)[barIndex + 5];
+		        double previousTenkan = (previousTenkanHigh + previousTenkanLow) / 2;
+		        
+		        if (currentTenkan == 0 || previousTenkan == 0)
+		            return 0;
+		            
+		        double change = currentTenkan - previousTenkan;
+		        double threshold = currentTenkan * 0.0005;
+		        
+		        if (change > threshold)
+		            return 1.0;
+		        else if (change < -threshold)
+		            return -1.0;
+		        else
+		            return 0.0;
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
+		
+		private double GetHistoricalKijunMomentum(int seriesIndex, int kijunPeriod, int barIndex)
+		{
+		    try
+		    {
+		        if (barIndex < kijunPeriod + 5 || CurrentBars[seriesIndex] <= barIndex + 3)
+		            return 0;
+		            
+		        // Current Kijun at barIndex
+		        double currentKijunHigh = MAX(Highs[seriesIndex], kijunPeriod)[barIndex];
+		        double currentKijunLow = MIN(Lows[seriesIndex], kijunPeriod)[barIndex];
+		        double currentKijun = (currentKijunHigh + currentKijunLow) / 2;
+		        
+		        // Previous Kijun 3 bars earlier
+		        double previousKijunHigh = MAX(Highs[seriesIndex], kijunPeriod)[barIndex + 3];
+		        double previousKijunLow = MIN(Lows[seriesIndex], kijunPeriod)[barIndex + 3];
+		        double previousKijun = (previousKijunHigh + previousKijunLow) / 2;
+		        
+		        if (currentKijun == 0 || previousKijun == 0)
+		            return 0;
+		            
+		        double change = currentKijun - previousKijun;
+		        double threshold = currentKijun * 0.0001;
+		        
+		        if (change > threshold)
+		            return 1.0;
+		        else if (change < -threshold)
+		            return -1.0;
+		        else
+		            return 0.0;
+		    }
+		    catch
+		    {
+		        return 0;
+		    }
+		}
 
-        private MultiTimeframeFeatures CalculateMultiTimeframeFeatures()
-        {
-            try
-            {
-                var features = new MultiTimeframeFeatures();
-                
-                // 15-minute features (trend context)
-                features.Close15m = Closes[1][0];
-                features.NormalizedVolume15m = CalculateNormalizedVolume(1, 20);
-                features.TenkanKijunSignal15m = GetTenkanKijunSignal(1, TenkanPeriod15, KijunPeriod15);
-                features.PriceCloudSignal15m = GetPriceCloudSignal(1, TenkanPeriod15, KijunPeriod15, SenkouPeriod15);
-                features.FutureCloudSignal15m = GetFutureCloudSignal(1, TenkanPeriod15, KijunPeriod15, SenkouPeriod15);
-                features.EmaCrossSignal15m = GetEmaCrossSignal(emaFast15, emaSlow15);
-                features.TenkanMomentum15m = GetTenkanMomentum(1, TenkanPeriod15);
-                features.KijunMomentum15m = GetKijunMomentum(1, KijunPeriod15);
-                features.LWPE15m = currentLWPE; // Use current LWPE for all timeframes
-                
-                // 5-minute features (momentum context)
-                features.Close5m = Closes[2][0];
-                features.NormalizedVolume5m = CalculateNormalizedVolume(2, 20);
-                features.TenkanKijunSignal5m = GetTenkanKijunSignal(2, TenkanPeriod5, KijunPeriod5);
-                features.PriceCloudSignal5m = GetPriceCloudSignal(2, TenkanPeriod5, KijunPeriod5, SenkouPeriod5);
-                features.FutureCloudSignal5m = GetFutureCloudSignal(2, TenkanPeriod5, KijunPeriod5, SenkouPeriod5);
-                features.EmaCrossSignal5m = GetEmaCrossSignal(emaFast5, emaSlow5);
-                features.TenkanMomentum5m = GetTenkanMomentum(2, TenkanPeriod5);
-                features.KijunMomentum5m = GetKijunMomentum(2, KijunPeriod5);
-                features.LWPE5m = currentLWPE;
-                
-                // 1-minute features (entry timing)
-                features.Close1m = Close[0];
-                features.NormalizedVolume1m = CalculateNormalizedVolume(0, 20);
-                features.TenkanKijunSignal1m = GetTenkanKijunSignal(0, TenkanPeriod1, KijunPeriod1);
-                features.PriceCloudSignal1m = GetPriceCloudSignal(0, TenkanPeriod1, KijunPeriod1, SenkouPeriod1);
-                features.FutureCloudSignal1m = GetFutureCloudSignal(0, TenkanPeriod1, KijunPeriod1, SenkouPeriod1);
-                features.EmaCrossSignal1m = GetEmaCrossSignal(emaFast1, emaSlow1);
-                features.TenkanMomentum1m = GetTenkanMomentum(0, TenkanPeriod1);
-                features.KijunMomentum1m = GetKijunMomentum(0, KijunPeriod1);
-                features.LWPE1m = currentLWPE;
-                
-                // Calculate multi-timeframe alignment signals
-                features.Trend15m = CalculateTrendAlignment15m(features);
-                features.Momentum5m = CalculateMomentumAlignment5m(features);
-                features.Entry1m = CalculateEntryAlignment1m(features);
-                
-                features.IsLive = State == State.Realtime;
-                
-                return features;
-            }
-            catch (Exception ex)
-            {
-                if (EnableLogging)
-                    Print($"Multi-timeframe feature calculation error: {ex.Message}");
-                return GetDefaultMultiTimeframeFeatures();
-            }
-        }
+		private MultiTimeframeFeatures CalculateMultiTimeframeFeatures()
+		{
+		    try
+		    {
+		        var features = new MultiTimeframeFeatures();
+		        
+		        // Ensure we have enough data on all timeframes
+		        if (!IsDataSeriesReady())
+		        {
+		            return GetDefaultMultiTimeframeFeatures();
+		        }
+		        
+		        // 15-minute features (BarsArray[1]) - TREND CONTEXT
+		        features.Close15m = Closes[1][0];
+		        features.NormalizedVolume15m = CalculateNormalizedVolume(1, 20);
+		        features.TenkanKijunSignal15m = GetTenkanKijunSignal(1, TenkanPeriod15, KijunPeriod15);
+		        features.PriceCloudSignal15m = GetPriceCloudSignal(1, TenkanPeriod15, KijunPeriod15, SenkouPeriod15);
+		        features.FutureCloudSignal15m = GetFutureCloudSignal(1, TenkanPeriod15, KijunPeriod15, SenkouPeriod15);
+		        features.EmaCrossSignal15m = GetEmaCrossSignal(emaFast15, emaSlow15);
+		        features.TenkanMomentum15m = GetTenkanMomentum(1, TenkanPeriod15);
+		        features.KijunMomentum15m = GetKijunMomentum(1, KijunPeriod15);
+		        features.LWPE15m = currentLWPE; // Use current LWPE for all timeframes
+		        
+		        // 5-minute features (BarsArray[2]) - MOMENTUM CONTEXT
+		        features.Close5m = Closes[2][0];
+		        features.NormalizedVolume5m = CalculateNormalizedVolume(2, 20);
+		        features.TenkanKijunSignal5m = GetTenkanKijunSignal(2, TenkanPeriod5, KijunPeriod5);
+		        features.PriceCloudSignal5m = GetPriceCloudSignal(2, TenkanPeriod5, KijunPeriod5, SenkouPeriod5);
+		        features.FutureCloudSignal5m = GetFutureCloudSignal(2, TenkanPeriod5, KijunPeriod5, SenkouPeriod5);
+		        features.EmaCrossSignal5m = GetEmaCrossSignal(emaFast5, emaSlow5);
+		        features.TenkanMomentum5m = GetTenkanMomentum(2, TenkanPeriod5);
+		        features.KijunMomentum5m = GetKijunMomentum(2, KijunPeriod5);
+		        features.LWPE5m = currentLWPE;
+		        
+		        // 1-minute features (BarsArray[0]) - ENTRY TIMING
+		        features.Close1m = Close[0];
+		        features.NormalizedVolume1m = CalculateNormalizedVolume(0, 20);
+		        features.TenkanKijunSignal1m = GetTenkanKijunSignal(0, TenkanPeriod1, KijunPeriod1);
+		        features.PriceCloudSignal1m = GetPriceCloudSignal(0, TenkanPeriod1, KijunPeriod1, SenkouPeriod1);
+		        features.FutureCloudSignal1m = GetFutureCloudSignal(0, TenkanPeriod1, KijunPeriod1, SenkouPeriod1);
+		        features.EmaCrossSignal1m = GetEmaCrossSignal(emaFast1, emaSlow1);
+		        features.TenkanMomentum1m = GetTenkanMomentum(0, TenkanPeriod1);
+		        features.KijunMomentum1m = GetKijunMomentum(0, KijunPeriod1);
+		        features.LWPE1m = currentLWPE;
+		        
+		        // Calculate multi-timeframe alignment signals
+		        features.Trend15m = CalculateTrendAlignment15m(features);
+		        features.Momentum5m = CalculateMomentumAlignment5m(features);
+		        features.Entry1m = CalculateEntryAlignment1m(features);
+		        
+		        features.IsLive = State == State.Realtime;
+		        
+		        return features;
+		    }
+		    catch (Exception ex)
+		    {
+		        if (EnableLogging)
+		            Print($"Multi-timeframe feature calculation error: {ex.Message}");
+		        return GetDefaultMultiTimeframeFeatures();
+		    }
+		}
 
         private double CalculateTrendAlignment15m(MultiTimeframeFeatures features)
         {
@@ -1104,41 +1552,132 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
 
-        private string CreateMultiTimeframeFeaturePayload(MultiTimeframeFeatures features)
-        {
-            return string.Format(CultureInfo.InvariantCulture,
-                @"{{
-                    ""features"":[
-                        {0:F6},{1:F6},{2:F1},{3:F1},{4:F1},{5:F1},{6:F1},{7:F1},{8:F6},
-                        {9:F6},{10:F6},{11:F1},{12:F1},{13:F1},{14:F1},{15:F1},{16:F1},{17:F6},
-                        {18:F6},{19:F6},{20:F1},{21:F1},{22:F1},{23:F1},{24:F1},{25:F1},{26:F6}
-                    ],
-                    ""live"":{27},
-                    ""timeframe_alignment"":{{
-                        ""trend_15m"":{28:F3},
-                        ""momentum_5m"":{29:F3},
-                        ""entry_1m"":{30:F3}
-                    }}
-                }}",
-                // 15-minute features (indices 0-8)
-                features.Close15m, features.NormalizedVolume15m, features.TenkanKijunSignal15m,
-                features.PriceCloudSignal15m, features.FutureCloudSignal15m, features.EmaCrossSignal15m,
-                features.TenkanMomentum15m, features.KijunMomentum15m, features.LWPE15m,
-                
-                // 5-minute features (indices 9-17)
-                features.Close5m, features.NormalizedVolume5m, features.TenkanKijunSignal5m,
-                features.PriceCloudSignal5m, features.FutureCloudSignal5m, features.EmaCrossSignal5m,
-                features.TenkanMomentum5m, features.KijunMomentum5m, features.LWPE5m,
-                
-                // 1-minute features (indices 18-26)
-                features.Close1m, features.NormalizedVolume1m, features.TenkanKijunSignal1m,
-                features.PriceCloudSignal1m, features.FutureCloudSignal1m, features.EmaCrossSignal1m,
-                features.TenkanMomentum1m, features.KijunMomentum1m, features.LWPE1m,
-                
-                // Meta information
-                features.IsLive ? 1 : 0,
-                features.Trend15m, features.Momentum5m, features.Entry1m);
-        }
+		private string CreateMultiTimeframeFeaturePayload(MultiTimeframeFeatures features)
+		{
+		    try
+		    {
+		        // Validate all features before creating JSON
+		        var validatedFeatures = new double[]
+		        {
+		            // 15-minute features (indices 0-8)
+		            ValidatePrice(features.Close15m), 
+		            ValidateFloat(features.NormalizedVolume15m), 
+		            ValidateSignal(features.TenkanKijunSignal15m),
+		            ValidateSignal(features.PriceCloudSignal15m), 
+		            ValidateSignal(features.FutureCloudSignal15m), 
+		            ValidateSignal(features.EmaCrossSignal15m),
+		            ValidateSignal(features.TenkanMomentum15m), 
+		            ValidateSignal(features.KijunMomentum15m), 
+		            ValidateLWPE(features.LWPE15m),
+		            
+		            // 5-minute features (indices 9-17)
+		            ValidatePrice(features.Close5m), 
+		            ValidateFloat(features.NormalizedVolume5m), 
+		            ValidateSignal(features.TenkanKijunSignal5m),
+		            ValidateSignal(features.PriceCloudSignal5m), 
+		            ValidateSignal(features.FutureCloudSignal5m), 
+		            ValidateSignal(features.EmaCrossSignal5m),
+		            ValidateSignal(features.TenkanMomentum5m), 
+		            ValidateSignal(features.KijunMomentum5m), 
+		            ValidateLWPE(features.LWPE5m),
+		            
+		            // 1-minute features (indices 18-26)
+		            ValidatePrice(features.Close1m), 
+		            ValidateFloat(features.NormalizedVolume1m), 
+		            ValidateSignal(features.TenkanKijunSignal1m),
+		            ValidateSignal(features.PriceCloudSignal1m), 
+		            ValidateSignal(features.FutureCloudSignal1m), 
+		            ValidateSignal(features.EmaCrossSignal1m),
+		            ValidateSignal(features.TenkanMomentum1m), 
+		            ValidateSignal(features.KijunMomentum1m), 
+		            ValidateLWPE(features.LWPE1m)
+		        };
+		
+		        // Double-check we have exactly 27 features
+		        if (validatedFeatures.Length != 27)
+		        {
+		            if (EnableLogging)
+		                Print($"ERROR: Feature array has {validatedFeatures.Length} elements, expected 27");
+		            return "{}"; // Return empty JSON to prevent crash
+		        }
+		
+		        // Create feature array string manually to ensure proper formatting
+		        var featureStrings = new string[27];
+		        for (int i = 0; i < 27; i++)
+		        {
+		            if (i >= 2 && i <= 7 || i >= 11 && i <= 16 || i >= 20 && i <= 25) // Signal indices
+		            {
+		                featureStrings[i] = ((int)validatedFeatures[i]).ToString();
+		            }
+		            else if (i == 8 || i == 17 || i == 26) // LWPE indices
+		            {
+		                featureStrings[i] = validatedFeatures[i].ToString("F6", CultureInfo.InvariantCulture);
+		            }
+		            else // Price and volume indices
+		            {
+		                featureStrings[i] = validatedFeatures[i].ToString("F6", CultureInfo.InvariantCulture);
+		            }
+		        }
+		
+		        string featuresJson = "[" + string.Join(",", featureStrings) + "]";
+		
+		        return string.Format(CultureInfo.InvariantCulture,
+		            @"{{
+		                ""features"":{0},
+		                ""live"":{1},
+		                ""timeframe_alignment"":{{
+		                    ""trend_15m"":{2:F3},
+		                    ""momentum_5m"":{3:F3},
+		                    ""entry_1m"":{4:F3}
+		                }}
+		            }}",
+		            featuresJson,
+		            features.IsLive ? 1 : 0,
+		            ValidateFloat(features.Trend15m), 
+		            ValidateFloat(features.Momentum5m), 
+		            ValidateFloat(features.Entry1m));
+		    }
+		    catch (Exception ex)
+		    {
+		        if (EnableLogging)
+		            Print($"Feature payload creation error: {ex.Message}");
+		        return "{}"; // Return empty JSON to prevent crash
+		    }
+		}
+		
+		private double ValidatePrice(double price)
+		{
+		    return (price > 0) ? price : Close[0];
+		}
+		
+		private double ValidateFloat(double value)
+		{
+		    return double.IsNaN(value) || double.IsInfinity(value) ? 0.0 : value;
+		}
+		
+		private double ValidateSignal(double signal)
+		{
+		    if (double.IsNaN(signal) || double.IsInfinity(signal))
+		        return 0.0;
+		    
+		    // Use exact integer comparison for ternary signals
+		    int roundedSignal = (int)Math.Round(signal);
+		    
+		    if (roundedSignal > 1)
+		        return 1.0;
+		    else if (roundedSignal < -1)
+		        return -1.0;
+		    else
+		        return (double)roundedSignal; // Will be -1.0, 0.0, or 1.0
+		}
+		
+		private double ValidateLWPE(double lwpe)
+		{
+		    if (double.IsNaN(lwpe) || double.IsInfinity(lwpe))
+		        return 0.5;
+		    
+		    return Math.Max(0.0, Math.Min(1.0, lwpe));
+		}
 
         // Legacy single timeframe support
         private FeatureVector CalculateFeatures()
