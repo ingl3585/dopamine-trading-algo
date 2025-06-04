@@ -253,89 +253,75 @@ namespace NinjaTrader.NinjaScript.Strategies
         [NinjaScriptProperty]
         [Display(Name = "Enable Multi-Timeframe", Description = "Enable multi-timeframe analysis", Order = 31, GroupName = "Multi-Timeframe")]
         public bool EnableMultiTimeframe { get; set; } = true;
+		
+		[NinjaScriptProperty]
+		[Range(0, 60)]
+		[Display(Name = "Warm‑up Bars", Description = "How many 1‑min bars to wait after real‑time starts", Order = 99, GroupName = "Debug")]
+		public int WarmUpBars { get; set; } = 5;   // set 0 for immediate trading
         
         #endregion
         
         #region State Management
         
-        protected override void OnStateChange()
-        {
-            try
-            {
-                switch (State)
-                {
-                    case State.SetDefaults:
-                        ConfigureDefaults();
-                        break;
-                        
-                    case State.DataLoaded:
-                        InitializeMultiTimeframeIndicators();
-                        break;
-                        
-                    case State.Historical:
-                        if (!socketsStarted)
-                        {
-                            InitializeSockets();
-                        }
-                        break;
-                        
-                    case State.Realtime:
-                        if (!socketsStarted)
-                        {
-                            InitializeSockets();
-                        }
-                        strategyStartTime = DateTime.Now;
-                        Print($"Multi-Timeframe RLTrader #{instanceId} started - 27 feature analysis active");
-                        LogMultiTimeframeParameters();
-                        break;
-                        
-                    case State.Terminated:
-                        Cleanup();
-                        break;
-                }
-            }
-            catch (Exception ex)
-            {
-                Print($"Instance #{instanceId} OnStateChange error in {State}: {ex.Message}");
-            }
-        }
+		protected override void OnStateChange()
+		{
+		    try
+		    {
+		        switch (State)
+		        {
+		            case State.SetDefaults:
+		                ConfigureDefaults();      // ← **no AddDataSeries here anymore**
+		                break;
+		
+		            case State.Configure:        // ← NEW: put extra series & bars‑to‑trade here
+		                AddDataSeries(BarsPeriodType.Minute, 15);
+		                AddDataSeries(BarsPeriodType.Minute, 5);
+		
+		                BarsRequiredToTrade = 1;  // instant start; rely on WarmUpBars instead
+		                break;
+		
+		            case State.DataLoaded:
+		                InitializeMultiTimeframeIndicators();
+		                break;
+		
+		            case State.Historical:
+		                if (!socketsStarted) InitializeSockets();
+		                break;
+		
+		            case State.Realtime:
+		                if (!socketsStarted) InitializeSockets();
+		                strategyStartTime = DateTime.Now;
+		                Print($"Multi‑Timeframe RLTrader #{instanceId} started");
+		                LogMultiTimeframeParameters();
+		                break;
+		
+		            case State.Terminated:
+		                Cleanup();
+		                break;
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Instance #{instanceId} OnStateChange error in {State}: {ex.Message}");
+		    }
+		}
         
 		private void ConfigureDefaults()
 		{
-		    instanceId = ++instanceCounter;
-		    
-		    Name = "RLTraderMultiTimeframe";
-		    Description = "Multi-Timeframe RL Trading Strategy with 27 Features v1.0";
-		    Calculate = Calculate.OnBarClose;
-		    
-		    // Chart configuration
-		    IsOverlay = false;
+		    instanceId   = ++instanceCounter;
+		    Name         = "RLTraderMultiTimeframe";
+		    Description  = "Multi‑TF RL Trader — instant start";
+		    Calculate    = Calculate.OnBarClose;
+		
+		    IsOverlay        = false;
 		    DisplayInDataBox = true;
-		    
-		    // Multi-timeframe data series
-		    AddDataSeries(BarsPeriodType.Minute, 15);  // 15-minute data
-		    AddDataSeries(BarsPeriodType.Minute, 5);   // 5-minute data
-		    // Primary series is 1-minute (added automatically)
-		    
-		    // Enhanced plots for multi-timeframe analysis
-		    AddPlot(Brushes.Blue, "LWPE");
-		    AddPlot(Brushes.Green, "Signal Quality");
-		    AddPlot(Brushes.Orange, "Position Size");
-		    AddPlot(Brushes.Red, "15m Trend");
-		    AddPlot(Brushes.Yellow, "5m Momentum");
-		    AddPlot(Brushes.Cyan, "1m Entry");
-		    
-		    // CRITICAL: Set BarsRequiredToTrade high enough for all timeframes
-		    int maxPeriod = Math.Max(Math.Max(SenkouPeriod15, SenkouPeriod5), SenkouPeriod1);
-		    BarsRequiredToTrade = maxPeriod + 50; // Extra buffer for safety
-		    
+		
 		    EntriesPerDirection = 1;
-		    EntryHandling = EntryHandling.AllEntries;
-		    
-		    // Reset state
-		    isTerminated = false;
+		    EntryHandling       = EntryHandling.AllEntries;
+		
+		    isTerminated   = false;
 		    socketsStarted = false;
-		    running = false;
+		    running        = false;
 		    ResetPositionTracking();
 		}
 
@@ -534,17 +520,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
-		        // CRITICAL: Only process on primary timeframe (1-minute)
-		        if (BarsInProgress != 0)
-		            return;
-		            
-		        // SAFETY CHECK: Ensure all data series have sufficient data
-		        if (!IsDataSeriesReady())
-		        {
-		            if (EnableLogging && CurrentBar % 100 == 0)
-		                Print($"Data series not ready: Bar {CurrentBar}");
-		            return;
-		        }
+				if (BarsInProgress != 0 || State != State.Realtime || CurrentBar < WarmUpBars)
+				    return;
 		            
 		        UpdatePlots();
 		        
@@ -1414,11 +1391,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private void UpdatePlots()
 		{
 		    try
-		    {
-		        // SAFETY: Only update plots if data is ready
-		        if (!IsDataSeriesReady())
-		            return;
-		            
+		    {       
 		        lock (lwpeLock)
 		        {
 		            Values[0][0] = currentLWPE;
@@ -1457,13 +1430,13 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    }
 		}
         
-        private bool IsReadyForTrading()
-        {
-            int maxPeriod = Math.Max(Math.Max(SenkouPeriod15, SenkouPeriod5), SenkouPeriod1);
-            return CurrentBar >= maxPeriod && 
-                   socketsStarted && 
-                   running;
-        }
+		private bool IsReadyForTrading()
+		{
+		    return State == State.Realtime
+		           && socketsStarted
+		           && running
+		           && CurrentBar >= WarmUpBars;
+		}
 
         private void ProcessLatestSignal()
         {

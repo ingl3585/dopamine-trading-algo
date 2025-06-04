@@ -55,45 +55,38 @@ class LiveFeatureHandler:
             self._log_periodic_summary()
 
     def _validate_feature_vector(self, feat):
-        """Enhanced validation for ternary signals"""
+        """
+        Accept both the old 9‑field and the new 27‑field (3×9) vectors.
+        For 27‑field input we just sanity‑check the *entry (1‑min) slice*
+        – indices 18‑26 – because that’s what drives the RL right now.
+        """
         try:
-            if not isinstance(feat, (list, tuple)) or len(feat) != 9:
+            if not isinstance(feat, (list, tuple)):
                 return False
-            
-            # Check for reasonable value ranges
-            close = feat[0]
-            if close <= 0:
+
+            if len(feat) == 27:                       # ← new multi‑TF vector
+                entry_slice = feat[18:27]             # 1‑min part
+            elif len(feat) == 9:                      # ← old single‑TF vector
+                entry_slice = feat
+            else:
                 return False
-            
-            # Check LWPE is in reasonable range
-            lwpe = feat[8]
-            if not (0 <= lwpe <= 1):
-                log.debug(f"LWPE out of range: {lwpe}")
-                feat[8] = max(0, min(1, lwpe))  # Auto-correct
-            
-            # Enhanced signal validation - expect ternary signals
-            signal_indices = [2, 3, 4, 5, 6, 7]
-            signal_names = ['tenkan_kijun', 'price_cloud', 'future_cloud', 'ema_cross', 'tenkan_momentum', 'kijun_momentum']
-            
-            neutral_count = 0
-            for i, name in zip(signal_indices, signal_names):
-                signal_val = round(feat[i])  # Round for precision issues
-                
-                if signal_val not in [-1, 0, 1]:
-                    log.warning(f"Signal {name} out of range: {feat[i]}, clamping")
-                    signal_val = max(-1, min(1, signal_val))
-                
-                feat[i] = float(signal_val)
-                
-                if signal_val == 0:
-                    neutral_count += 1
-            
-            # Log if we see good neutral signal distribution
-            if neutral_count > 0:
-                log.debug(f"Received {neutral_count} neutral signals - enhanced signal processing active")
-            
+
+            close, _, *signals, lwpe = entry_slice
+            if close <= 0 or not (0 <= lwpe <= 1):
+                return False
+
+            # clamp ternary signals in place
+            for i in range(2, 8):                     # the six signal slots
+                v = round(entry_slice[i])
+                entry_slice[i] = float(max(-1, min(1, v)))
+
+            # shove the cleaned slice back into feat if we took one
+            if len(feat) == 27:
+                feat[18:27] = entry_slice
+            else:
+                feat[:] = entry_slice
+
             return True
-            
         except Exception as e:
             log.warning(f"Feature validation error: {e}")
             return False
@@ -139,21 +132,26 @@ class LiveFeatureHandler:
             self.trainer.train_batch()
 
     def _extract_signal_features(self, feat):
-        """Extract signal features from feature vector for quality analysis"""
+        """
+        Always pull from the 1‑minute slice when we get a 27‑field vector.
+        """
         try:
-            if len(feat) < 9:
+            if len(feat) == 27:
+                feat = feat[18:27]
+
+            if len(feat) != 9:
                 return None
-            
+
             return {
-                'close': feat[0],
+                'close':             feat[0],
                 'normalized_volume': feat[1],
-                'tenkan_kijun': feat[2],
-                'price_cloud': feat[3],
-                'future_cloud': feat[4],
-                'ema_cross': feat[5],
-                'tenkan_momentum': feat[6],
-                'kijun_momentum': feat[7],
-                'lwpe': feat[8]
+                'tenkan_kijun':      feat[2],
+                'price_cloud':       feat[3],
+                'future_cloud':      feat[4],
+                'ema_cross':         feat[5],
+                'tenkan_momentum':   feat[6],
+                'kijun_momentum':    feat[7],
+                'lwpe':              feat[8],
             }
         except Exception as e:
             log.warning(f"Signal feature extraction failed: {e}")
