@@ -2,6 +2,7 @@
 
 import os
 import logging
+import time
 import pandas as pd
 
 log = logging.getLogger(__name__)
@@ -33,18 +34,27 @@ class FeatureLogger:
             "reward"
         ]
         
-        # Verify we have exactly 28 columns (1 timestamp + 27 features + 1 reward)
-        expected_columns = 28
+        # Verify we have exactly 29 columns (1 timestamp + 27 features + 1 reward)
+        expected_columns = 29
         if len(self.columns) != expected_columns:
             log.error(f"Column count mismatch: have {len(self.columns)}, expected {expected_columns}")
             log.error(f"Columns: {self.columns}")
+        else:
+            log.info(f"Feature logger initialized with {len(self.columns)} columns for 27-feature multi-timeframe format")
 
     def append(self, row):
-        """Append a new feature row"""
+        """Append a new feature row with enhanced validation"""
         expected_length = len(self.columns)
         
         if len(row) != expected_length:
             log.warning(f"Row length mismatch: expected {expected_length}, got {len(row)}")
+            
+            # Debug: show what we actually received
+            if log.isEnabledFor(logging.DEBUG):
+                log.debug(f"Expected columns: {self.columns}")
+                log.debug(f"Received row length: {len(row)}")
+                if len(row) > 0:
+                    log.debug(f"First few row elements: {row[:min(5, len(row))]}")
             
             # Try to handle the mismatch gracefully
             if len(row) < expected_length:
@@ -52,17 +62,66 @@ class FeatureLogger:
                 padded_row = list(row) + [0.0] * (expected_length - len(row))
                 log.info(f"Padded row from {len(row)} to {len(padded_row)} elements")
                 row = padded_row
-            else:
+            elif len(row) > expected_length:
                 # Truncate extra elements
-                row = row[:expected_length]
-                log.info(f"Truncated row from {len(row)} to {expected_length} elements")
+                truncated_row = row[:expected_length]
+                log.info(f"Truncated row from {len(row)} to {len(truncated_row)} elements")
+                row = truncated_row
+        
+        # Validate the row content
+        try:
+            # Check timestamp
+            if not isinstance(row[0], (int, float)) or row[0] <= 0:
+                log.warning(f"Invalid timestamp: {row[0]}")
+                row[0] = time.time()
+            
+            # Check features (elements 1-27)
+            for i in range(1, 28):
+                if i < len(row):
+                    if not isinstance(row[i], (int, float)):
+                        log.warning(f"Non-numeric feature at index {i}: {row[i]}")
+                        row[i] = 0.0
+                    elif i in [1, 10, 19]:  # Price indices (close_15m, close_5m, close_1m)
+                        # Price values can be large (e.g., 21000+), so use reasonable bounds
+                        if not (0 <= row[i] <= 100000):
+                            log.debug(f"Price value out of bounds at index {i}: {row[i]} (clamping)")
+                            row[i] = max(0, min(100000, row[i]))
+                    elif i in [2, 3, 4, 5, 6, 7, 11, 12, 13, 14, 15, 16, 20, 21, 22, 23, 24, 25]:  # Signal indices
+                        # Ternary signals should be -1, 0, or 1
+                        if row[i] not in [-1, 0, 1]:
+                            rounded_signal = max(-1, min(1, round(row[i])))
+                            if abs(row[i] - rounded_signal) > 0.1:  # Only log if significant difference
+                                log.debug(f"Signal at index {i} clamped: {row[i]} -> {rounded_signal}")
+                            row[i] = float(rounded_signal)
+                    elif i in [8, 17, 26]:  # LWPE indices
+                        # LWPE should be between 0 and 1
+                        if not (0 <= row[i] <= 1):
+                            log.debug(f"LWPE at index {i} clamped: {row[i]} -> {max(0, min(1, row[i]))}")
+                            row[i] = max(0, min(1, row[i]))
+                    elif not (-1000 <= row[i] <= 1000):  # Other features (volume, etc.)
+                        log.debug(f"Feature value at index {i} clamped: {row[i]}")
+                        row[i] = max(-1000, min(1000, row[i]))
+            
+            # Check reward (last element)
+            if len(row) > 28:
+                if not isinstance(row[28], (int, float)):
+                    log.warning(f"Non-numeric reward: {row[28]}")
+                    row[28] = 0.0
+        
+        except Exception as e:
+            log.warning(f"Row validation error: {e}")
         
         self.rows.append(row)
+        
+        # Auto-flush if we have enough rows
+        if len(self.rows) >= self.batch_size:
+            self.flush()
 
     def flush(self):
-        """Write accumulated rows to CSV file"""
+        """Write accumulated rows to CSV file with enhanced error handling"""
         if not self.rows:
             return
+        
         try:
             df = pd.DataFrame(self.rows, columns=self.columns)
             
@@ -72,26 +131,67 @@ class FeatureLogger:
             # Write with header only if file doesn't exist
             header_needed = not os.path.exists(self.file_path) or os.path.getsize(self.file_path) == 0
             
-            df.to_csv(self.file_path, mode='a', header=header_needed, index=False)
-            
-            log.info(f"Flushed {len(df)} multi-timeframe feature rows to disk (27 features)")
-            self.rows.clear()
-            
+            # Enhanced error handling for file writing
+            try:
+                df.to_csv(self.file_path, mode='a', header=header_needed, index=False)
+                log.info(f"Successfully flushed {len(df)} multi-timeframe feature rows to {self.file_path}")
+                self.rows.clear()
+                
+                # Verify the file was created
+                if os.path.exists(self.file_path):
+                    file_size = os.path.getsize(self.file_path)
+                    log.info(f"CSV file size: {file_size} bytes")
+                else:
+                    log.error(f"CSV file was not created: {self.file_path}")
+                    
+            except PermissionError as e:
+                log.error(f"Permission denied writing to CSV file: {e}")
+                log.error(f"Check if file is open in another application: {self.file_path}")
+            except Exception as e:
+                log.error(f"CSV write error: {e}")
+                
         except Exception as e:
-            log.warning(f"Flush failed: {e}")
+            log.error(f"DataFrame creation error: {e}")
+            log.error(f"Rows data: {self.rows[:2] if self.rows else 'No rows'}")  # Show first 2 rows for debugging
+
+    def force_flush(self):
+        """Force flush even with few rows (for debugging)"""
+        if self.rows:
+            log.info(f"Force flushing {len(self.rows)} rows to CSV")
+            self.flush()
+        else:
+            log.info("No rows to flush")
 
     def get_feature_statistics(self):
         """Enhanced statistics for multi-timeframe ternary signal analysis"""
         if not self.rows:
+            # Try to load from existing CSV file
+            try:
+                if os.path.exists(self.file_path):
+                    df = pd.read_csv(self.file_path)
+                    if len(df) > 0:
+                        log.info(f"Loaded {len(df)} rows from existing CSV for statistics")
+                        return self._calculate_statistics_from_df(df)
+            except Exception as e:
+                log.warning(f"Could not load existing CSV for statistics: {e}")
+            
             return {}
         
         try:
             df = pd.DataFrame(self.rows, columns=self.columns)
+            return self._calculate_statistics_from_df(df)
             
+        except Exception as e:
+            log.warning(f"Multi-timeframe statistics calculation failed: {e}")
+            return {}
+
+    def _calculate_statistics_from_df(self, df):
+        """Calculate statistics from DataFrame"""
+        try:
             # Basic stats
             stats = {
                 'total_rows': len(df),
-                'avg_reward': df['reward'].mean(),
+                'avg_reward': df['reward'].mean() if 'reward' in df.columns else 0,
             }
             
             # Multi-timeframe signal distribution analysis
@@ -100,7 +200,7 @@ class FeatureLogger:
             
             for tf in timeframes:
                 for signal_type in signal_types:
-                    col_name = f"{signal_type}_signal_{tf}"
+                    col_name = f"{signal_type}_{tf}"
                     if col_name in df.columns:
                         bullish = sum(df[col_name] > 0)
                         bearish = sum(df[col_name] < 0)
@@ -119,32 +219,34 @@ class FeatureLogger:
                 if vol_col in df.columns:
                     stats[f'{tf}_avg_volume_normalized'] = df[vol_col].mean()
             
-            # Multi-timeframe alignment analysis
-            if 'reward' in df.columns and len(df) > 0:
-                # Timeframe-specific performance
-                for tf in timeframes:
-                    tk_col = f"tenkan_kijun_signal_{tf}"
-                    pc_col = f"price_cloud_signal_{tf}"
-                    ema_col = f"ema_cross_signal_{tf}"
-                    
-                    if all(col in df.columns for col in [tk_col, pc_col, ema_col]):
-                        # All bullish alignment
-                        all_bull_mask = (df[tk_col] > 0) & (df[pc_col] > 0) & (df[ema_col] > 0)
-                        if all_bull_mask.any():
-                            stats[f'{tf}_all_bullish_reward'] = df[all_bull_mask]['reward'].mean()
-                            stats[f'{tf}_all_bullish_count'] = all_bull_mask.sum()
-                        
-                        # All bearish alignment
-                        all_bear_mask = (df[tk_col] < 0) & (df[pc_col] < 0) & (df[ema_col] < 0)
-                        if all_bear_mask.any():
-                            stats[f'{tf}_all_bearish_reward'] = df[all_bear_mask]['reward'].mean()
-                            stats[f'{tf}_all_bearish_count'] = all_bear_mask.sum()
-            
             return stats
             
         except Exception as e:
-            log.warning(f"Multi-timeframe statistics calculation failed: {e}")
+            log.warning(f"Statistics calculation error: {e}")
             return {}
+
+    def check_file_status(self):
+        """Check CSV file status for debugging"""
+        try:
+            if os.path.exists(self.file_path):
+                file_size = os.path.getsize(self.file_path)
+                log.info(f"CSV file exists: {self.file_path}")
+                log.info(f"File size: {file_size} bytes")
+                
+                # Try to read first few rows
+                try:
+                    df = pd.read_csv(self.file_path, nrows=5)
+                    log.info(f"CSV contains {len(df)} rows (showing first 5)")
+                    log.info(f"Columns: {list(df.columns)}")
+                except Exception as e:
+                    log.warning(f"Could not read CSV file: {e}")
+            else:
+                log.info(f"CSV file does not exist yet: {self.file_path}")
+                
+            log.info(f"Current buffer has {len(self.rows)} rows")
+            
+        except Exception as e:
+            log.error(f"File status check error: {e}")
 
     def create_summary_report(self):
         """Enhanced summary report for multi-timeframe analysis"""

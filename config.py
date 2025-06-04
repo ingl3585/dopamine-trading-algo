@@ -7,7 +7,7 @@ class Config:
 
     # Enhanced multi-timeframe model architecture
     INPUT_DIM   = 27    # 9 features × 3 timeframes (15m + 5m + 1m)
-    HIDDEN_DIM  = 384   # Increased for enhanced model with attention
+    HIDDEN_DIM  = 384   # Must be divisible by 3 (for 3 timeframes) and each part divisible by num_heads
     ACTION_DIM  = 3     # Hold, Long, Short
     LOOKBACK    = 1
 
@@ -58,7 +58,7 @@ class Config:
     # Enhanced model architecture parameters
     MULTI_TIMEFRAME_MODE = True         # Enable enhanced model
     USE_ATTENTION_MECHANISM = True      # Enable attention layers
-    ATTENTION_HEADS = 3                 # Number of attention heads
+    ATTENTION_HEADS = 4                 # Number of attention heads (adjusted for divisibility)
     LAYER_NORM = True                   # Use layer normalization
     ENHANCED_DROPOUT = True             # Use adaptive dropout
     

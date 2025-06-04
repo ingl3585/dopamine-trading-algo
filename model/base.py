@@ -9,7 +9,7 @@ class MultiTimeframeActorCritic(nn.Module):
     """
     Enhanced Actor-Critic model with multi-timeframe awareness and attention mechanism
     """
-    def __init__(self, input_dim=27, hidden_dim=256, action_dim=3):
+    def __init__(self, input_dim=27, hidden_dim=384, action_dim=3):
         super().__init__()
         
         self.input_dim = input_dim
@@ -17,7 +17,12 @@ class MultiTimeframeActorCritic(nn.Module):
         self.action_dim = action_dim
         
         # Timeframe-specific encoders (9 features each)
-        encoder_dim = hidden_dim // 3
+        encoder_dim = hidden_dim // 3  # 128 for hidden_dim=384
+        
+        # Adjust num_heads to work with encoder_dim
+        # 128 is divisible by 1, 2, 4, 8, 16, 32, 64, 128
+        # Let's use 4 heads instead of 3 for better divisibility
+        num_heads = 4 if encoder_dim % 4 == 0 else (2 if encoder_dim % 2 == 0 else 1)
         
         # 15-minute encoder (trend context) - deeper network for trend analysis
         self.encoder_15m = nn.Sequential(
@@ -55,7 +60,7 @@ class MultiTimeframeActorCritic(nn.Module):
         )
         
         # Cross-timeframe attention mechanism
-        self.timeframe_attention = TimeframeAttention(encoder_dim, num_heads=3)
+        self.timeframe_attention = TimeframeAttention(encoder_dim, num_heads=num_heads)
         
         # Timeframe importance weights (learnable)
         self.timeframe_weights = nn.Parameter(torch.tensor([0.4, 0.35, 0.25]))  # 15m, 5m, 1m

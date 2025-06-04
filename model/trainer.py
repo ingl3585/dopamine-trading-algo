@@ -44,6 +44,9 @@ class Trainer:
         log.info("Starting initial training with multi-timeframe Ichimoku/EMA features")
         
         try:
+            # DEBUG: Check logger status before training
+            log.info(f"Logger has {len(self.logger.rows)} rows before training")
+            
             # Create DataFrame with updated 27-feature column structure
             columns = [
                 "ts",
@@ -66,6 +69,13 @@ class Trainer:
             ]
             
             if len(self.logger.rows) > 0:
+                # DEBUG: Force flush to create CSV file
+                log.info("Force flushing data to CSV before training")
+                self.logger.force_flush()
+                
+                # Check if CSV was created
+                self.logger.check_file_status()
+                
                 df = pd.DataFrame(self.logger.rows, columns=columns)
                 
                 # Validate data integrity
@@ -82,6 +92,11 @@ class Trainer:
                 
                 # Log feature analysis
                 self._log_multiframe_feature_analysis(df)
+                
+                # ANOTHER FLUSH after training to save any new data
+                log.info("Final flush after training")
+                self.logger.force_flush()
+                self.logger.check_file_status()
                 
             else:
                 log.warning("No data available for initial training")
