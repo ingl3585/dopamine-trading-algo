@@ -103,34 +103,85 @@ class FeatureProcessor:
         return row, action, conf, close
 
     def _expand_to_27_features(self, feat_vec_9):
-        """Expand 9-feature vector to 27-feature format"""
+        """
+        Enhanced expansion with timeframe-appropriate signal processing
+        Instead of simple replication, derive signals appropriate for each timeframe
+        """
         try:
-            # This is a fallback for backward compatibility
-            # In practice, NinjaScript should send proper 27-feature vectors
+            if len(feat_vec_9) != 9:
+                log.warning(f"Expected 9-feature vector, got {len(feat_vec_9)}")
+                return feat_vec_9 + [0.0] * (27 - len(feat_vec_9))
+            
             expanded = []
             
-            # Replicate across timeframes with slight variations
-            # 15-minute (trend context) - use as-is
-            expanded.extend(feat_vec_9)
+            # Extract base signals for processing
+            close = feat_vec_9[0]
+            norm_vol = feat_vec_9[1]
+            base_signals = feat_vec_9[2:8]  # The 6 ternary signals
+            lwpe = feat_vec_9[8]
             
-            # 5-minute (momentum context) - slight dampening for shorter timeframe
-            feat_5m = feat_vec_9.copy()
-            for i in [2, 3, 4, 5, 6, 7]:  # Signal indices
-                feat_5m[i] *= 0.8  # Dampen signals slightly
+            # 15-minute features (trend context) - STRONGER/FILTERED signals
+            feat_15m = [close, norm_vol * 0.8]  # Dampen volume noise for trend
+            
+            # Enhance strong signals, filter weak ones for trend context
+            for i, signal in enumerate(base_signals):
+                if abs(signal) >= 1.0:  # Strong signal
+                    enhanced_signal = signal * 1.2  # Amplify for trend
+                    enhanced_signal = max(-1, min(1, enhanced_signal))  # Clamp
+                elif abs(signal) >= 0.5:  # Medium signal
+                    enhanced_signal = signal  # Keep as-is
+                else:  # Weak signal
+                    enhanced_signal = signal * 0.6  # Dampen noise
+                feat_15m.append(enhanced_signal)
+            
+            feat_15m.append(lwpe)  # LWPE unchanged
+            expanded.extend(feat_15m)
+            
+            # 5-minute features (momentum context) - BALANCED processing
+            feat_5m = [close, norm_vol]  # Keep volume as-is for momentum
+            
+            # Apply momentum-specific processing
+            for i, signal in enumerate(base_signals):
+                if i in [0, 4, 5]:  # Momentum-related signals (tenkan_kijun, tenkan_mom, kijun_mom)
+                    momentum_signal = signal * 1.1 if abs(signal) > 0.3 else signal * 0.9
+                    momentum_signal = max(-1, min(1, momentum_signal))
+                else:  # Other signals
+                    momentum_signal = signal * 0.95  # Slight dampening
+                feat_5m.append(momentum_signal)
+            
+            feat_5m.append(lwpe)
             expanded.extend(feat_5m)
             
-            # 1-minute (entry timing) - more dampening
-            feat_1m = feat_vec_9.copy()
-            for i in [2, 3, 4, 5, 6, 7]:  # Signal indices
-                feat_1m[i] *= 0.6  # More dampening for shortest timeframe
+            # 1-minute features (entry timing) - SENSITIVE/REACTIVE
+            feat_1m = [close, norm_vol * 1.1]  # Amplify volume for entry timing
+            
+            # Increase sensitivity for entry timing
+            for i, signal in enumerate(base_signals):
+                if abs(signal) < 0.3:  # Weak signals
+                    sensitive_signal = signal * 1.3  # Amplify weak signals for timing
+                elif abs(signal) < 0.7:  # Medium signals  
+                    sensitive_signal = signal * 1.1  # Slight amplification
+                else:  # Strong signals
+                    sensitive_signal = signal * 0.9  # Slight dampening to avoid overreaction
+                
+                sensitive_signal = max(-1, min(1, sensitive_signal))
+                feat_1m.append(sensitive_signal)
+            
+            feat_1m.append(lwpe)
             expanded.extend(feat_1m)
             
             self.feature_stats['single_timeframe_count'] += 1
-            log.debug("Expanded 9-feature vector to 27-feature format")
+            log.debug("Enhanced 9-feature vector expansion with timeframe-specific processing")
+            
+            # Validate expanded vector
+            if len(expanded) != 27:
+                log.error(f"Expansion failed: expected 27 features, got {len(expanded)}")
+                return feat_vec_9 + [0.0] * (27 - len(feat_vec_9))
+            
             return expanded
             
         except Exception as e:
-            log.warning(f"Feature expansion error: {e}")
+            log.warning(f"Enhanced feature expansion error: {e}")
             return feat_vec_9 + [0.0] * (27 - len(feat_vec_9))
 
     def _normalize_feature_vector(self, feat):
@@ -269,6 +320,99 @@ class FeatureProcessor:
         except Exception as e:
             log.warning(f"Multi-timeframe filter error: {e}")
             return action, confidence
+        
+    def _calculate_signal_strength_per_timeframe(self, timeframe_features, action, timeframe_type):
+        """
+        Calculate signal strength with timeframe-specific weighting
+        """
+        try:
+            if action == 0:  # Hold
+                return 0.5
+            
+            expected_direction = 1 if action == 1 else -1
+            
+            # Extract signals (indices 2-7 in each timeframe)
+            tenkan_kijun = timeframe_features[2]
+            price_cloud = timeframe_features[3] 
+            future_cloud = timeframe_features[4]
+            ema_cross = timeframe_features[5]
+            tenkan_momentum = timeframe_features[6]
+            kijun_momentum = timeframe_features[7]
+            
+            # Timeframe-specific weighting
+            if timeframe_type == "trend":  # 15-minute
+                weights = {
+                    'price_cloud': 0.35,      # Highest weight for cloud in trend
+                    'tenkan_kijun': 0.25,     # Strong weight for TK cross
+                    'future_cloud': 0.20,     # Future cloud direction
+                    'ema_cross': 0.15,        # EMA support
+                    'momentum': 0.05          # Low weight for momentum in trend
+                }
+            elif timeframe_type == "momentum":  # 5-minute
+                weights = {
+                    'ema_cross': 0.30,        # EMA most important for momentum
+                    'tenkan_kijun': 0.25,     # TK cross significant
+                    'momentum': 0.25,         # Momentum signals important
+                    'price_cloud': 0.15,      # Cloud position
+                    'future_cloud': 0.05      # Future less important
+                }
+            else:  # "entry" - 1-minute
+                weights = {
+                    'tenkan_kijun': 0.30,     # TK cross for entry
+                    'price_cloud': 0.25,      # Current cloud position
+                    'ema_cross': 0.20,        # EMA confirmation
+                    'momentum': 0.15,         # Short-term momentum
+                    'future_cloud': 0.10      # Future direction
+                }
+            
+            # Calculate weighted alignment
+            alignment_score = 0.0
+            
+            # Price cloud alignment
+            if price_cloud == expected_direction:
+                alignment_score += weights['price_cloud']
+            elif price_cloud == -expected_direction:
+                alignment_score -= weights['price_cloud'] * 0.5
+            
+            # Tenkan-Kijun alignment
+            if tenkan_kijun == expected_direction:
+                alignment_score += weights['tenkan_kijun']
+            elif tenkan_kijun == -expected_direction:
+                alignment_score -= weights['tenkan_kijun'] * 0.5
+            
+            # Future cloud alignment
+            if future_cloud == expected_direction:
+                alignment_score += weights['future_cloud']
+            elif future_cloud == -expected_direction:
+                alignment_score -= weights['future_cloud'] * 0.5
+            
+            # EMA cross alignment
+            if ema_cross == expected_direction:
+                alignment_score += weights['ema_cross']
+            elif ema_cross == -expected_direction:
+                alignment_score -= weights['ema_cross'] * 0.5
+            
+            # Momentum alignment
+            momentum_score = 0
+            momentum_count = 0
+            if tenkan_momentum != 0:
+                momentum_score += 1 if tenkan_momentum == expected_direction else -0.5
+                momentum_count += 1
+            if kijun_momentum != 0:
+                momentum_score += 1 if kijun_momentum == expected_direction else -0.5
+                momentum_count += 1
+            
+            if momentum_count > 0:
+                momentum_alignment = momentum_score / momentum_count
+                alignment_score += weights['momentum'] * momentum_alignment
+            
+            # Normalize to [-1, 1] range then shift to [0, 1]
+            normalized_score = max(-1, min(1, alignment_score))
+            return (normalized_score + 1) / 2  # Convert to [0, 1]
+            
+        except Exception as e:
+            log.debug(f"Signal strength calculation error for {timeframe_type}: {e}")
+            return 0.5
 
     def _calculate_timeframe_alignment_score(self, signals, action):
         """Calculate how well timeframes align for the given action"""
