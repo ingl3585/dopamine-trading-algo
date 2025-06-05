@@ -94,15 +94,24 @@ namespace NinjaTrader.NinjaScript.Strategies
                         break;
                         
 					case State.Realtime:
-					    Print("Research Strategy entering real-time mode");
-					    ConnectToPython();
-					    StartSignalReceiver();
-					    
-					    // Send initial historical data for training
-					    if (isConnectedToFeatureServer)
+					    try 
 					    {
-					        Print($"Sending historical data for training: 15m={prices15m.Count}, 5m={prices5m.Count}");
-					        SendMarketDataToPython();
+					        Print("Research Strategy entering real-time mode");
+					        ConnectToPython();
+					        StartSignalReceiver();
+					        
+					        // Send initial historical data for training
+					        if (isConnectedToFeatureServer)
+					        {
+					            Print($"Sending historical data for training: 15m={prices15m.Count}, 5m={prices5m.Count}");
+					            SendMarketDataToPython();
+					        }
+					    }
+					    catch (Exception ex)
+					    {
+					        Print($"REALTIME STARTUP ERROR: {ex.Message}");
+					        Print($"Stack trace: {ex.StackTrace}");
+					        // Don't let the strategy terminate - continue running
 					    }
 					    break;
                         
