@@ -139,10 +139,14 @@ class TradingSystem:
     
     def _train_on_historical_data(self, data):
         """Train model on historical data with proper feature extraction"""
+
         price_15m = data.get("price_15m", [])
         volume_15m = data.get("volume_15m", [])
         price_5m = data.get("price_5m", [])
         volume_5m = data.get("volume_5m", [])
+
+        log.info(f"Price data sample - 5m: min={min(price_5m):.2f}, max={max(price_5m):.2f}, last={price_5m[-1]:.2f}")
+        log.info(f"Price changes sample: {[(price_5m[i+1] - price_5m[i])/price_5m[i] for i in range(min(5, len(price_5m)-1))]}")
         
         min_samples = max(50, self.config.SMA_PERIOD)  # Ensure enough data for indicators
         

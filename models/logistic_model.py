@@ -175,11 +175,11 @@ class LogisticSignalModel:
             return "poor"
     
     def _price_change_to_signal(self, price_change: float) -> int:
-        """Convert price change to signal with better thresholds"""
-        # Use slightly larger thresholds for more meaningful signals
-        if price_change > 0.002:  # 0.2% up
+        """Convert price change to signal with appropriate thresholds"""
+        # Use much smaller thresholds for 5-minute timeframe
+        if price_change > 0.0005:  # 0.05% up (was 0.2%)
             return 2  # Buy signal
-        elif price_change < -0.002:  # 0.2% down
+        elif price_change < -0.0005:  # 0.05% down (was 0.2%)
             return 0  # Sell signal
         else:
             return 1  # Hold signal
