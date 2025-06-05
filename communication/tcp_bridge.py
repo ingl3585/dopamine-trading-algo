@@ -18,49 +18,90 @@ class TCPBridge:
         self.config = config
         self.running = False
         
-        # Setup sockets
-        self.feature_socket = self._create_socket(config.FEATURE_PORT)
-        self.signal_socket = self._create_socket(config.SIGNAL_PORT)
-        
-        # Connections
-        self.feature_conn = None
-        self.signal_conn = None
-        
         # Callback for market data
         self.on_market_data: Optional[Callable] = None
         
-        log.info(f"TCP Bridge initialized on ports {config.FEATURE_PORT} and {config.SIGNAL_PORT}")
-    
+        # Initialize sockets but don't accept yet
+        self._feat_srv = socket.socket()
+        self._feat_srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._feat_srv.bind((config.TCP_HOST, config.FEATURE_PORT))
+        self._feat_srv.listen(1)
+
+        self._sig_srv = socket.socket()
+        self._sig_srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self._sig_srv.bind((config.TCP_HOST, config.SIGNAL_PORT))
+        self._sig_srv.listen(1)
+
+        log.info(f"TCP Bridge initialized on {config.TCP_HOST}:{config.FEATURE_PORT} (features) and {config.TCP_HOST}:{config.SIGNAL_PORT} (signals)")
+
     def start(self):
         """Start TCP server and wait for connections"""
+        log.info("Waiting for NinjaTrader connection...")
+        
+        # Accept connections when start() is called
         try:
-            self.feature_socket.listen(1)
-            self.signal_socket.listen(1)
+            self.fsock, feat_addr = self._feat_srv.accept()
+            log.info(f"Feature connection established from {feat_addr}")
             
-            log.info("Waiting for NinjaTrader connection...")
+            self.ssock, sig_addr = self._sig_srv.accept()
+            log.info(f"Signal connection established from {sig_addr}")
             
-            # Accept connections
-            self.feature_conn, addr1 = self.feature_socket.accept()
-            log.info(f"Feature connection from {addr1}")
-            
-            self.signal_conn, addr2 = self.signal_socket.accept()
-            log.info(f"Signal connection from {addr2}")
-            
-            self.running = True
-            
-            # Start receiver thread
-            threading.Thread(target=self._receive_loop, daemon=True).start()
-            
-            log.info("TCP Bridge started successfully")
+            log.info("NinjaTrader connected successfully")
             
         except Exception as e:
-            log.error(f"TCP Bridge start error: {e}")
+            log.error(f"Connection establishment failed: {e}")
             raise
-    
+
+        # Start reader thread after connections established
+        self.running = True
+        threading.Thread(target=self._reader, daemon=True, name="TCPReader").start()
+        log.info("TCP reader thread started")
+
+    def _reader(self):
+        """Read market data from NinjaTrader"""
+        log.info("TCP receive loop started - waiting for data...")
+        
+        while self.running:
+            try:
+                # Read message header
+                hdr = self.fsock.recv(4, socket.MSG_WAITALL)
+                if not hdr:
+                    log.warning("Connection lost, header read failed")
+                    break
+                    
+                msg_len = struct.unpack('<I', hdr)[0]
+                
+                if msg_len <= 0 or msg_len > 1000000:
+                    log.error(f"Invalid message length: {msg_len}")
+                    continue
+                
+                # Read message data
+                data = self.fsock.recv(msg_len, socket.MSG_WAITALL)
+                if len(data) != msg_len:
+                    log.warning(f"Incomplete data received: {len(data)}/{msg_len}")
+                    continue
+                
+                # Parse and process message
+                try:
+                    message = json.loads(data.decode())
+                    
+                    if self.on_market_data and "price_15m" in message:
+                        self.on_market_data(message)
+                    
+                except json.JSONDecodeError as e:
+                    log.error(f"JSON decode error: {e}")
+                    continue
+                    
+            except Exception as e:
+                log.error(f"Receive error: {e}")
+                break
+        
+        log.info("TCP receive loop stopped")
+
     def send_signal(self, action: int, confidence: float, quality: str):
         """Send trading signal to NinjaTrader"""
         try:
-            if not self.signal_conn:
+            if not hasattr(self, 'ssock') or not self.ssock:
                 log.warning("No signal connection available")
                 return
             
@@ -71,117 +112,32 @@ class TCPBridge:
                 "timestamp": int(time.time())
             }
             
-            self._send_message(self.signal_conn, signal)
+            # Send signal
+            data = json.dumps(signal).encode()
+            header = struct.pack('<I', len(data))
+            self.ssock.sendall(header + data)
             
             action_name = ['Hold', 'Buy', 'Sell'][action]
             log.info(f"Signal sent: {action_name} (conf: {confidence:.3f}, quality: {quality})")
             
         except Exception as e:
             log.error(f"Signal send error: {e}")
-    
+
     def stop(self):
         """Stop TCP bridge"""
+        log.info("Closing TCP bridge connections")
         self.running = False
         
         # Close connections
-        for conn in [self.feature_conn, self.signal_conn]:
-            if conn:
-                try:
-                    conn.close()
-                except:
-                    pass
-        
-        # Close sockets
-        for sock in [self.feature_socket, self.signal_socket]:
+        for name, sock in [("feature", getattr(self, 'fsock', None)), 
+                          ("signal", getattr(self, 'ssock', None)), 
+                          ("feature_server", getattr(self, '_feat_srv', None)), 
+                          ("signal_server", getattr(self, '_sig_srv', None))]:
             try:
-                sock.close()
-            except:
-                pass
+                if sock:
+                    sock.close()
+                    log.debug(f"Closed {name} socket")
+            except Exception as e:
+                log.warning(f"Error closing {name} socket: {e}")
         
         log.info("TCP Bridge stopped")
-    
-    def _create_socket(self, port: int) -> socket.socket:
-        """Create and configure socket"""
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind((self.config.TCP_HOST, port))
-        return sock
-    
-    def _receive_loop(self):
-        """Receive market data from NinjaTrader"""
-        log.info("TCP receive loop started - waiting for data...")
-        
-        while self.running:
-            try:
-                log.info("Waiting for message header...")
-                
-                # Read message header
-                header = self.feature_conn.recv(4)
-                if not header:
-                    log.warning("No header received - connection closed")
-                    break
-                
-                log.info(f"Received header: {len(header)} bytes")
-                msg_len = struct.unpack('<I', header)[0]
-                log.info(f"Message length: {msg_len} bytes")
-                
-                if msg_len <= 0 or msg_len > 1000000:  # Increased limit for large historical data
-                    log.error(f"Invalid message length: {msg_len}")
-                    continue
-                
-                # Read message data
-                log.info(f"Reading {msg_len} bytes of data...")
-                data = self.feature_conn.recv(msg_len)
-                if len(data) != msg_len:
-                    log.warning(f"Incomplete data received: {len(data)}/{msg_len}")
-                    continue
-                
-                log.info(f"Received complete message: {len(data)} bytes")
-                
-                # Parse and process message
-                message = json.loads(data.decode())
-                log.info(f"Parsed JSON - 15m bars: {len(message.get('price_15m', []))}, 5m bars: {len(message.get('price_5m', []))}")
-                
-                if self.on_market_data and "price_15m" in message:
-                    log.info("Calling market data callback...")
-                    self.on_market_data(message)
-                    log.info("Market data callback completed")
-                else:
-                    log.warning("No callback set or invalid message format")
-                    
-            except socket.timeout:
-                log.info("Socket timeout - continuing...")
-                continue
-            except json.JSONDecodeError as e:
-                log.error(f"JSON decode error: {e}")
-                continue
-            except Exception as e:
-                log.error(f"Receive error: {e}")
-                break
-        
-        log.info("TCP receive loop stopped")
-    
-    def _send_message(self, connection: socket.socket, message: Dict):
-        """Send JSON message with retry logic"""
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                data = json.dumps(message).encode()
-                header = struct.pack('<I', len(data))
-                connection.sendall(header + data)
-                return True
-            except (BrokenPipeError, ConnectionResetError) as e:
-                log.warning(f"Connection lost on attempt {attempt + 1}: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(1)
-                    # Try to reconnect
-                    try:
-                        connection.connect((self.config.TCP_HOST, self.config.SIGNAL_PORT))
-                    except:
-                        pass
-                else:
-                    log.error("Failed to send message after retries")
-                    return False
-            except Exception as e:
-                log.error(f"Send message error: {e}")
-                return False

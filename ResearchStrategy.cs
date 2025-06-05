@@ -136,7 +136,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             RiskPercent = 0.02;
             StopLossTicks = 20;
             TakeProfitTicks = 40;
-            MinConfidence = 0.6;
+            MinConfidence = 0.3;
             MaxPositionSize = 2;
             
             // Strategy settings

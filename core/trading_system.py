@@ -1,7 +1,6 @@
 # core/trading_system.py
 
 import logging
-import time
 from typing import Dict
 from config import ResearchConfig
 from features.feature_extractor import FeatureExtractor
@@ -14,13 +13,22 @@ class TradingSystem:
     """Main research-aligned trading system"""
     
     def __init__(self):
+        # Configure logging first
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        
         self.config = ResearchConfig()
         self.feature_extractor = FeatureExtractor(self.config)
         self.model = LogisticSignalModel(self.config)
+        
+        # TCP bridge connects immediately like the working version
         self.tcp_bridge = TCPBridge(self.config)
         
-        # Price history for training feedback
-        self.price_history = []
+        # Simple price tracking
+        self.last_price = None
+        self.trained_on_historical = False
         
         # Statistics
         self.stats = {
@@ -31,116 +39,116 @@ class TradingSystem:
             'avg_confidence': 0.0
         }
         
-        self._setup_logging()
         log.info("Research-aligned trading system initialized")
     
     def start(self):
-            """Start the trading system"""
+        """Start the trading system"""
+        try:
+            # Setup TCP callback
+            self.tcp_bridge.on_market_data = self.process_market_data
+            
+            # Start TCP bridge (connections already established)
+            self.tcp_bridge.start()
+            
+            log.info("Trading system started - waiting for market data")
+            log.info("Press Ctrl+C to stop the system")
+            
+            # Wait for shutdown signal
             try:
-                # Setup TCP callback
-                self.tcp_bridge.on_market_data = self.process_market_data
+                import signal
+                signal.pause()  # Unix only
+            except AttributeError:
+                # Windows fallback
+                import threading
+                self._shutdown_event = threading.Event()
                 
-                # Start TCP bridge
-                self.tcp_bridge.start()
-                
-                log.info("Trading system started - waiting for market data")
-                log.info("Press Ctrl+C to stop the system")
-                
-                # Wait for shutdown signal with proper handling
-                try:
-                    import signal
-                    signal.pause()  # Unix only
-                except AttributeError:
-                    # Windows fallback - use a proper event that can be interrupted
-                    import threading
-                    self._shutdown_event = threading.Event()
-                    self._shutdown_event.wait()
-                    
-            except KeyboardInterrupt:
-                log.info("Shutdown requested via Ctrl+C")
-            except Exception as e:
-                log.error(f"System error: {e}")
-            finally:
-                self.stop()
+                # Wait with timeout so we can check for shutdown periodically
+                while not self._shutdown_event.is_set():
+                    self._shutdown_event.wait(timeout=1)
+                        
+        except KeyboardInterrupt:
+            log.info("Shutdown requested via Ctrl+C")
+        except Exception as e:
+            log.error(f"System error: {e}")
+        finally:
+            self.stop()
 
     def shutdown(self):
-        """Trigger shutdown from another thread"""
+        """Trigger shutdown"""
+        log.info("Shutdown requested...")
         if hasattr(self, '_shutdown_event'):
             self._shutdown_event.set()
+        self.stop()
+    
+    def stop(self):
+        """Stop the trading system"""
+        log.info("Stopping trading system...")
+        if hasattr(self, 'tcp_bridge'):
+            self.tcp_bridge.stop()
+        self.model.save_model()
+        log.info("System stopped")
     
     def process_market_data(self, data: Dict):
         """Process incoming market data and generate signals"""
         try:
-            log.info("=== PROCESSING MARKET DATA ===")
-            
-            # Extract multi-timeframe data
+            # Extract data
             price_15m = data.get("price_15m", [])
             volume_15m = data.get("volume_15m", [])
             price_5m = data.get("price_5m", [])
             volume_5m = data.get("volume_5m", [])
             
-            log.info(f"Received data - 15m: {len(price_15m)} bars, 5m: {len(price_5m)} bars")
+            if not price_5m:
+                return
             
-            if len(price_15m) > 0:
-                log.info(f"15m price range: {min(price_15m):.2f} - {max(price_15m):.2f}")
-            if len(price_5m) > 0:
-                log.info(f"5m price range: {min(price_5m):.2f} - {max(price_5m):.2f}")
+            current_price = price_5m[-1]
             
             # Extract features
-            log.info("Extracting features...")
             features = self.feature_extractor.extract_features(
                 price_15m, volume_15m, price_5m, volume_5m
             )
             
             if features is None:
-                log.warning("Feature extraction returned None")
                 return
             
-            log.info("Features extracted successfully")
+            # Train on historical data once
+            if not self.trained_on_historical:
+                log.info(f"Training on {len(price_5m)} historical bars")
+                self._train_on_historical_data(features, price_5m)
+                self.trained_on_historical = True
             
             # Generate signal
-            log.info("Generating ML signal...")
             action, confidence, quality = self.model.predict(features)
-            log.info(f"Generated signal: Action={action}, Confidence={confidence:.3f}, Quality={quality}")
+            log.info(f"Signal: Action={action}, Confidence={confidence:.3f}, Quality={quality}")
             
             # Update statistics
             self._update_stats(action, confidence)
             
             # Send signal if confidence meets threshold
             if confidence >= self.config.CONFIDENCE_THRESHOLD:
-                log.info(f"Sending signal (confidence {confidence:.3f} >= threshold {self.config.CONFIDENCE_THRESHOLD})")
                 self.tcp_bridge.send_signal(action, confidence, quality)
-            else:
-                log.info(f"Signal below threshold - not sending (confidence {confidence:.3f} < {self.config.CONFIDENCE_THRESHOLD})")
             
-            # Update training data
-            log.info("Updating training data...")
-            self._update_training_data(features, price_5m)
+            # Update model with real-time data
+            if self.last_price is not None:
+                price_change = (current_price - self.last_price) / self.last_price
+                self.model.add_training_sample(features, price_change)
             
-            # Log periodic statistics
-            if self.stats['signals_generated'] % 10 == 0:  # Every 10 signals instead of 100
-                self._log_statistics()
-                
-            log.info("=== MARKET DATA PROCESSING COMPLETE ===")
+            self.last_price = current_price
                 
         except Exception as e:
             log.error(f"Market data processing error: {e}")
-            import traceback
-            log.error(f"Traceback: {traceback.format_exc()}")
     
-    def stop(self):
-        """Stop the trading system"""
-        log.info("Stopping trading system...")
-        self.tcp_bridge.stop()
-        self.model.save_model()
-        log.info("System stopped")
-    
-    def _setup_logging(self):
-        """Setup logging configuration"""
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
+    def _train_on_historical_data(self, features, price_data):
+        """Train model on historical data once"""
+        for i in range(1, len(price_data)):
+            price_change = (price_data[i] - price_data[i-1]) / price_data[i-1]
+            signal = self.model._price_change_to_signal(price_change)
+            
+            # Add directly to avoid triggering retraining
+            self.model.feature_history.append(features)
+            self.model.signal_history.append(signal)
+        
+        # Train once
+        self.model.train()
     
     def _update_stats(self, action: int, confidence: float):
         """Update system statistics"""
@@ -158,58 +166,3 @@ class TradingSystem:
         self.stats['avg_confidence'] = (
             (self.stats['avg_confidence'] * (total - 1) + confidence) / total
         )
-    
-    def _update_training_data(self, features, price_5m):
-            """Update model training data"""
-            if len(price_5m) < 2:
-                return
-            
-            # Use a flag to track if we've processed initial historical data
-            if not hasattr(self, '_historical_processed'):
-                log.info(f"Processing {len(price_5m)} historical bars for initial training")
-                
-                # Create training samples from consecutive price changes
-                for i in range(1, len(price_5m)):
-                    previous_price = price_5m[i-1]
-                    current_price = price_5m[i]
-                    price_change = (current_price - previous_price) / previous_price
-                    
-                    # Convert price change to signal class
-                    signal = self.model._price_change_to_signal(price_change)
-                    
-                    # Add directly to history without triggering retraining
-                    self.model.feature_history.append(features)
-                    self.model.signal_history.append(signal)
-                
-                # Train once after all historical data is processed
-                log.info("Training model on historical data...")
-                self.model.train()
-                
-                # Set up for future real-time updates
-                self.price_history = [price_5m[-1]]
-                self._historical_processed = True
-                
-            else:
-                # Real-time single bar update - just use the latest price
-                if len(price_5m) > 0:
-                    current_price = price_5m[-1]
-                    self.price_history.append(current_price)
-                    
-                    if len(self.price_history) >= 2:
-                        previous_price = self.price_history[-2]
-                        price_change = (current_price - previous_price) / previous_price
-                        log.info(f"Real-time price change: {price_change:.4f}")
-                        self.model.add_training_sample(features, price_change)
-                    
-                    if len(self.price_history) > 100:
-                        self.price_history = self.price_history[-50:]
-    
-    def _log_statistics(self):
-        """Log system statistics"""
-        log.info("=== System Statistics ===")
-        log.info(f"Total Signals: {self.stats['signals_generated']}")
-        log.info(f"Buy: {self.stats['buy_signals']}, "
-                f"Sell: {self.stats['sell_signals']}, "
-                f"Hold: {self.stats['hold_signals']}")
-        log.info(f"Average Confidence: {self.stats['avg_confidence']:.3f}")
-        log.info(f"Model Trained: {self.model.is_trained}")
