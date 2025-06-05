@@ -83,7 +83,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		
 		#region Indicator Variables
 		
-		private EMA ema21;
+		private EMA ema20;
 		private SMA sma50;
 		private Bollinger bb;
 		private RSI rsi14;
@@ -189,16 +189,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 			if (ShowIndicators)
 			{
 			    // Initialize indicators
-			    ema21 = EMA(BarsArray[0], 21);
+			    ema20 = EMA(BarsArray[0], 20);
 			    sma50 = SMA(BarsArray[0], 50);
 			    bb = Bollinger(BarsArray[0], 2.0, 20);
 			    rsi14 = RSI(BarsArray[0], 14, 3);
 			    volumeIndicator = VOL(BarsArray[0]);
 			    
 			    // Configure EMA plot
-			    ema21.Plots[0].Brush = Brushes.Orange;
-			    ema21.Plots[0].Width = 2;
-			    ema21.Plots[0].PlotStyle = PlotStyle.Line;
+			    ema20.Plots[0].Brush = Brushes.Orange;
+			    ema20.Plots[0].Width = 2;
+			    ema20.Plots[0].PlotStyle = PlotStyle.Line;
 			    
 			    // Configure SMA plot
 			    sma50.Plots[0].Brush = Brushes.Blue;
@@ -218,7 +218,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			    rsi14.Plots[0].Width = 2;
 			    
 			    // Add indicators to chart
-			    AddChartIndicator(ema21);
+			    AddChartIndicator(ema20);
 			    AddChartIndicator(sma50);
 			    AddChartIndicator(bb);
 			    
@@ -961,7 +961,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    try
 		    {
 		        // Force indicator updates if needed
-		        if (ema21 != null) ema21.Update();
+		        if (ema20 != null) ema20.Update();
 		        if (sma50 != null) sma50.Update();
 		        if (bb != null) bb.Update();
 		        if (rsi14 != null) rsi14.Update();

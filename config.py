@@ -11,7 +11,7 @@ class ResearchConfig:
     RSI_PERIOD: int = 14
     BB_PERIOD: int = 20
     BB_STD: float = 2.0
-    EMA_PERIOD: int = 21
+    EMA_PERIOD: int = 20
     SMA_PERIOD: int = 50
     VOLUME_PERIOD: int = 20
     
