@@ -534,54 +534,54 @@ namespace NinjaTrader.NinjaScript.Strategies
         
 		private SignalData ParseSignalJson(string json)
 		{
-		    try {
+		    try 
+		    {
 		        var signal = new SignalData();
 		        
-		        // Extract action (unchanged)
+		        // Extract action
 		        var actionStart = json.IndexOf("\"action\":") + 9;
 		        var actionEnd = json.IndexOf(",", actionStart);
 		        signal.action = int.Parse(json.Substring(actionStart, actionEnd - actionStart));
 		        
-		        // Extract confidence (unchanged)
+		        // Extract confidence
 		        var confStart = json.IndexOf("\"confidence\":") + 13;
 		        var confEnd = json.IndexOf(",", confStart);
 		        signal.confidence = double.Parse(json.Substring(confStart, confEnd - confStart));
 		        
-		        // FIX: Better quality parsing
-		        var qualStart = json.IndexOf("\"quality\":\"") + 11;
-		        if (qualStart > 10) // Found quoted string
+		        // FIXED: Better quality parsing
+		        var qualityPattern = "\"quality\":\"";
+		        var qualStart = json.IndexOf(qualityPattern);
+		        if (qualStart >= 0)
 		        {
+		            qualStart += qualityPattern.Length;
 		            var qualEnd = json.IndexOf("\"", qualStart);
-		            signal.quality = json.Substring(qualStart, qualEnd - qualStart);
+		            if (qualEnd > qualStart)
+		            {
+		                signal.quality = json.Substring(qualStart, qualEnd - qualStart);
+		            }
+		            else
+		            {
+		                signal.quality = "unknown";
+		            }
 		        }
 		        else
 		        {
-		            // Fallback: treat as string anyway
 		            signal.quality = "unknown";
 		        }
 		        
-		        // Extract timestamp (unchanged)
+		        // Extract timestamp
 		        var timeStart = json.IndexOf("\"timestamp\":") + 12;
 		        var timeEnd = json.IndexOf("}", timeStart);
 		        signal.timestamp = long.Parse(json.Substring(timeStart, timeEnd - timeStart));
 		        
 		        return signal;
 		    }
-		    catch (Exception ex) {
+		    catch (Exception ex) 
+		    {
 		        Print($"JSON parsing error: {ex.Message} - JSON: {json}");
 		        return null;
 		    }
 		}
-        
-        private string GetActionName(int action)
-        {
-            switch (action)
-            {
-                case 1: return "BUY";
-                case 2: return "SELL";
-                default: return "HOLD";
-            }
-        }
         
         private bool IsValidSignal(SignalData signal)
         {
@@ -683,6 +683,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                 Print($"Signal execution error: {ex.Message}");
             }
         }
+		
+		private string GetActionName(int action)
+		{
+		    switch (action)
+		    {
+		        case 1: return "BUY";
+		        case 2: return "SELL";
+		        default: return "HOLD";
+		    }
+		}
         
         #endregion
         

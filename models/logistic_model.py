@@ -153,6 +153,40 @@ class LogisticSignalModel:
                 log.info("No saved model found - will train from scratch")
         except Exception as e:
             log.error(f"Model load error: {e}")
+
+    def _generate_signal_from_features(self, features: ResearchFeatures, price_change: float) -> int:
+        """Generate signals using research-backed multi-indicator approach"""
+        
+        # 1. Trend Analysis (15m timeframe - primary direction)
+        trend_bullish = (features.ema_15m > features.sma_15m and 
+                        features.rsi_15m > 40 and features.rsi_15m < 80)
+        trend_bearish = (features.ema_15m < features.sma_15m and 
+                        features.rsi_15m < 60 and features.rsi_15m > 20)
+        
+        # 2. Entry Signals (5m timeframe - timing confirmation)
+        bb_buy_signal = features.bb_position_5m < 0.2   # Near lower band - oversold
+        bb_sell_signal = features.bb_position_5m > 0.8  # Near upper band - overbought
+        
+        rsi_buy_signal = features.rsi_5m < 35   # Oversold
+        rsi_sell_signal = features.rsi_5m > 65  # Overbought
+        
+        volume_confirmation = features.volume_ratio_5m > 1.1  # Above average volume
+
+        log.info(f"Trend: bull={trend_bullish}, bear={trend_bearish}")
+        log.info(f"RSI: 15m={features.rsi_15m:.1f}, 5m={features.rsi_5m:.1f}")
+        log.info(f"BB pos: {features.bb_position_5m:.2f}, Vol ratio: {features.volume_ratio_5m:.2f}")
+        
+        # 3. Signal Generation - research-aligned logic
+        if (trend_bullish and bb_buy_signal and rsi_buy_signal and volume_confirmation):
+            return 2  # Strong BUY signal
+        elif (trend_bearish and bb_sell_signal and rsi_sell_signal and volume_confirmation):
+            return 0  # Strong SELL signal
+        elif (trend_bullish and (bb_buy_signal or rsi_buy_signal)):
+            return 2  # Moderate BUY signal
+        elif (trend_bearish and (bb_sell_signal or rsi_sell_signal)):
+            return 0  # Moderate SELL signal
+        else:
+            return 1  # HOLD signal
     
     def _convert_prediction(self, prediction: int, probabilities: np.ndarray) -> Tuple[int, float]:
         """Convert model prediction to trading signal"""
@@ -175,24 +209,35 @@ class LogisticSignalModel:
             return "poor"
     
     def _price_change_to_signal(self, price_change: float) -> int:
-        """Convert price change to signal with appropriate thresholds"""
-        # Use much smaller thresholds for 5-minute timeframe
-        if price_change > 0.0005:  # 0.05% up (was 0.2%)
+        """Fallback for compatibility - simplified threshold"""
+        if price_change > 0.0003:   # 0.03%
             return 2  # Buy signal
-        elif price_change < -0.0005:  # 0.05% down (was 0.2%)
+        elif price_change < -0.0003: # 0.03%
             return 0  # Sell signal
         else:
             return 1  # Hold signal
     
     def _should_retrain(self) -> bool:
+        """Determine if model should retrain based on research principles"""
+        
         if len(self.signal_history) < self.config.MIN_TRAINING_SAMPLES:
             return False
         
-        # Only train when we have natural class diversity
+        # Only retrain every N samples (not every bar)
+        samples_since_last_train = len(self.signal_history) % self.config.ML_RETRAIN_FREQUENCY
+        if samples_since_last_train != 0:
+            return False
+        
+        # Ensure we have class diversity before retraining
         unique_classes, counts = np.unique(self.signal_history, return_counts=True)
         min_samples_per_class = min(counts) if len(counts) > 0 else 0
-
+        
         # Require at least 2 classes with minimum 3 samples each
         has_diversity = len(unique_classes) >= 2 and min_samples_per_class >= 3
         
-        return has_diversity
+        if has_diversity:
+            log.info(f"Retraining after {self.config.ML_RETRAIN_FREQUENCY} new samples")
+            return True
+        else:
+            log.debug("Insufficient diversity for retraining")
+            return False

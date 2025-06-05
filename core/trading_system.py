@@ -1,6 +1,7 @@
 # core/trading_system.py
 
 import logging
+import numpy as np
 from typing import Dict
 from config import ResearchConfig
 from features.feature_extractor import FeatureExtractor
@@ -138,19 +139,14 @@ class TradingSystem:
             log.error(f"Market data processing error: {e}")
     
     def _train_on_historical_data(self, data):
-        """Train model on historical data with proper feature extraction"""
-
+        """Train using research-aligned feature-based signals"""
         price_15m = data.get("price_15m", [])
         volume_15m = data.get("volume_15m", [])
         price_5m = data.get("price_5m", [])
         volume_5m = data.get("volume_5m", [])
-
-        log.info(f"Price data sample - 5m: min={min(price_5m):.2f}, max={max(price_5m):.2f}, last={price_5m[-1]:.2f}")
-        log.info(f"Price changes sample: {[(price_5m[i+1] - price_5m[i])/price_5m[i] for i in range(min(5, len(price_5m)-1))]}")
         
-        min_samples = max(50, self.config.SMA_PERIOD)  # Ensure enough data for indicators
+        min_samples = max(50, self.config.SMA_PERIOD)
         
-        # Extract features for each historical point
         for i in range(min_samples, len(price_5m) - 1):
             # Get data up to point i
             hist_price_15m = price_15m[:i+1]
@@ -166,13 +162,20 @@ class TradingSystem:
             if features is None:
                 continue
                 
-            # Calculate price change for next period
+            # Calculate price change for validation
             price_change = (price_5m[i+1] - price_5m[i]) / price_5m[i]
-            signal = self.model._price_change_to_signal(price_change)
             
-            # Now we have unique features for each sample
+            # Generate signal using research-aligned method
+            signal = self.model._generate_signal_from_features(features, price_change)
+            
+            # Store for training
             self.model.feature_history.append(features)
             self.model.signal_history.append(signal)
+
+        unique_signals, counts = np.unique(self.model.signal_history, return_counts=True)
+        signal_dist = dict(zip(unique_signals, counts))
+        log.info(f"Signal distribution: {signal_dist}")
+        log.info(f"Generated {len(self.model.feature_history)} unique training samples")
         
         log.info(f"Generated {len(self.model.feature_history)} unique training samples")
         self.model.train()
