@@ -39,7 +39,6 @@ def main():
     try:
         print("Initializing trading system...")
         system = TradingSystem()
-        print("Starting TCP server and waiting for NinjaTrader connection...")
         system.start()
     except Exception as e:
         print(f"System error: {e}")

@@ -176,10 +176,10 @@ class LogisticSignalModel:
         
         volume_confirmation = features.volume_ratio_5m > 1.1  # Above average volume
 
-        log.info(f"Trend: bull={trend_bullish}, bear={trend_bearish}")
-        log.info(f"RSI: 15m={features.rsi_15m:.1f}, 5m={features.rsi_5m:.1f}")
-        log.info(f"BB pos: {features.bb_position_5m:.2f}, Vol ratio: {features.volume_ratio_5m:.2f}")
-        log.info(f"EMA trend 15m: {features.ema_trend_15m:.4f}, Price vs SMA 15m: {features.price_vs_sma_15m:.4f}")
+        log.debug(f"Trend: bull={trend_bullish}, bear={trend_bearish}")
+        log.debug(f"RSI: 15m={features.rsi_15m:.1f}, 5m={features.rsi_5m:.1f}")
+        log.debug(f"BB pos: {features.bb_position_5m:.2f}, Vol ratio: {features.volume_ratio_5m:.2f}")
+        log.debug(f"EMA trend 15m: {features.ema_trend_15m:.4f}, Price vs SMA 15m: {features.price_vs_sma_15m:.4f}")
         
         # 3. Signal Generation - research-aligned logic
         if (trend_bullish and bb_buy_signal and rsi_buy_signal and volume_confirmation):

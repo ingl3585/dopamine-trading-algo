@@ -90,34 +90,40 @@ namespace NinjaTrader.NinjaScript.Strategies
                         break;
                         
                     case State.DataLoaded:
-                        Print("Research Strategy data loaded - preparing for connection");
-                        break;
+		                if (BarsArray?.Length > 0 && CurrentBars[0] > 0)
+		                {
+		                    Print("Research Strategy data loaded - preparing for connection");
+		                }
+		                break;
                         
-					case State.Realtime:
-					    try 
-					    {
-					        Print("Research Strategy entering real-time mode");
-					        ConnectToPython();
-					        StartSignalReceiver();
-					        
-					        // Send initial historical data for training
-					        if (isConnectedToFeatureServer)
-					        {
-					            Print($"Sending historical data for training: 15m={prices15m.Count}, 5m={prices5m.Count}");
-					            SendMarketDataToPython();
-					        }
-					    }
-					    catch (Exception ex)
-					    {
-					        Print($"REALTIME STARTUP ERROR: {ex.Message}");
-					        Print($"Stack trace: {ex.StackTrace}");
-					        // Don't let the strategy terminate - continue running
-					    }
-					    break;
+		            case State.Realtime:
+		                // Only print connection info ONCE when actually going live
+		                if (!isConnectedToFeatureServer || !isConnectedToSignalServer)
+		                {
+		                    Print("Research Strategy entering real-time mode");
+		                    ConnectToPython();
+		                    StartSignalReceiver();
+		                    
+		                    // Send initial historical data for training
+		                    if (isConnectedToFeatureServer)
+		                    {
+		                        Print($"Sending historical data for training: 15m={prices15m.Count}, 5m={prices5m.Count}");
+		                        SendMarketDataToPython();
+		                    }
+		                }
+		                break;
                         
-                    case State.Terminated:
-                        Cleanup();
-                        break;
+		            case State.Terminated:
+		                // Only print cleanup message if we were actually running
+		                if (signalCount > 0 || tradesExecuted > 0)
+		                {
+		                    CleanupWithStats();
+		                }
+		                else
+		                {
+		                    QuietCleanup(); // Silent cleanup for startup failures
+		                }
+		                break;
                 }
             }
             catch (Exception ex)
@@ -160,8 +166,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             // Add multi-timeframe data series
             AddDataSeries(BarsPeriodType.Minute, 15);  // BarsArray[1] - 15-minute
             AddDataSeries(BarsPeriodType.Minute, 5);   // BarsArray[2] - 5-minute
-            
-            Print("Research Strategy configured with 15m and 5m timeframes");
         }
         
 		protected override void OnBarUpdate()
@@ -236,61 +240,63 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         #region TCP Communication
         
-        private void ConnectToPython()
-        {
-            try
-            {
-                lastConnectionAttempt = DateTime.Now;
-                connectionAttempts++;
-                
-                Print($"Attempting to connect to Python ML system (attempt {connectionAttempts})...");
-                
-                // Connect to Python feature server
-                if (!isConnectedToFeatureServer)
-                {
-                    try
-                    {
-                        featureClient = new TcpClient("localhost", 5556);
-                        isConnectedToFeatureServer = true;
-                        Print("Connected to Python feature server (port 5556)");
-                    }
-                    catch (Exception ex)
-                    {
-                        Print($"Feature server connection failed: {ex.Message}");
-                        isConnectedToFeatureServer = false;
-                    }
-                }
-                
-                // Connect to Python signal server
-                if (!isConnectedToSignalServer)
-                {
-                    try
-                    {
-                        signalClient = new TcpClient("localhost", 5557);
-                        isConnectedToSignalServer = true;
-                        Print("Connected to Python signal server (port 5557)");
-                    }
-                    catch (Exception ex)
-                    {
-                        Print($"Signal server connection failed: {ex.Message}");
-                        isConnectedToSignalServer = false;
-                    }
-                }
-                
-                if (isConnectedToFeatureServer && isConnectedToSignalServer)
-                {
-                    Print("Research strategy fully connected to Python ML system");
-                    Print("Using: RSI + Bollinger Bands + EMA + SMA + Volume (15m/5m timeframes)");
-                    Print("ML Model: Logistic Regression");
-                }
-            }
-            catch (Exception ex)
-            {
-                Print($"Python connection error: {ex.Message}");
-                isConnectedToFeatureServer = false;
-                isConnectedToSignalServer = false;
-            }
-        }
+		private void ConnectToPython()
+		{
+		    try
+		    {
+		        if (State == State.Realtime)
+		        {
+		            lastConnectionAttempt = DateTime.Now;
+		            connectionAttempts++;
+		        }
+		        
+		        // Connect to Python feature server
+		        if (!isConnectedToFeatureServer)
+		        {
+		            try
+		            {
+		                featureClient = new TcpClient("localhost", 5556);
+		                isConnectedToFeatureServer = true;
+		                Print("Connected to Python feature server (port 5556)");
+		            }
+		            catch (Exception ex)
+		            {
+		                Print($"Feature server connection failed: {ex.Message}");
+		                isConnectedToFeatureServer = false;
+		            }
+		        }
+		        
+		        // Connect to Python signal server
+		        if (!isConnectedToSignalServer)
+		        {
+		            try
+		            {
+		                signalClient = new TcpClient("localhost", 5557);
+		                isConnectedToSignalServer = true;
+		                Print("Connected to Python signal server (port 5557)");
+		            }
+		            catch (Exception ex)
+		            {
+		                Print($"Signal server connection failed: {ex.Message}");
+		                isConnectedToSignalServer = false;
+		            }
+		        }
+		        
+		        // Only print success message once
+		        if (isConnectedToFeatureServer && isConnectedToSignalServer && State == State.Realtime)
+		        {
+		            Print("Research strategy fully connected to Python ML system");
+		            Print("Using: RSI + Bollinger Bands + EMA + SMA + Volume (15m/5m timeframes)");
+		            Print("ML Model: Logistic Regression");
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Python connection error: {ex.Message}");
+		        isConnectedToFeatureServer = false;
+		        isConnectedToSignalServer = false;
+		    }
+		}
         
         private void StartSignalReceiver()
         {
@@ -457,10 +463,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
-		        // Research principle: Keep sufficient but not excessive history
-		        // Your research.txt: "Keep last 100 bars for performance"
-		        
-		        // Update 15-minute data with validation
+		        // Update 15-minute data
 		        if (BarsArray.Length > 1 && CurrentBars[1] >= 0)
 		        {
 		            double price15m = Closes[1][0];
@@ -469,15 +472,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            prices15m.Add(price15m);
 		            volumes15m.Add(volume15m);
 		            
-		            // Research-aligned data management (300 bars = ~75 hours of 15m data)
 		            if (prices15m.Count > 300)
 		            {
-		                prices15m.RemoveRange(0, 50); // Remove in chunks for efficiency
+		                prices15m.RemoveRange(0, 50);
 		                volumes15m.RemoveRange(0, 50);
 		            }
 		        }
 		        
-		        // Update 5-minute data with validation  
+		        // Update 5-minute data
 		        if (BarsArray.Length > 2 && CurrentBars[2] >= 0)
 		        {
 		            double price5m = Closes[2][0];
@@ -486,7 +488,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            prices5m.Add(price5m);
 		            volumes5m.Add(volume5m);
 		            
-		            // Research-aligned data management (300 bars = ~25 hours of 5m data)
 		            if (prices5m.Count > 300)
 		            {
 		                prices5m.RemoveRange(0, 50);
@@ -494,8 +495,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            }
 		        }
 		        
-		        // Less frequent debug output (research: reduce noise)
-		        if (CurrentBar % 50 == 0) // Changed from 20 to 50
+		        // MUCH less frequent debug output - only every 100 bars
+		        if (CurrentBar % 100 == 0 && State == State.Realtime)
 		        {
 		            Print($"Data: 15m={prices15m.Count} bars, 5m={prices5m.Count} bars");
 		        }
@@ -778,47 +779,70 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         #region Cleanup
         
-        private void Cleanup()
-        {
-            try
-            {
-                Print("Research Strategy shutting down...");
-                
-                isRunning = false;
-                
-                // Stop signal receiver thread
-                if (signalThread?.IsAlive == true)
-                {
-                    if (!signalThread.Join(2000)) // Wait up to 2 seconds
-                    {
-                        Print("Signal thread did not stop gracefully");
-                    }
-                }
-                
-                // Close TCP connections
-                try
-                {
-                    featureClient?.Close();
-                    signalClient?.Close();
-                    Print("TCP connections closed");
-                }
-                catch (Exception ex)
-                {
-                    Print($"Connection cleanup error: {ex.Message}");
-                }
-                
-                // Log final statistics
-                Print($"Research Strategy Final Stats:");
-                Print($"ML Signals Received: {signalCount}");
-                Print($"Trades Executed: {tradesExecuted}");
-                Print($"Connection Attempts: {connectionAttempts}");
-                Print("Research Strategy stopped successfully");
-            }
-            catch (Exception ex)
-            {
-                Print($"Cleanup error: {ex.Message}");
-            }
-        }
+		private void CleanupWithStats()
+		{
+		    try
+		    {
+		        Print("Research Strategy shutting down...");
+		        
+		        isRunning = false;
+		        
+		        // Stop signal receiver thread
+		        if (signalThread?.IsAlive == true)
+		        {
+		            if (!signalThread.Join(2000))
+		            {
+		                Print("Signal thread did not stop gracefully");
+		            }
+		        }
+		        
+		        // Close TCP connections
+		        try
+		        {
+		            featureClient?.Close();
+		            signalClient?.Close();
+		            Print("TCP connections closed");
+		        }
+		        catch (Exception ex)
+		        {
+		            Print($"Connection cleanup error: {ex.Message}");
+		        }
+		        
+		        // Log final statistics ONLY if we actually traded
+		        Print($"Research Strategy Final Stats:");
+		        Print($"ML Signals Received: {signalCount}");
+		        Print($"Trades Executed: {tradesExecuted}");
+		        Print($"Connection Attempts: {connectionAttempts}");
+		        Print("Research Strategy stopped successfully");
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Cleanup error: {ex.Message}");
+		    }
+		}
+		
+		private void QuietCleanup()
+		{
+		    try
+		    {
+		        // Silent cleanup for initialization failures
+		        isRunning = false;
+		        
+		        if (signalThread?.IsAlive == true)
+		        {
+		            signalThread.Join(1000); // Shorter timeout
+		        }
+		        
+		        featureClient?.Close();
+		        signalClient?.Close();
+		        
+		        // No print statements for startup failures
+		    }
+		    catch
+		    {
+		        // Silent failure
+		    }
+		}
         
         #endregion
         

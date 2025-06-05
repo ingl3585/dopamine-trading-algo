@@ -174,9 +174,7 @@ class TradingSystem:
 
         unique_signals, counts = np.unique(self.model.signal_history, return_counts=True)
         signal_dist = dict(zip(unique_signals, counts))
-        log.info(f"Signal distribution: {signal_dist}")
-        log.info(f"Generated {len(self.model.feature_history)} unique training samples")
-        
+        log.debug(f"Signal distribution: {signal_dist}")
         log.info(f"Generated {len(self.model.feature_history)} unique training samples")
         self.model.train()
     
