@@ -552,7 +552,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        var confEnd = json.IndexOf(",", confStart);
 		        signal.confidence = double.Parse(json.Substring(confStart, confEnd - confStart));
 		        
-		        // FIXED: Better quality parsing
+		        // Parsing with proper error handling
 		        var qualityPattern = "\"quality\":\"";
 		        var qualStart = json.IndexOf(qualityPattern);
 		        if (qualStart >= 0)
@@ -565,17 +565,37 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            }
 		            else
 		            {
-		                signal.quality = "unknown";
+		                signal.quality = "parsed_error";
 		            }
 		        }
 		        else
 		        {
-		            signal.quality = "unknown";
+		            // Try alternative parsing - sometimes quality might be at the end
+		            var altPattern = "\"quality\": \"";
+		            qualStart = json.IndexOf(altPattern);
+		            if (qualStart >= 0)
+		            {
+		                qualStart += altPattern.Length;
+		                var qualEnd = json.IndexOf("\"", qualStart);
+		                if (qualEnd > qualStart)
+		                {
+		                    signal.quality = json.Substring(qualStart, qualEnd - qualStart);
+		                }
+		                else
+		                {
+		                    signal.quality = "alt_parse_error";
+		                }
+		            }
+		            else
+		            {
+		                signal.quality = "not_found";
+		            }
 		        }
 		        
 		        // Extract timestamp
 		        var timeStart = json.IndexOf("\"timestamp\":") + 12;
 		        var timeEnd = json.IndexOf("}", timeStart);
+		        if (timeEnd == -1) timeEnd = json.Length; // Handle end of string
 		        signal.timestamp = long.Parse(json.Substring(timeStart, timeEnd - timeStart));
 		        
 		        return signal;
