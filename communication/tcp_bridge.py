@@ -109,26 +109,52 @@ class TCPBridge:
     
     def _receive_loop(self):
         """Receive market data from NinjaTrader"""
+        log.info("TCP receive loop started - waiting for data...")
+        
         while self.running:
             try:
+                log.info("Waiting for message header...")
+                
                 # Read message header
                 header = self.feature_conn.recv(4)
                 if not header:
+                    log.warning("No header received - connection closed")
                     break
                 
+                log.info(f"Received header: {len(header)} bytes")
                 msg_len = struct.unpack('<I', header)[0]
+                log.info(f"Message length: {msg_len} bytes")
+                
+                if msg_len <= 0 or msg_len > 1000000:  # Increased limit for large historical data
+                    log.error(f"Invalid message length: {msg_len}")
+                    continue
                 
                 # Read message data
+                log.info(f"Reading {msg_len} bytes of data...")
                 data = self.feature_conn.recv(msg_len)
                 if len(data) != msg_len:
+                    log.warning(f"Incomplete data received: {len(data)}/{msg_len}")
                     continue
+                
+                log.info(f"Received complete message: {len(data)} bytes")
                 
                 # Parse and process message
                 message = json.loads(data.decode())
+                log.info(f"Parsed JSON - 15m bars: {len(message.get('price_15m', []))}, 5m bars: {len(message.get('price_5m', []))}")
                 
                 if self.on_market_data and "price_15m" in message:
+                    log.info("Calling market data callback...")
                     self.on_market_data(message)
-                
+                    log.info("Market data callback completed")
+                else:
+                    log.warning("No callback set or invalid message format")
+                    
+            except socket.timeout:
+                log.info("Socket timeout - continuing...")
+                continue
+            except json.JSONDecodeError as e:
+                log.error(f"JSON decode error: {e}")
+                continue
             except Exception as e:
                 log.error(f"Receive error: {e}")
                 break

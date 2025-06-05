@@ -1,6 +1,6 @@
 # .gitignore
 
-rl/
+.joblib
 *.pth
 *.npy
 *.csv
