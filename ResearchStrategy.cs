@@ -467,7 +467,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            volumes15m.Add(volume15m);
 		            
 		            // Keep last 100 bars for performance
-		            if (prices15m.Count > 100)
+		            if (prices15m.Count > 300)
 		            {
 		                prices15m.RemoveAt(0);
 		                volumes15m.RemoveAt(0);
@@ -484,7 +484,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            volumes5m.Add(volume5m);
 		            
 		            // Keep last 100 bars for performance
-		            if (prices5m.Count > 100)
+		            if (prices5m.Count > 300)
 		            {
 		                prices5m.RemoveAt(0);
 		                volumes5m.RemoveAt(0);
