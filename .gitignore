@@ -1,6 +1,5 @@
 # .gitignore
 
-features/
 rl/
 *.pth
 *.npy
