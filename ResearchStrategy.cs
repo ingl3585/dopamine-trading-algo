@@ -93,11 +93,18 @@ namespace NinjaTrader.NinjaScript.Strategies
                         Print("Research Strategy data loaded - preparing for connection");
                         break;
                         
-                    case State.Realtime:
-                        Print("Research Strategy entering real-time mode");
-                        ConnectToPython();
-                        StartSignalReceiver();
-                        break;
+					case State.Realtime:
+					    Print("Research Strategy entering real-time mode");
+					    ConnectToPython();
+					    StartSignalReceiver();
+					    
+					    // Send initial historical data for training
+					    if (isConnectedToFeatureServer)
+					    {
+					        Print($"Sending historical data for training: 15m={prices15m.Count}, 5m={prices5m.Count}");
+					        SendMarketDataToPython();
+					    }
+					    break;
                         
                     case State.Terminated:
                         Cleanup();
@@ -136,7 +143,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             TraceOrders = false;
             RealtimeErrorHandling = RealtimeErrorHandling.StopCancelClose;
             StopTargetHandling = StopTargetHandling.PerEntryExecution;
-            BarsRequiredToTrade = 50;
+            BarsRequiredToTrade = 0;
         }
         
         private void ConfigureStrategy()
@@ -148,38 +155,34 @@ namespace NinjaTrader.NinjaScript.Strategies
             Print("Research Strategy configured with 15m and 5m timeframes");
         }
         
-        protected override void OnBarUpdate()
-        {
-            try
-            {
-                // Only process on primary timeframe updates
-                if (BarsInProgress != 0) return;
-                
-                // Ensure we have sufficient data
-                if (CurrentBar < BarsRequiredToTrade) return;
-                
-                // Update data arrays
-                UpdateMarketData();
-                
-                // Send data to Python every bar (if connected)
-                if (isConnectedToFeatureServer)
-                {
-                    SendMarketDataToPython();
-                }
-                else
-                {
-                    // Try to reconnect every 30 seconds
-                    if ((DateTime.Now - lastConnectionAttempt).TotalSeconds > 30)
-                    {
-                        ConnectToPython();
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Print($"OnBarUpdate error: {ex.Message}");
-            }
-        }
+		protected override void OnBarUpdate()
+		{
+		    try
+		    {
+		        // Only process on primary timeframe updates  
+		        if (BarsInProgress != 0) return;
+		        
+		        if (State == State.Historical)
+		        {
+		            // Just collect historical data, don't send to Python
+		            UpdateMarketData();
+		        }
+		        else if (State == State.Realtime)
+		        {
+		            // Send data to Python for real-time trading only
+		            UpdateMarketData();
+		            
+		            if (isConnectedToFeatureServer)
+		            {
+		                SendMarketDataToPython();
+		            }
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"OnBarUpdate error: {ex.Message}");
+		    }
+		}
         
         protected override void OnExecutionUpdate(Execution execution, string executionId, 
                                                 double price, int quantity, MarketPosition marketPosition, 
@@ -505,46 +508,46 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
         
-        private SignalData ParseSignalJson(string json)
-        {
-            try
-            {
-                // Simple JSON parsing for our specific format
-                // Expected: {"action":1,"confidence":0.75,"quality":"good","timestamp":123456}
-                
-                var signal = new SignalData();
-                
-                // Extract action
-                var actionStart = json.IndexOf("\"action\":") + 9;
-                var actionEnd = json.IndexOf(",", actionStart);
-                if (actionEnd == -1) actionEnd = json.IndexOf("}", actionStart);
-                signal.action = int.Parse(json.Substring(actionStart, actionEnd - actionStart));
-                
-                // Extract confidence
-                var confStart = json.IndexOf("\"confidence\":") + 13;
-                var confEnd = json.IndexOf(",", confStart);
-                if (confEnd == -1) confEnd = json.IndexOf("}", confStart);
-                signal.confidence = double.Parse(json.Substring(confStart, confEnd - confStart));
-                
-                // Extract quality
-                var qualStart = json.IndexOf("\"quality\":\"") + 11;
-                var qualEnd = json.IndexOf("\"", qualStart);
-                signal.quality = json.Substring(qualStart, qualEnd - qualStart);
-                
-                // Extract timestamp
-                var timeStart = json.IndexOf("\"timestamp\":") + 12;
-                var timeEnd = json.IndexOf("}", timeStart);
-                if (timeEnd == -1) timeEnd = json.Length;
-                signal.timestamp = long.Parse(json.Substring(timeStart, timeEnd - timeStart));
-                
-                return signal;
-            }
-            catch (Exception ex)
-            {
-                Print($"JSON parsing error: {ex.Message}");
-                return null;
-            }
-        }
+		private SignalData ParseSignalJson(string json)
+		{
+		    try {
+		        var signal = new SignalData();
+		        
+		        // Extract action (unchanged)
+		        var actionStart = json.IndexOf("\"action\":") + 9;
+		        var actionEnd = json.IndexOf(",", actionStart);
+		        signal.action = int.Parse(json.Substring(actionStart, actionEnd - actionStart));
+		        
+		        // Extract confidence (unchanged)
+		        var confStart = json.IndexOf("\"confidence\":") + 13;
+		        var confEnd = json.IndexOf(",", confStart);
+		        signal.confidence = double.Parse(json.Substring(confStart, confEnd - confStart));
+		        
+		        // FIX: Better quality parsing
+		        var qualStart = json.IndexOf("\"quality\":\"") + 11;
+		        if (qualStart > 10) // Found quoted string
+		        {
+		            var qualEnd = json.IndexOf("\"", qualStart);
+		            signal.quality = json.Substring(qualStart, qualEnd - qualStart);
+		        }
+		        else
+		        {
+		            // Fallback: treat as string anyway
+		            signal.quality = "unknown";
+		        }
+		        
+		        // Extract timestamp (unchanged)
+		        var timeStart = json.IndexOf("\"timestamp\":") + 12;
+		        var timeEnd = json.IndexOf("}", timeStart);
+		        signal.timestamp = long.Parse(json.Substring(timeStart, timeEnd - timeStart));
+		        
+		        return signal;
+		    }
+		    catch (Exception ex) {
+		        Print($"JSON parsing error: {ex.Message} - JSON: {json}");
+		        return null;
+		    }
+		}
         
         private string GetActionName(int action)
         {
