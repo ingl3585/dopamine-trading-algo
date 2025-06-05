@@ -46,12 +46,10 @@ class LogisticSignalModel:
             # Get prediction and probability
             prediction = self.model.predict(scaled_features)[0]
             probabilities = self.model.predict_proba(scaled_features)[0]
-            
-            # Convert to trading signal
-            action, confidence = self._convert_prediction(prediction, probabilities)
+            confidence = probabilities[prediction]
             quality = self._assess_quality(confidence)
             
-            return action, confidence, quality
+            return prediction, confidence, quality
             
         except Exception as e:
             log.error(f"Prediction error: {e}")
@@ -183,24 +181,15 @@ class LogisticSignalModel:
         
         # 3. Signal Generation - research-aligned logic
         if (trend_bullish and bb_buy_signal and rsi_buy_signal and volume_confirmation):
-            return 2  # Strong BUY signal
+            return 1  # Strong BUY signal
         elif (trend_bearish and bb_sell_signal and rsi_sell_signal and volume_confirmation):
-            return 0  # Strong SELL signal
+            return 2  # Strong SELL signal
         elif (trend_bullish and (bb_buy_signal or rsi_buy_signal)):
-            return 2  # Moderate BUY signal
+            return 1  # Moderate BUY signal
         elif (trend_bearish and (bb_sell_signal or rsi_sell_signal)):
-            return 0  # Moderate SELL signal
+            return 2  # Moderate SELL signal
         else:
-            return 1  # HOLD signal
-    
-    def _convert_prediction(self, prediction: int, probabilities: np.ndarray) -> Tuple[int, float]:
-        """Convert model prediction to trading signal"""
-        if prediction == 2:  # Buy signal
-            return 1, probabilities[2]
-        elif prediction == 0:  # Sell signal
-            return 2, probabilities[0]
-        else:  # Hold signal
-            return 0, probabilities[1]
+            return 0  # HOLD signal
     
     def _assess_quality(self, confidence: float) -> str:
         """Assess signal quality based on confidence"""
@@ -216,11 +205,11 @@ class LogisticSignalModel:
     def _price_change_to_signal(self, price_change: float) -> int:
         """Fallback for compatibility - simplified threshold"""
         if price_change > 0.0003:   # 0.03%
-            return 2  # Buy signal
+            return 1  # Buy signal
         elif price_change < -0.0003: # 0.03%
-            return 0  # Sell signal
+            return 2  # Sell signal
         else:
-            return 1  # Hold signal
+            return 0  # Hold signal
     
     def _should_retrain(self) -> bool:
         """Determine if model should retrain based on research principles"""
