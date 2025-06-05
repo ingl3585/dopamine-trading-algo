@@ -12,6 +12,10 @@ using NinjaTrader.Cbi;
 using NinjaTrader.Data;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.Strategies;
+using NinjaTrader.NinjaScript.Indicators;
+using NinjaTrader.Gui.Tools;
+using NinjaTrader.NinjaScript.DrawingTools;
+using System.Windows.Media;
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
@@ -43,6 +47,10 @@ namespace NinjaTrader.NinjaScript.Strategies
         [Range(1, 10)]
         [Display(Name = "Max Position Size", Description = "Maximum position size", Order = 5, GroupName = "Risk Management")]
         public int MaxPositionSize { get; set; }
+		
+		[NinjaScriptProperty]
+		[Display(Name = "Show Indicators", Description = "Show indicators on chart", Order = 6, GroupName = "Display")]
+		public bool ShowIndicators { get; set; }
         
         #endregion
         
@@ -72,6 +80,16 @@ namespace NinjaTrader.NinjaScript.Strategies
         private bool isConnectedToSignalServer;
         
         #endregion
+		
+		#region Indicator Variables
+		
+		private EMA ema21;
+		private SMA sma50;
+		private Bollinger bb;
+		private RSI rsi14;
+		private VOL volumeIndicator;
+		
+		#endregion
         
         #region Strategy Lifecycle
         
@@ -158,7 +176,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    TraceOrders = false;                              // Reduce noise
 		    RealtimeErrorHandling = RealtimeErrorHandling.StopCancelClose; // Safety
 		    StopTargetHandling = StopTargetHandling.PerEntryExecution;     
-		    BarsRequiredToTrade = 0;                          
+		    BarsRequiredToTrade = 0;
+			ShowIndicators = true;
 		}
         
         private void ConfigureStrategy()
@@ -166,6 +185,46 @@ namespace NinjaTrader.NinjaScript.Strategies
             // Add multi-timeframe data series
             AddDataSeries(BarsPeriodType.Minute, 15);  // BarsArray[1] - 15-minute
             AddDataSeries(BarsPeriodType.Minute, 5);   // BarsArray[2] - 5-minute
+			
+			if (ShowIndicators)
+			{
+			    // Initialize indicators
+			    ema21 = EMA(BarsArray[0], 21);
+			    sma50 = SMA(BarsArray[0], 50);
+			    bb = Bollinger(BarsArray[0], 2.0, 20);
+			    rsi14 = RSI(BarsArray[0], 14, 3);
+			    volumeIndicator = VOL(BarsArray[0]);
+			    
+			    // Configure EMA plot
+			    ema21.Plots[0].Brush = Brushes.Orange;
+			    ema21.Plots[0].Width = 2;
+			    ema21.Plots[0].PlotStyle = PlotStyle.Line;
+			    
+			    // Configure SMA plot
+			    sma50.Plots[0].Brush = Brushes.Blue;
+			    sma50.Plots[0].Width = 2;
+			    sma50.Plots[0].PlotStyle = PlotStyle.Line;
+			    
+			    // Configure Bollinger Bands
+			    bb.Plots[0].Brush = Brushes.Red;  // Upper band
+			    bb.Plots[1].Brush = Brushes.Gray;  // Middle band
+			    bb.Plots[2].Brush = Brushes.Purple;  // Lower band
+			    bb.Plots[0].Width = 1;
+			    bb.Plots[1].Width = 1;
+			    bb.Plots[2].Width = 1;
+			    
+			    // Configure RSI
+			    rsi14.Plots[0].Brush = Brushes.Purple;
+			    rsi14.Plots[0].Width = 2;
+			    
+			    // Add indicators to chart
+			    AddChartIndicator(ema21);
+			    AddChartIndicator(sma50);
+			    AddChartIndicator(bb);
+			    
+			    // RSI goes in separate panel
+			    AddChartIndicator(rsi14);
+			}
         }
         
 		protected override void OnBarUpdate()
@@ -192,6 +251,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            if (BarsInProgress == 0)
 		            {
 		                UpdateMarketData();
+						
+						if (ShowIndicators)
+		                {
+		                    UpdateChartIndicators();
+		                }
 		                
 		                if (isConnectedToFeatureServer)
 		                {
@@ -658,60 +722,69 @@ namespace NinjaTrader.NinjaScript.Strategies
                     return;
                 }
                 
-                switch (signal.action)
-                {
-                    case 1: // Buy signal
-                        if (Position.MarketPosition != MarketPosition.Long)
-                        {
-                            if (Position.MarketPosition == MarketPosition.Short)
-                            {
-                                ExitShort("ML_Reverse");
-                                Print("Reversing from SHORT to LONG");
-                            }
-                            
-                            EnterLong(positionSize, "ML_Long");
-                            Print($"LONG ENTRY: size={positionSize}, confidence={signal.confidence:F3}, quality={signal.quality}");
-                        }
-                        else
-                        {
-                            Print("Already LONG - ignoring buy signal");
-                        }
-                        break;
-                        
-                    case 2: // Sell signal
-                        if (Position.MarketPosition != MarketPosition.Short)
-                        {
-                            if (Position.MarketPosition == MarketPosition.Long)
-                            {
-                                ExitLong("ML_Reverse");
-                                Print("Reversing from LONG to SHORT");
-                            }
-                            
-                            EnterShort(positionSize, "ML_Short");
-                            Print($"SHORT ENTRY: size={positionSize}, confidence={signal.confidence:F3}, quality={signal.quality}");
-                        }
-                        else
-                        {
-                            Print("Already SHORT - ignoring sell signal");
-                        }
-                        break;
-                        
-                    case 0: // Hold/Exit signal
-                        if (Position.MarketPosition != MarketPosition.Flat)
-                        {
-                            if (Position.MarketPosition == MarketPosition.Long)
-                                ExitLong("ML_Exit");
-                            else
-                                ExitShort("ML_Exit");
-                            
-                            Print($"EXIT SIGNAL: confidence={signal.confidence:F3}, quality={signal.quality}");
-                        }
-                        else
-                        {
-                            Print("Already FLAT - ignoring exit signal");
-                        }
-                        break;
-                }
+				switch (signal.action)
+				{
+				    case 1: // Buy signal
+				        if (Position.MarketPosition != MarketPosition.Long)
+				        {
+				            if (Position.MarketPosition == MarketPosition.Short)
+				            {
+				                ExitShort("ML_Reverse");
+				                Print("Reversing from SHORT to LONG");
+				            }
+				            
+				            EnterLong(positionSize, "ML_Long");
+				            Print($"LONG ENTRY: size={positionSize}, confidence={signal.confidence:F3}, quality={signal.quality}");
+				            
+				            // ADD THIS LINE HERE:
+				            VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
+				        }
+				        else
+				        {
+				            Print("Already LONG - ignoring buy signal");
+				        }
+				        break;
+				        
+				    case 2: // Sell signal
+				        if (Position.MarketPosition != MarketPosition.Short)
+				        {
+				            if (Position.MarketPosition == MarketPosition.Long)
+				            {
+				                ExitLong("ML_Reverse");
+				                Print("Reversing from LONG to SHORT");
+				            }
+				            
+				            EnterShort(positionSize, "ML_Short");
+				            Print($"SHORT ENTRY: size={positionSize}, confidence={signal.confidence:F3}, quality={signal.quality}");
+				            
+				            // ADD THIS LINE HERE:
+				            VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
+				        }
+				        else
+				        {
+				            Print("Already SHORT - ignoring sell signal");
+				        }
+				        break;
+				        
+				    case 0: // Hold/Exit signal
+				        if (Position.MarketPosition != MarketPosition.Flat)
+				        {
+				            if (Position.MarketPosition == MarketPosition.Long)
+				                ExitLong("ML_Exit");
+				            else
+				                ExitShort("ML_Exit");
+				            
+				            Print($"EXIT SIGNAL: confidence={signal.confidence:F3}, quality={signal.quality}");
+				            
+				            // ADD THIS LINE HERE:
+				            VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
+				        }
+				        else
+				        {
+				            Print("Already FLAT - ignoring exit signal");
+				        }
+				        break;
+				}
             }
             catch (Exception ex)
             {
@@ -877,5 +950,100 @@ namespace NinjaTrader.NinjaScript.Strategies
         }
         
         #endregion
+		
+		#region Chart Updates
+		
+		private void UpdateChartIndicators()
+		{
+		    if (!ShowIndicators || State != State.Realtime)
+		        return;
+		        
+		    try
+		    {
+		        // Force indicator updates if needed
+		        if (ema21 != null) ema21.Update();
+		        if (sma50 != null) sma50.Update();
+		        if (bb != null) bb.Update();
+		        if (rsi14 != null) rsi14.Update();
+		        
+		        // Calculate volume ratio for display (we'll show this as text)
+		        if (volumeIndicator != null && CurrentBar > 20)
+		        {
+		            double currentVol = Volume[0];
+		            double avgVol = 0;
+		            for (int i = 0; i < 20; i++)
+		            {
+		                avgVol += Volume[i];
+		            }
+		            avgVol /= 20;
+		            
+		            double volRatio = avgVol > 0 ? currentVol / avgVol : 1.0;
+		            
+		            // Display volume ratio as text on chart every 10 bars to avoid clutter
+		            if (CurrentBar % 10 == 0)
+		            {
+		                Draw.TextFixed(this, $"VolRatio_{CurrentBar}", 
+		                    $"Vol Ratio: {volRatio:F2}", 
+		                    TextPosition.TopRight, 
+		                    Brushes.White, 
+		                    new SimpleFont("Arial", 10), 
+		                    Brushes.Transparent, 
+		                    Brushes.Transparent, 
+		                    0);
+		            }
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Chart indicator update error: {ex.Message}");
+		    }
+		}
+		
+		private void VisualizeMLSignal(int action, double confidence, string quality)
+		{
+		    if (!ShowIndicators) return;
+		    
+		    try
+		    {
+		        string signalText = "";
+		        Brush signalColor = Brushes.Gray;
+		        
+		        switch (action)
+		        {
+		            case 1: // Buy
+		                signalText = $"BUY ({confidence:F2})";
+		                signalColor = Brushes.Green;
+		                Draw.ArrowUp(this, $"Buy_{CurrentBar}", false, 0, Low[0] - 2 * TickSize, signalColor);
+		                break;
+		            case 2: // Sell  
+		                signalText = $"SELL ({confidence:F2})";
+		                signalColor = Brushes.Red;
+		                Draw.ArrowDown(this, $"Sell_{CurrentBar}", false, 0, High[0] + 2 * TickSize, signalColor);
+		                break;
+		            case 0: // Hold/Exit
+		                if (Position.MarketPosition != MarketPosition.Flat)
+		                {
+		                    signalText = $"EXIT ({confidence:F2})";
+		                    signalColor = Brushes.Orange;
+		                    Draw.Diamond(this, $"Exit_{CurrentBar}", false, 0, Close[0], signalColor);
+		                }
+		                break;
+		        }
+		        
+		        // Add text label for signal
+		        if (!string.IsNullOrEmpty(signalText))
+		        {
+		            Draw.Text(this, $"Signal_{CurrentBar}", signalText, 0, 
+		                action == 2 ? High[0] + 4 * TickSize : Low[0] - 4 * TickSize, 
+		                signalColor);
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Signal visualization error: {ex.Message}");
+		    }
+		}
+		
+		#endregion
     }
 }
