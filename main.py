@@ -8,13 +8,13 @@ from core.runner import Runner
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description='Reinforcement Learning Trading System with Ichimoku/EMA Features'
+        description='Pure ML Signal Generation System for Ichimoku/EMA Trading'
     )
     
     parser.add_argument(
         "--reset", 
         action="store_true", 
-        help="Force full model retraining (required when switching to Ichimoku/EMA features)"
+        help="Force full model retraining (recommended when switching architectures)"
     )
     
     parser.add_argument(
@@ -33,7 +33,13 @@ def parse_args():
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Run in simulation mode without sending actual signals"
+        help="Run ML training without sending signals to NinjaScript"
+    )
+    
+    parser.add_argument(
+        "--signal-analysis",
+        action="store_true", 
+        help="Enable detailed signal quality analysis logging"
     )
     
     return parser.parse_args()
@@ -45,25 +51,38 @@ def main():
     setup_logging(args.log_level)
     log = logging.getLogger(__name__)
     
-    log.info("="*60)
-    log.info("Starting RL Trading System with Ichimoku/EMA Features")
-    log.info("="*60)
+    log.info("="*70)
+    log.info("PURE ML SIGNAL GENERATION SYSTEM")
+    log.info("Ichimoku/EMA Features → ML Predictions → NinjaScript Execution")
+    log.info("="*70)
+    
+    log.info("Architecture: Python (ML) ↔ NinjaScript (Position Management)")
+    log.info("Python Role: Feature processing, ML predictions, signal generation")
+    log.info("NinjaScript Role: Entry/exit execution, stops, targets, position sizing")
     
     if args.reset:
         log.info("Model reset requested - will retrain from scratch")
     
     if args.dry_run:
-        log.info("DRY RUN MODE - No actual trades will be executed")
+        log.warning("DRY RUN MODE - ML training only, no signals sent to NinjaScript")
     
     if args.validate_features:
         log.info("Strict feature validation enabled")
+        
+    if args.signal_analysis:
+        log.info("Detailed signal quality analysis enabled")
     
     try:
-        # Initialize and run the system
+        # Initialize and run the pure ML system
         runner = Runner(args)
-        log.info("System initialized successfully")
+        log.info("Pure ML system initialized successfully")
         
-        log.info("Waiting for NinjaTrader connection and market data...")
+        log.info("System Status:")
+        log.info("  • Waiting for NinjaScript connection...")
+        log.info("  • Ready to process Ichimoku/EMA features")
+        log.info("  • ML model will generate confidence-based signals")
+        log.info("  • NinjaScript will handle all position management")
+        
         runner.run()
         
     except KeyboardInterrupt:
@@ -72,7 +91,7 @@ def main():
         log.error(f"System error: {e}")
         raise
     finally:
-        log.info("System shutdown complete")
+        log.info("Pure ML signal generation system shutdown complete")
 
 if __name__ == "__main__":
     main()

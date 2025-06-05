@@ -91,7 +91,6 @@ class Runner:
             log.info("=== System Status ===")
             log.info(f"Model ready: {self.agent.model is not None}")
             log.info(f"Feature dimensions: {self.cfg.INPUT_DIM}")
-            log.info(f"Max position size: {self.cfg.MAX_SIZE}")
             log.info(f"Confidence threshold: {self.cfg.CONFIDENCE_THRESHOLD}")
             log.info(f"Reset mode: {self.args.reset}")
             
