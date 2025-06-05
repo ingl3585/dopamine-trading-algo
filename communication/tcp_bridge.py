@@ -136,7 +136,26 @@ class TCPBridge:
         log.info("TCP receive loop stopped")
     
     def _send_message(self, connection: socket.socket, message: Dict):
-        """Send JSON message over TCP"""
-        data = json.dumps(message).encode()
-        header = struct.pack('<I', len(data))
-        connection.sendall(header + data)
+        """Send JSON message with retry logic"""
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                data = json.dumps(message).encode()
+                header = struct.pack('<I', len(data))
+                connection.sendall(header + data)
+                return True
+            except (BrokenPipeError, ConnectionResetError) as e:
+                log.warning(f"Connection lost on attempt {attempt + 1}: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(1)
+                    # Try to reconnect
+                    try:
+                        connection.connect((self.config.TCP_HOST, self.config.SIGNAL_PORT))
+                    except:
+                        pass
+                else:
+                    log.error("Failed to send message after retries")
+                    return False
+            except Exception as e:
+                log.error(f"Send message error: {e}")
+                return False

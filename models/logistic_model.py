@@ -72,7 +72,7 @@ class LogisticSignalModel:
             self.feature_history = self.feature_history[-self.config.ML_LOOKBACK:]
             self.signal_history = self.signal_history[-self.config.ML_LOOKBACK:]
         
-        # Retrain periodically
+        # Retrain only when we have natural diversity
         if self._should_retrain():
             self.train()
     
@@ -168,15 +168,23 @@ class LogisticSignalModel:
             return "poor"
     
     def _price_change_to_signal(self, price_change: float) -> int:
-        """Convert price change to signal class for training"""
-        if price_change > 0.002:  # 0.2% threshold
-            return 2  # Buy signal was correct
-        elif price_change < -0.002:
-            return 0  # Sell signal was correct
+        # Make thresholds more sensitive to generate more varied signals
+        if price_change > 0.001:  # Reduced from 0.002
+            return 2  # Buy signal
+        elif price_change < -0.001:  # Reduced from -0.002  
+            return 0  # Sell signal
         else:
-            return 1  # Hold was correct
+            return 1  # Hold signal
     
     def _should_retrain(self) -> bool:
-        """Check if model should be retrained"""
-        return (len(self.signal_history) >= self.config.MIN_TRAINING_SAMPLES and 
-                len(self.signal_history) % self.config.ML_RETRAIN_FREQUENCY == 0)
+        if len(self.signal_history) < self.config.MIN_TRAINING_SAMPLES:
+            return False
+        
+        # Only train when we have natural class diversity
+        unique_classes, counts = np.unique(self.signal_history, return_counts=True)
+        min_samples_per_class = min(counts) if len(counts) > 0 else 0
+
+        # Require at least 2 classes with minimum 3 samples each
+        has_diversity = len(unique_classes) >= 2 and min_samples_per_class >= 3
+        
+        return has_diversity
