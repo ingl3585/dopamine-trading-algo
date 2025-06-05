@@ -88,9 +88,16 @@ class LogisticSignalModel:
             X = np.array([f.to_array() for f in self.feature_history])
             y = np.array(self.signal_history)
             
-            # Validate we have multiple classes
-            if len(np.unique(y)) < 2:
+            # Validate we have multiple classes with sufficient samples
+            unique_classes, counts = np.unique(y, return_counts=True)
+            if len(unique_classes) < 2:
                 log.warning("Need multiple signal classes for training")
+                return
+            
+            # Require minimum samples per class for sklearn
+            min_samples_per_class = min(counts)
+            if min_samples_per_class < 2:
+                log.warning(f"Need at least 2 samples per class, got {min_samples_per_class}")
                 return
             
             # Split data if we have enough samples
@@ -168,10 +175,11 @@ class LogisticSignalModel:
             return "poor"
     
     def _price_change_to_signal(self, price_change: float) -> int:
-        # Make thresholds more sensitive to generate more varied signals
-        if price_change > 0.001:  # Reduced from 0.002
+        """Convert price change to signal with better thresholds"""
+        # Use slightly larger thresholds for more meaningful signals
+        if price_change > 0.002:  # 0.2% up
             return 2  # Buy signal
-        elif price_change < -0.001:  # Reduced from -0.002  
+        elif price_change < -0.002:  # 0.2% down
             return 0  # Sell signal
         else:
             return 1  # Hold signal

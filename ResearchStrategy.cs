@@ -168,22 +168,31 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
-		        // Only process on primary timeframe updates  
-		        if (BarsInProgress != 0) return;
+		        // Validate we have enough data on all timeframes before processing
+		        if (CurrentBars[0] < 1 || 
+		            (BarsArray.Length > 1 && CurrentBars[1] < 1) || 
+		            (BarsArray.Length > 2 && CurrentBars[2] < 1))
+		        {
+		            return; // Wait until all timeframes have data
+		        }
 		        
 		        if (State == State.Historical)
 		        {
-		            // Just collect historical data, don't send to Python
+		            // Collect data from all timeframes during historical processing
 		            UpdateMarketData();
 		        }
 		        else if (State == State.Realtime)
 		        {
-		            // Send data to Python for real-time trading only
-		            UpdateMarketData();
-		            
-		            if (isConnectedToFeatureServer)
+		            // Only send to Python on primary timeframe updates in real-time
+		            // This ensures all secondary timeframes have updated their latest values
+		            if (BarsInProgress == 0)
 		            {
-		                SendMarketDataToPython();
+		                UpdateMarketData();
+		                
+		                if (isConnectedToFeatureServer)
+		                {
+		                    SendMarketDataToPython();
+		                }
 		            }
 		        }
 		    }
@@ -444,49 +453,55 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         #region Data Management
         
-        private void UpdateMarketData()
-        {
-            try
-            {
-                // Update 15-minute data (BarsArray[1])
-                if (BarsArray.Length > 1 && CurrentBars.Length > 1 && CurrentBars[1] >= 0)
-                {
-                    double price15m = Closes[1][0];
-                    double volume15m = Volumes[1][0];
-                    
-                    prices15m.Add(price15m);
-                    volumes15m.Add(volume15m);
-                    
-                    // Keep last 100 bars for performance
-                    if (prices15m.Count > 100)
-                    {
-                        prices15m.RemoveAt(0);
-                        volumes15m.RemoveAt(0);
-                    }
-                }
-                
-                // Update 5-minute data (BarsArray[2])
-                if (BarsArray.Length > 2 && CurrentBars.Length > 2 && CurrentBars[2] >= 0)
-                {
-                    double price5m = Closes[2][0];
-                    double volume5m = Volumes[2][0];
-                    
-                    prices5m.Add(price5m);
-                    volumes5m.Add(volume5m);
-                    
-                    // Keep last 100 bars for performance
-                    if (prices5m.Count > 100)
-                    {
-                        prices5m.RemoveAt(0);
-                        volumes5m.RemoveAt(0);
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Print($"Data update error: {ex.Message}");
-            }
-        }
+		private void UpdateMarketData()
+		{
+		    try
+		    {
+		        // Update 15-minute data (BarsArray[1]) with validation
+		        if (BarsArray.Length > 1 && CurrentBars[1] >= 0)
+		        {
+		            double price15m = Closes[1][0];
+		            double volume15m = Volumes[1][0];
+		            
+		            prices15m.Add(price15m);
+		            volumes15m.Add(volume15m);
+		            
+		            // Keep last 100 bars for performance
+		            if (prices15m.Count > 100)
+		            {
+		                prices15m.RemoveAt(0);
+		                volumes15m.RemoveAt(0);
+		            }
+		        }
+		        
+		        // Update 5-minute data (BarsArray[2]) with validation
+		        if (BarsArray.Length > 2 && CurrentBars[2] >= 0)
+		        {
+		            double price5m = Closes[2][0];
+		            double volume5m = Volumes[2][0];
+		            
+		            prices5m.Add(price5m);
+		            volumes5m.Add(volume5m);
+		            
+		            // Keep last 100 bars for performance
+		            if (prices5m.Count > 100)
+		            {
+		                prices5m.RemoveAt(0);
+		                volumes5m.RemoveAt(0);
+		            }
+		        }
+		        
+		        // Debug output
+		        if (CurrentBar % 20 == 0)
+		        {
+		            Print($"Data updated: 15m bars={prices15m.Count}, 5m bars={prices5m.Count}");
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Data update error: {ex.Message}");
+		    }
+		}
         
         #endregion
         

@@ -113,7 +113,7 @@ class TradingSystem:
             # Train on historical data once
             if not self.trained_on_historical:
                 log.info(f"Training on {len(price_5m)} historical bars")
-                self._train_on_historical_data(features, price_5m)
+                self._train_on_historical_data(data)  # Pass full data
                 self.trained_on_historical = True
             
             # Generate signal
@@ -137,17 +137,40 @@ class TradingSystem:
         except Exception as e:
             log.error(f"Market data processing error: {e}")
     
-    def _train_on_historical_data(self, features, price_data):
-        """Train model on historical data once"""
-        for i in range(1, len(price_data)):
-            price_change = (price_data[i] - price_data[i-1]) / price_data[i-1]
+    def _train_on_historical_data(self, data):
+        """Train model on historical data with proper feature extraction"""
+        price_15m = data.get("price_15m", [])
+        volume_15m = data.get("volume_15m", [])
+        price_5m = data.get("price_5m", [])
+        volume_5m = data.get("volume_5m", [])
+        
+        min_samples = max(50, self.config.SMA_PERIOD)  # Ensure enough data for indicators
+        
+        # Extract features for each historical point
+        for i in range(min_samples, len(price_5m) - 1):
+            # Get data up to point i
+            hist_price_15m = price_15m[:i+1]
+            hist_vol_15m = volume_15m[:i+1] 
+            hist_price_5m = price_5m[:i+1]
+            hist_vol_5m = volume_5m[:i+1]
+            
+            # Extract features for this specific time point
+            features = self.feature_extractor.extract_features(
+                hist_price_15m, hist_vol_15m, hist_price_5m, hist_vol_5m
+            )
+            
+            if features is None:
+                continue
+                
+            # Calculate price change for next period
+            price_change = (price_5m[i+1] - price_5m[i]) / price_5m[i]
             signal = self.model._price_change_to_signal(price_change)
             
-            # Add directly to avoid triggering retraining
+            # Now we have unique features for each sample
             self.model.feature_history.append(features)
             self.model.signal_history.append(signal)
         
-        # Train once
+        log.info(f"Generated {len(self.model.feature_history)} unique training samples")
         self.model.train()
     
     def _update_stats(self, action: int, confidence: float):
