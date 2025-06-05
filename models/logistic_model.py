@@ -155,12 +155,16 @@ class LogisticSignalModel:
             log.error(f"Model load error: {e}")
 
     def _generate_signal_from_features(self, features: ResearchFeatures, price_change: float) -> int:
-        """Generate signals using research-backed multi-indicator approach"""
+        """Generate signals using research-backed multi-indicator approach - FIXED"""
         
-        # 1. Trend Analysis (15m timeframe - primary direction)
-        trend_bullish = (features.ema_15m > features.sma_15m and 
+        # 1. Trend Analysis (15m timeframe - primary direction) - FIXED
+        # Now using the proper ratios instead of raw values
+        trend_bullish = (features.ema_trend_15m > 0.001 and  # EMA > SMA by at least 0.1%
+                        features.price_vs_sma_15m > 0 and    # Price above SMA
                         features.rsi_15m > 40 and features.rsi_15m < 80)
-        trend_bearish = (features.ema_15m < features.sma_15m and 
+        
+        trend_bearish = (features.ema_trend_15m < -0.001 and  # EMA < SMA by at least 0.1%
+                        features.price_vs_sma_15m < 0 and     # Price below SMA
                         features.rsi_15m < 60 and features.rsi_15m > 20)
         
         # 2. Entry Signals (5m timeframe - timing confirmation)
@@ -175,6 +179,7 @@ class LogisticSignalModel:
         log.info(f"Trend: bull={trend_bullish}, bear={trend_bearish}")
         log.info(f"RSI: 15m={features.rsi_15m:.1f}, 5m={features.rsi_5m:.1f}")
         log.info(f"BB pos: {features.bb_position_5m:.2f}, Vol ratio: {features.volume_ratio_5m:.2f}")
+        log.info(f"EMA trend 15m: {features.ema_trend_15m:.4f}, Price vs SMA 15m: {features.price_vs_sma_15m:.4f}")
         
         # 3. Signal Generation - research-aligned logic
         if (trend_bullish and bb_buy_signal and rsi_buy_signal and volume_confirmation):

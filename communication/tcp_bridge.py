@@ -105,11 +105,16 @@ class TCPBridge:
                 log.warning("No signal connection available")
                 return
             
+            # Convert to .NET Ticks (100-nanosecond intervals since 0001-01-01)
+            # .NET epoch starts 621355968000000000 ticks before Unix epoch
+            unix_timestamp = time.time()
+            net_ticks = int((unix_timestamp * 10000000) + 621355968000000000)
+            
             signal = {
                 "action": action,
                 "confidence": round(confidence, 3),
                 "quality": quality,
-                "timestamp": int(time.time())
+                "timestamp": net_ticks  # .NET Ticks format for C#
             }
             
             # Send signal

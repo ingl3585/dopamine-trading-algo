@@ -8,41 +8,41 @@ from config import ResearchConfig
 
 @dataclass
 class ResearchFeatures:
-    """Research-aligned feature vector"""
+    """Research-aligned feature vector - FIXED"""
     
     # 15-minute features
     rsi_15m: float
     bb_position_15m: float
-    ema_15m: float
-    sma_15m: float
+    ema_trend_15m: float  # Represents EMA vs SMA relationship
+    price_vs_sma_15m: float  # Price vs SMA relationship
     volume_ratio_15m: float
     
     # 5-minute features  
     rsi_5m: float
     bb_position_5m: float
-    ema_5m: float
-    sma_5m: float
+    ema_trend_5m: float   # Represents EMA vs SMA relationship
+    price_vs_sma_5m: float  # Price vs SMA relationship
     volume_ratio_5m: float
     
     def to_array(self) -> np.ndarray:
         """Convert to array for ML model"""
         return np.array([
-            self.rsi_15m, self.bb_position_15m, self.ema_15m, 
-            self.sma_15m, self.volume_ratio_15m,
-            self.rsi_5m, self.bb_position_5m, self.ema_5m, 
-            self.sma_5m, self.volume_ratio_5m
+            self.rsi_15m, self.bb_position_15m, self.ema_trend_15m, 
+            self.price_vs_sma_15m, self.volume_ratio_15m,
+            self.rsi_5m, self.bb_position_5m, self.ema_trend_5m, 
+            self.price_vs_sma_5m, self.volume_ratio_5m
         ])
     
     @classmethod
     def get_feature_names(cls) -> List[str]:
         """Get feature names for model interpretation"""
         return [
-            'rsi_15m', 'bb_position_15m', 'ema_15m', 'sma_15m', 'volume_ratio_15m',
-            'rsi_5m', 'bb_position_5m', 'ema_5m', 'sma_5m', 'volume_ratio_5m'
+            'rsi_15m', 'bb_position_15m', 'ema_trend_15m', 'price_vs_sma_15m', 'volume_ratio_15m',
+            'rsi_5m', 'bb_position_5m', 'ema_trend_5m', 'price_vs_sma_5m', 'volume_ratio_5m'
         ]
 
 class FeatureExtractor:
-    """Extract research-aligned features from market data"""
+    """Extract research-aligned features from market data - FIXED"""
     
     def __init__(self, config: ResearchConfig):
         self.config = config
@@ -50,7 +50,7 @@ class FeatureExtractor:
     
     def extract_features(self, price_15m: List[float], volume_15m: List[float],
                         price_5m: List[float], volume_5m: List[float]) -> Optional[ResearchFeatures]:
-        """Extract features from multi-timeframe market data"""
+        """Extract features from multi-timeframe market data - FIXED"""
         
         try:
             # Validate input data
@@ -59,9 +59,9 @@ class FeatureExtractor:
             
             # Convert to numpy arrays
             prices_15m = np.array(price_15m)
-            volumes_15m = np.array(volume_15m)
+            volumes_15m = np.array(volume_15m) if volume_15m else np.ones_like(prices_15m)
             prices_5m = np.array(price_5m)
-            volumes_5m = np.array(volume_5m)
+            volumes_5m = np.array(volume_5m) if volume_5m else np.ones_like(prices_5m)
             
             # Extract 15-minute features
             features_15m = self._extract_timeframe_features(
@@ -77,13 +77,13 @@ class FeatureExtractor:
             return ResearchFeatures(
                 rsi_15m=features_15m['rsi'],
                 bb_position_15m=features_15m['bb_position'],
-                ema_15m=features_15m['ema'],
-                sma_15m=features_15m['sma'],
+                ema_trend_15m=features_15m['ema_trend'],  # FIXED
+                price_vs_sma_15m=features_15m['price_vs_sma'],  # FIXED
                 volume_ratio_15m=features_15m['volume_ratio'],
                 rsi_5m=features_5m['rsi'],
                 bb_position_5m=features_5m['bb_position'],
-                ema_5m=features_5m['ema'],
-                sma_5m=features_5m['sma'],
+                ema_trend_5m=features_5m['ema_trend'],  # FIXED
+                price_vs_sma_5m=features_5m['price_vs_sma'],  # FIXED
                 volume_ratio_5m=features_5m['volume_ratio']
             )
             
@@ -99,7 +99,7 @@ class FeatureExtractor:
     
     def _extract_timeframe_features(self, prices: np.ndarray, 
                                    volumes: np.ndarray, timeframe: str) -> dict:
-        """Extract features for a specific timeframe"""
+        """Extract features for a specific timeframe - FIXED"""
         
         # Calculate indicators
         rsi = self.indicators.rsi(prices, self.config.RSI_PERIOD)
@@ -107,17 +107,28 @@ class FeatureExtractor:
         bb_upper, bb_mid, bb_lower = self.indicators.bollinger_bands(
             prices, self.config.BB_PERIOD, self.config.BB_STD
         )
-        bb_position = ((prices[-1] - bb_lower) / (bb_upper - bb_lower)) \
-                     if bb_upper != bb_lower else 0.5
         
+        # Bollinger Band position calculation
+        if bb_upper != bb_lower:
+            bb_position = (prices[-1] - bb_lower) / (bb_upper - bb_lower)
+        else:
+            bb_position = 0.5
+        
+        # Calculate moving averages properly
         ema = self.indicators.ema(prices, self.config.EMA_PERIOD)
         sma = self.indicators.sma(prices, self.config.SMA_PERIOD)
+        current_price = prices[-1]
+        
+        # Create meaningful relationships instead of raw values
+        ema_trend = (ema - sma) / sma if sma != 0 else 0.0  # EMA vs SMA relationship
+        price_vs_sma = (current_price - sma) / sma if sma != 0 else 0.0  # Price vs SMA
+        
         volume_ratio = self.indicators.volume_ratio(volumes, self.config.VOLUME_PERIOD)
         
         return {
             'rsi': rsi,
             'bb_position': bb_position,
-            'ema': ema,
-            'sma': sma,
+            'ema_trend': ema_trend,
+            'price_vs_sma': price_vs_sma,
             'volume_ratio': volume_ratio
         }

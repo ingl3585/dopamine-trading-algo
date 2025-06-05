@@ -126,34 +126,34 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
         
-        private void ConfigureDefaults()
-        {
-            Description = "Research-aligned strategy using Python ML signals with RSI, Bollinger Bands, EMA, SMA";
-            Name = "ResearchStrategy";
-            Calculate = Calculate.OnBarClose;
-            
-            // Set default values
-            RiskPercent = 0.02;
-            StopLossTicks = 20;
-            TakeProfitTicks = 40;
-            MinConfidence = 0.3;
-            MaxPositionSize = 2;
-            
-            // Strategy settings
-            EntriesPerDirection = 1;
-            EntryHandling = EntryHandling.AllEntries;
-            ExitOnSessionCloseSeconds = 30;
-            IsFillLimitOnTouch = false;
-            MaximumBarsLookBack = MaximumBarsLookBack.TwoHundredFiftySix;
-            OrderFillResolution = OrderFillResolution.Standard;
-            Slippage = 0;
-            StartBehavior = StartBehavior.WaitUntilFlat;
-            TimeInForce = TimeInForce.Gtc;
-            TraceOrders = false;
-            RealtimeErrorHandling = RealtimeErrorHandling.StopCancelClose;
-            StopTargetHandling = StopTargetHandling.PerEntryExecution;
-            BarsRequiredToTrade = 0;
-        }
+		private void ConfigureDefaults()
+		{
+		    Description = "Research-aligned strategy: RSI + BB + EMA/SMA + Volume (15m/5m)";
+		    Name = "ResearchStrategy";
+		    Calculate = Calculate.OnBarClose;
+		    
+		    // Research-backed default values
+		    RiskPercent = 0.02;        // 2% risk per trade (institutional standard)
+		    StopLossTicks = 20;        // Simple fixed stop
+		    TakeProfitTicks = 40;      // 2:1 reward-to-risk (research optimal)
+		    MinConfidence = 0.6;       // Research: 60% accuracy threshold
+		    MaxPositionSize = 2;       // Simple position limits
+		    
+		    // NinjaTrader settings aligned with research
+		    EntriesPerDirection = 1;                           // Simplicity
+		    EntryHandling = EntryHandling.AllEntries;         
+		    ExitOnSessionCloseSeconds = 30;                   
+		    IsFillLimitOnTouch = false;                       
+		    MaximumBarsLookBack = MaximumBarsLookBack.TwoHundredFiftySix; // Research: sufficient history
+		    OrderFillResolution = OrderFillResolution.Standard;          
+		    Slippage = 0;                                     
+		    StartBehavior = StartBehavior.WaitUntilFlat;      // Risk management
+		    TimeInForce = TimeInForce.Gtc;                    
+		    TraceOrders = false;                              // Reduce noise
+		    RealtimeErrorHandling = RealtimeErrorHandling.StopCancelClose; // Safety
+		    StopTargetHandling = StopTargetHandling.PerEntryExecution;     
+		    BarsRequiredToTrade = 0;                          
+		}
         
         private void ConfigureStrategy()
         {
@@ -457,7 +457,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
-		        // Update 15-minute data (BarsArray[1]) with validation
+		        // Research principle: Keep sufficient but not excessive history
+		        // Your research.txt: "Keep last 100 bars for performance"
+		        
+		        // Update 15-minute data with validation
 		        if (BarsArray.Length > 1 && CurrentBars[1] >= 0)
 		        {
 		            double price15m = Closes[1][0];
@@ -466,15 +469,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            prices15m.Add(price15m);
 		            volumes15m.Add(volume15m);
 		            
-		            // Keep last 100 bars for performance
+		            // Research-aligned data management (300 bars = ~75 hours of 15m data)
 		            if (prices15m.Count > 300)
 		            {
-		                prices15m.RemoveAt(0);
-		                volumes15m.RemoveAt(0);
+		                prices15m.RemoveRange(0, 50); // Remove in chunks for efficiency
+		                volumes15m.RemoveRange(0, 50);
 		            }
 		        }
 		        
-		        // Update 5-minute data (BarsArray[2]) with validation
+		        // Update 5-minute data with validation  
 		        if (BarsArray.Length > 2 && CurrentBars[2] >= 0)
 		        {
 		            double price5m = Closes[2][0];
@@ -483,18 +486,18 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            prices5m.Add(price5m);
 		            volumes5m.Add(volume5m);
 		            
-		            // Keep last 100 bars for performance
+		            // Research-aligned data management (300 bars = ~25 hours of 5m data)
 		            if (prices5m.Count > 300)
 		            {
-		                prices5m.RemoveAt(0);
-		                volumes5m.RemoveAt(0);
+		                prices5m.RemoveRange(0, 50);
+		                volumes5m.RemoveRange(0, 50);
 		            }
 		        }
 		        
-		        // Debug output
-		        if (CurrentBar % 20 == 0)
+		        // Less frequent debug output (research: reduce noise)
+		        if (CurrentBar % 50 == 0) // Changed from 20 to 50
 		        {
-		            Print($"Data updated: 15m bars={prices15m.Count}, 5m bars={prices5m.Count}");
+		            Print($"Data: 15m={prices15m.Count} bars, 5m={prices5m.Count} bars");
 		        }
 		    }
 		    catch (Exception ex)
@@ -583,32 +586,43 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    }
 		}
         
-        private bool IsValidSignal(SignalData signal)
-        {
-            // Check confidence threshold
-            if (signal.confidence < MinConfidence)
-            {
-                Print($"Signal confidence {signal.confidence:F3} below threshold {MinConfidence:F3}");
-                return false;
-            }
-            
-            // Check signal quality
-            if (signal.quality == "poor")
-            {
-                Print("Signal quality too poor - skipping");
-                return false;
-            }
-            
-            // Check if we're in a valid trading state
-            if (Position.MarketPosition != MarketPosition.Flat && 
-                (DateTime.Now - lastConnectionAttempt).TotalSeconds < 5)
-            {
-                Print("Too close to connection attempt - waiting");
-                return false;
-            }
-            
-            return true;
-        }
+		private bool IsValidSignal(SignalData signal)
+		{
+		    // Research principle: Quality over quantity
+		    // Your research.txt: "High-accuracy signals consistently outperform high-frequency, lower-quality signals"
+		    
+		    // Check confidence threshold
+		    if (signal.confidence < MinConfidence)
+		    {
+		        Print($"Signal confidence {signal.confidence:F3} below threshold {MinConfidence:F3}");
+		        return false;
+		    }
+		    
+		    // Research-aligned quality filter
+		    if (signal.quality == "poor")
+		    {
+		        Print("Signal quality too poor - skipping (research-aligned filtering)");
+		        return false;
+		    }
+		    
+		    // Prevent over-trading (research principle)
+		    if (Position.MarketPosition != MarketPosition.Flat && 
+		        (DateTime.Now - lastConnectionAttempt).TotalSeconds < 10) // Increased from 5 to 10
+		    {
+		        Print("Signal spacing filter - preventing over-trading");
+		        return false;
+		    }
+		    
+		    // Add signal age validation (research: signals have half-life)
+		    var signalAge = (DateTime.Now.Ticks - signal.timestamp) / TimeSpan.TicksPerSecond;
+		    if (signalAge > 30) // Signals older than 30 seconds are stale
+		    {
+		        Print($"Signal too old: {signalAge}s - skipping");
+		        return false;
+		    }
+		    
+		    return true;
+		}
         
         private void ExecuteMLSignal(SignalData signal)
         {
@@ -698,32 +712,34 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         #region Position Management
         
-        private int CalculatePositionSize(double confidence)
-        {
-            try
-            {
-                // Simple position sizing based on research principles
-                // Fixed percentage risk with confidence adjustment
-                
-                int baseSize = 1; // Base position size
-                
-                // Adjust for confidence (research shows simple methods work best)
-                if (confidence >= 0.8)
-                    baseSize = 2; // High confidence
-                else if (confidence >= 0.7)
-                    baseSize = 2; // Good confidence (simplified to 2)
-                else
-                    baseSize = 1; // Standard confidence
-                
-                // Cap at maximum position size
-                return Math.Min(baseSize, MaxPositionSize);
-            }
-            catch (Exception ex)
-            {
-                Print($"Position size calculation error: {ex.Message}");
-                return 1; // Default to 1 contract
-            }
-        }
+		private int CalculatePositionSize(double confidence)
+		{
+		    try
+		    {
+		        // Research-aligned simple position sizing
+		        // Your research.txt: "simple methods often outperform complex optimization"
+		        
+		        int baseSize = 1; // Conservative base
+		        
+		        // Simple confidence-based scaling (research-backed thresholds)
+		        if (confidence >= 0.8)
+		            baseSize = 2;      // High confidence from research
+		        else if (confidence >= 0.7)
+		            baseSize = 2;      // Good confidence 
+		        else if (confidence >= 0.6)
+		            baseSize = 1;      // Fair confidence
+		        else
+		            baseSize = 1;      // Minimum size for any signal above threshold
+		        
+		        // Cap at maximum (risk management)
+		        return Math.Min(baseSize, MaxPositionSize);
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Position size calculation error: {ex.Message}");
+		        return 1; // Safe default
+		    }
+		}
         
         protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice, 
                                             int quantity, int filled, double averageFillPrice, 
@@ -736,27 +752,27 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
         
-        private void SetExitOrders(string entrySignal)
-        {
-            try
-            {
-                entryPrice = Close[0];
-                hasPosition = true;
-                
-                // Set stop loss (research shows simple fixed stops work well)
-                SetStopLoss(entrySignal, CalculationMode.Ticks, StopLossTicks, false);
-                
-                // Set take profit (2:1 reward-to-risk ratio per research)
-                SetProfitTarget(entrySignal, CalculationMode.Ticks, TakeProfitTicks);
-                
-                Print($"Exit orders set - Entry: {entryPrice:F2}, " +
-                      $"Stop: {StopLossTicks} ticks, Target: {TakeProfitTicks} ticks (2:1 R:R)");
-            }
-            catch (Exception ex)
-            {
-                Print($"Exit order setup error: {ex.Message}");
-            }
-        }
+		private void SetExitOrders(string entrySignal)
+		{
+		    try
+		    {
+		        entryPrice = Close[0];
+		        hasPosition = true;
+		        
+		        // Research-backed simple exit strategy
+		        // Your research.txt: "simple fixed stops work well" and "2:1 reward-to-risk ratio"
+		        
+		        SetStopLoss(entrySignal, CalculationMode.Ticks, StopLossTicks, false);
+		        SetProfitTarget(entrySignal, CalculationMode.Ticks, TakeProfitTicks);
+		        
+		        Print($"Research-aligned exits set - Entry: {entryPrice:F2}, " +
+		              $"Stop: {StopLossTicks} ticks, Target: {TakeProfitTicks} ticks (2:1 R:R)");
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Exit order setup error: {ex.Message}");
+		    }
+		}
         
         #endregion
         
