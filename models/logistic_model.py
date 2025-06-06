@@ -234,4 +234,4 @@ class LogisticSignalModel:
             return True
         else:
             log.debug("Insufficient diversity for retraining")
-            return False
+            return False 
