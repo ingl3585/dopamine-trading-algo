@@ -155,41 +155,44 @@ class LogisticSignalModel:
     def _generate_signal_from_features(self, features: ResearchFeatures, price_change: float) -> int:
         """Generate signals using research-backed multi-indicator approach - FIXED"""
         
-        # 1. Trend Analysis (15m timeframe - primary direction) - FIXED
-        # Now using the proper ratios instead of raw values
-        trend_bullish = (features.ema_trend_15m > 0.001 and  # EMA > SMA by at least 0.1%
-                        features.price_vs_sma_15m > 0 and    # Price above SMA
-                        features.rsi_15m > 40 and features.rsi_15m < 80)
+        # 1. Trend Analysis (15m timeframe) - More realistic thresholds
+        trend_bullish = (
+            features.ema_trend_15m > 0 and           # EMA > SMA (any positive difference)
+            features.price_vs_sma_15m > -0.002 and  # Price within 0.2% of SMA or above
+            30 < features.rsi_15m < 75               # RSI in reasonable range
+        )
         
-        trend_bearish = (features.ema_trend_15m < -0.001 and  # EMA < SMA by at least 0.1%
-                        features.price_vs_sma_15m < 0 and     # Price below SMA
-                        features.rsi_15m < 60 and features.rsi_15m > 20)
+        trend_bearish = (
+            features.ema_trend_15m < 0 and           # EMA < SMA (any negative difference)  
+            features.price_vs_sma_15m < 0.002 and   # Price within 0.2% of SMA or below
+            25 < features.rsi_15m < 70               # RSI in reasonable range
+        )
         
-        # 2. Entry Signals (5m timeframe - timing confirmation)
-        bb_buy_signal = features.bb_position_5m < 0.2   # Near lower band - oversold
-        bb_sell_signal = features.bb_position_5m > 0.8  # Near upper band - overbought
+        # 2. Entry Signals (5m timeframe) - More realistic thresholds
+        bb_oversold = features.bb_position_5m < 0.3      # Lower 30% of BB range
+        bb_overbought = features.bb_position_5m > 0.7    # Upper 30% of BB range
         
-        rsi_buy_signal = features.rsi_5m < 35   # Oversold
-        rsi_sell_signal = features.rsi_5m > 65  # Overbought
+        rsi_oversold = features.rsi_5m < 40              # Oversold
+        rsi_overbought = features.rsi_5m > 60            # Overbought
         
-        volume_confirmation = features.volume_ratio_5m > 1.1  # Above average volume
-
-        log.debug(f"Trend: bull={trend_bullish}, bear={trend_bearish}")
-        log.debug(f"RSI: 15m={features.rsi_15m:.1f}, 5m={features.rsi_5m:.1f}")
-        log.debug(f"BB pos: {features.bb_position_5m:.2f}, Vol ratio: {features.volume_ratio_5m:.2f}")
-        log.debug(f"EMA trend 15m: {features.ema_trend_15m:.4f}, Price vs SMA 15m: {features.price_vs_sma_15m:.4f}")
+        volume_above_avg = features.volume_ratio_5m > 0.8  # 80% of average volume
         
-        # 3. Signal Generation - research-aligned logic
-        if (trend_bullish and bb_buy_signal and rsi_buy_signal and volume_confirmation):
-            return 1  # Strong BUY signal
-        elif (trend_bearish and bb_sell_signal and rsi_sell_signal and volume_confirmation):
-            return 2  # Strong SELL signal
-        elif (trend_bullish and (bb_buy_signal or rsi_buy_signal)):
-            return 1  # Moderate BUY signal
-        elif (trend_bearish and (bb_sell_signal or rsi_sell_signal)):
-            return 2  # Moderate SELL signal
+        # 3. Signal Generation with multiple confidence levels
+        strong_buy = (trend_bullish and bb_oversold and rsi_oversold and volume_above_avg)
+        moderate_buy = (trend_bullish and (bb_oversold or rsi_oversold))
+        weak_buy = (features.ema_trend_15m > 0 and features.rsi_5m < 45)
+        
+        strong_sell = (trend_bearish and bb_overbought and rsi_overbought and volume_above_avg)
+        moderate_sell = (trend_bearish and (bb_overbought or rsi_overbought))
+        weak_sell = (features.ema_trend_15m < 0 and features.rsi_5m > 55)
+        
+        # Return signals with priority
+        if strong_buy or moderate_buy or weak_buy:
+            return 1  # BUY
+        elif strong_sell or moderate_sell or weak_sell:
+            return 2  # SELL
         else:
-            return 0  # HOLD signal
+            return 0  # HOLD
     
     def _assess_quality(self, confidence: float) -> str:
         """Assess signal quality based on confidence"""
@@ -197,7 +200,7 @@ class LogisticSignalModel:
             return "excellent"
         elif confidence >= 0.7:
             return "good"
-        elif confidence >= 0.6:
+        elif confidence >= 0.5:
             return "fair"
         else:
             return "poor"

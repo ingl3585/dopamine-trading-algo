@@ -19,12 +19,12 @@ class ResearchConfig:
     TIMEFRAMES: List[str] = field(default_factory=lambda: ["15m", "5m"])
     
     # Logistic Regression parameters
-    ML_LOOKBACK: int = 50
-    ML_RETRAIN_FREQUENCY: int = 100
-    MIN_TRAINING_SAMPLES: int = 30
+    ML_LOOKBACK: int = 100
+    ML_RETRAIN_FREQUENCY: int = 12
+    MIN_TRAINING_SAMPLES: int = 20
     
     # Signal thresholds
-    CONFIDENCE_THRESHOLD: float = 0.6
+    CONFIDENCE_THRESHOLD: float = 0.5
     SIGNAL_STRENGTH_THRESHOLD: float = 0.7
     
     # TCP Configuration
