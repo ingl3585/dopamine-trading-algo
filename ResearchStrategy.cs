@@ -74,6 +74,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private int tradesExecuted;
         private int connectionAttempts;
         private DateTime lastConnectionAttempt;
+		private DateTime lastTradeEntry;
+		private int tradeIdCounter = 0;
+		private string currentTradeId = "";
         
         // Connection status
         private bool isConnectedToFeatureServer;
@@ -158,7 +161,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    
 		    // Research-backed default values
 		    RiskPercent = 0.02;        // 2% risk per trade (institutional standard)
-		    StopLossTicks = 60;        // Simple fixed stop
+		    StopLossTicks = 75;        // Simple fixed stop
 		    TakeProfitTicks = 200;      // 4:1 reward-to-risk (research optimal)
 		    MinConfidence = 0.5;       // Research: 60% accuracy threshold
 		    MaxPositionSize = 10;       // Simple position limits
@@ -270,35 +273,108 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    }
 		}
         
-        protected override void OnExecutionUpdate(Execution execution, string executionId, 
-                                                double price, int quantity, MarketPosition marketPosition, 
-                                                string orderId, DateTime time)
-        {
-            try
-            {
-                if (execution.Order != null)
-                {
-                    tradesExecuted++;
-                    Print($"Trade executed: {execution.Order.Name} - {quantity} @ {price:F2}");
-                    
-                    if (marketPosition == MarketPosition.Flat)
-                    {
-                        hasPosition = false;
-                        entryPrice = 0;
-                        Print("Position closed - ready for new signals");
-                    }
-                    else
-                    {
-                        hasPosition = true;
-                        entryPrice = price;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Print($"Execution update error: {ex.Message}");
-            }
-        }
+		protected override void OnExecutionUpdate(Execution execution, string executionId, 
+		                                        double price, int quantity, MarketPosition marketPosition, 
+		                                        string orderId, DateTime time)
+		{
+		    try
+		    {
+		        if (execution.Order != null)
+		        {
+		            tradesExecuted++;
+		            // Print($"Trade executed: {execution.Order.Name} - {quantity} @ {price:F2}");
+		            // Print($"Market position after execution: {marketPosition}");
+					
+					Print($"=== EXECUTION DEBUG ===");
+		            Print($"Order Name: '{execution.Order.Name}'");
+		            Print($"Order Type: {execution.Order.OrderType}");
+		            Print($"Order Action: {execution.Order.OrderAction}");
+		            Print($"Quantity: {quantity}");
+		            Print($"Price: {price:F2}");
+		            Print($"Market Position BEFORE: {Position.MarketPosition}");
+		            Print($"Market Position AFTER: {marketPosition}");
+		            Print($"Position Quantity: {Position.Quantity}");
+		            Print($"hasPosition flag: {hasPosition}");
+		            Print($"Current Trade ID: '{currentTradeId}'");
+		            Print($"=======================");
+		            
+		            if (marketPosition == MarketPosition.Flat)
+		            {
+		                hasPosition = false;
+		                entryPrice = 0;
+		                
+		                Print($"Position now FLAT - checking for trade completion notification");
+		                Print($"Current trade ID: '{currentTradeId}'");
+		                
+		                // Only send completion notification when going flat
+		                if (!string.IsNullOrEmpty(currentTradeId))
+		                {
+		                    int duration = (int)(DateTime.Now - lastTradeEntry).TotalMinutes;
+		                    string exitReason = "unknown";
+		                    
+		                    Print($"Order name for exit reason: '{execution.Order.Name}'");
+		                    
+		                    // Determine exit reason from order name
+		                    if (execution.Order.Name.Contains("Stop"))
+		                        exitReason = "stop_loss";
+		                    else if (execution.Order.Name.Contains("Target") || execution.Order.Name.Contains("Profit"))
+		                        exitReason = "take_profit";
+		                    else if (execution.Order.Name.Contains("Close") || execution.Order.Name.Contains("Reverse"))
+		                        exitReason = "signal_exit";
+		                    else
+		                        exitReason = "market_close";
+		                    
+		                    Print($"Determined exit reason: {exitReason}");
+		                    
+		                    NotifyTradeCompletion(currentTradeId, price, exitReason, duration);
+		                    
+		                    Print($"Trade completion sent: {currentTradeId}, Exit: {price:F2}, Reason: {exitReason}, Duration: {duration}min");
+		                    currentTradeId = "";  // Clear the trade ID
+		                }
+		                else
+		                {
+		                    Print("WARNING: No currentTradeId found for completion notification");
+		                }
+		                
+		                Print("Position closed - ready for new signals");
+		            }
+		            else if (!hasPosition)  // Only create new trade ID when opening NEW position
+		            {
+		                hasPosition = true;
+		                entryPrice = price;
+		                
+		                Print($"NEW position opened - creating trade ID");
+		                
+		                // Only create trade ID for entry orders (not exit orders)
+		                if (execution.Order.Name.Contains("ML_"))
+		                {
+		                    lastTradeEntry = DateTime.Now;
+		                    tradeIdCounter++;
+		                    currentTradeId = $"trade_{tradeIdCounter}";
+		                    
+		                    Print($"Trade started: {currentTradeId} at {price:F2}");
+		                }
+		                else
+		                {
+		                    Print($"Not an ML entry order - no trade ID created");
+		                }
+		            }
+		            else
+		            {
+		                // Position is being added to (additional contracts)
+		                Print($"Adding to existing position - no new trade ID");
+		            }
+		        }
+		        else
+		        {
+		            Print("WARNING: execution.Order is null");
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Execution update error: {ex.Message}");
+		    }
+		}
         
         #endregion
         
@@ -800,6 +876,40 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        default: return "HOLD";
 		    }
 		}
+		
+		private void NotifyTradeCompletion(string tradeId, double exitPrice, string exitReason, int durationMinutes)
+		{
+		    try
+		    {
+		        Print($"NotifyTradeCompletion called: {tradeId}");  // DEBUG LINE
+		        
+		        if (featureClient?.Connected != true) 
+		        {
+		            Print($"Cannot send trade completion - featureClient not connected");  // DEBUG LINE
+		            return;
+		        }
+		        
+		        Print($"Sending trade completion via feature client");  // DEBUG LINE
+		        
+		        // Create simple JSON manually
+		        var json = $"{{\"type\":\"trade_completion\",\"signal_id\":\"{tradeId}\",\"exit_price\":{exitPrice},\"exit_reason\":\"{exitReason}\",\"duration_minutes\":{durationMinutes},\"timestamp\":{DateTime.Now.Ticks}}}";
+		        
+		        Print($"JSON to send: {json}");  // DEBUG LINE
+		        
+		        byte[] data = Encoding.UTF8.GetBytes(json);
+		        byte[] header = BitConverter.GetBytes(data.Length);
+		        
+		        var stream = featureClient.GetStream();
+		        stream.Write(header, 0, 4);
+		        stream.Write(data, 0, data.Length);
+		        
+		        Print($"Trade completion SUCCESSFULLY sent: {tradeId}, Exit: {exitPrice:F2}, Duration: {durationMinutes}min");
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Trade completion ERROR: {ex.Message}");
+		    }
+		}
         
         #endregion
         
@@ -842,14 +952,34 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        entryPrice = Close[0];
 		        hasPosition = true;
 		        
-		        // Research-backed simple exit strategy
-		        // Your research.txt: "simple fixed stops work well" and "2:1 reward-to-risk ratio"
+		        Print($"Setting exit orders for {entrySignal}");
+		        Print($"Current position: {Position.MarketPosition}, Quantity: {Position.Quantity}");
 		        
-		        SetStopLoss(entrySignal, CalculationMode.Ticks, StopLossTicks, false);
-		        SetProfitTarget(entrySignal, CalculationMode.Ticks, TakeProfitTicks);
+		        // FIXED: Use CalculationMode.Ticks with proper stop loss setup
+		        // The key is to use SetStopLoss correctly - it should CLOSE the position, not create new one
 		        
-		        Print($"Research-aligned exits set - Entry: {entryPrice:F2}, " +
-		              $"Stop: {StopLossTicks} ticks, Target: {TakeProfitTicks} ticks (2:1 R:R)");
+		        if (Position.MarketPosition == MarketPosition.Long)
+		        {
+		            // For LONG positions, stop loss should be BELOW entry price
+		            SetStopLoss(entrySignal, CalculationMode.Ticks, StopLossTicks, false);
+		            SetProfitTarget(entrySignal, CalculationMode.Ticks, TakeProfitTicks);
+		            
+		            Print($"LONG exit orders set - Entry: {entryPrice:F2}");
+		            Print($"Stop Loss: {StopLossTicks} ticks below entry = {entryPrice - (StopLossTicks * TickSize):F2}");
+		            Print($"Take Profit: {TakeProfitTicks} ticks above entry = {entryPrice + (TakeProfitTicks * TickSize):F2}");
+		        }
+		        else if (Position.MarketPosition == MarketPosition.Short)
+		        {
+		            // For SHORT positions, stop loss should be ABOVE entry price
+		            SetStopLoss(entrySignal, CalculationMode.Ticks, StopLossTicks, false);
+		            SetProfitTarget(entrySignal, CalculationMode.Ticks, TakeProfitTicks);
+		            
+		            Print($"SHORT exit orders set - Entry: {entryPrice:F2}");
+		            Print($"Stop Loss: {StopLossTicks} ticks above entry = {entryPrice + (StopLossTicks * TickSize):F2}");
+		            Print($"Take Profit: {TakeProfitTicks} ticks below entry = {entryPrice - (TakeProfitTicks * TickSize):F2}");
+		        }
+		        
+		        Print($"Exit orders configured for position size: {Position.Quantity}");
 		    }
 		    catch (Exception ex)
 		    {
