@@ -160,7 +160,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    RiskPercent = 0.02;        // 2% risk per trade (institutional standard)
 		    StopLossTicks = 20;        // Simple fixed stop
 		    TakeProfitTicks = 80;      // 4:1 reward-to-risk (research optimal)
-		    MinConfidence = 0.6;       // Research: 60% accuracy threshold
+		    MinConfidence = 0.5;       // Research: 60% accuracy threshold
 		    MaxPositionSize = 10;       // Simple position limits
 		    
 		    // NinjaTrader settings aligned with research
@@ -536,10 +536,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            prices15m.Add(price15m);
 		            volumes15m.Add(volume15m);
 		            
-		            if (prices15m.Count > 500)
+		            if (prices15m.Count > 1000)
 		            {
-		                prices15m.RemoveRange(0, 50);
-		                volumes15m.RemoveRange(0, 50);
+		                prices15m.RemoveAt(0);
+		                volumes15m.RemoveAt(0);
 		            }
 		        }
 		        
@@ -552,10 +552,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            prices5m.Add(price5m);
 		            volumes5m.Add(volume5m);
 		            
-		            if (prices5m.Count > 500)
+		            if (prices5m.Count > 400)
 		            {
-		                prices5m.RemoveRange(0, 50);
-		                volumes5m.RemoveRange(0, 50);
+		                prices5m.RemoveAt(0);
+		                volumes5m.RemoveAt(0);
 		            }
 		        }
 		        

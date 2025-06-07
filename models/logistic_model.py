@@ -45,7 +45,7 @@ class LogisticSignalModel:
             # Get prediction and probability
             prediction = self.model.predict(scaled_features)[0]
             probabilities = self.model.predict_proba(scaled_features)[0]
-            confidence = probabilities[prediction]
+            confidence = probabilities[np.where(self.model.classes_ == prediction)[0][0]]
             quality = self._assess_quality(confidence)
             
             return prediction, confidence, quality

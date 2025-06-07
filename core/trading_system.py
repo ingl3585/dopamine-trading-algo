@@ -1,5 +1,6 @@
 # core/trading_system.py
 
+import threading
 import logging
 import numpy as np
 from typing import Dict
@@ -26,6 +27,9 @@ class TradingSystem:
         
         # TCP bridge
         self.tcp_bridge = TCPBridge(self.config)
+
+        # Handle shutdown
+        self.shutdown_event = threading.Event()
         
         # Price tracking
         self.last_price = None
@@ -45,35 +49,42 @@ class TradingSystem:
     def start(self):
         """Start the trading system"""
         try:
-            # CP callback
+            # Set TCP callback
             self.tcp_bridge.on_market_data = self.process_market_data
             
             # Start TCP bridge
             self.tcp_bridge.start()
             
             log.info("Trading system started - waiting for market data")
-            log.info("Press Ctrl+C to stop the system")
-                        
+            
+            while not self.shutdown_event.is_set():
+                self.shutdown_event.wait(timeout=1)
+            
         except KeyboardInterrupt:
             log.info("Shutdown requested via Ctrl+C")
         except Exception as e:
             log.error(f"System error: {e}")
         finally:
             self.stop()
-
-    def shutdown(self):
-        """Trigger shutdown"""
-        log.info("Shutdown requested...")
-        if hasattr(self, '_shutdown_event'):
-            self._shutdown_event.set()
-        self.stop()
     
     def stop(self):
         """Stop the trading system"""
         log.info("Stopping trading system...")
-        if hasattr(self, 'tcp_bridge'):
-            self.tcp_bridge.stop()
-        self.model.save_model()
+        
+        # Stop TCP bridge safely
+        try:
+            if hasattr(self, 'tcp_bridge') and self.tcp_bridge:
+                self.tcp_bridge.stop()
+        except Exception as e:
+            log.warning(f"Error stopping TCP bridge: {e}")
+        
+        # Save model safely
+        try:
+            if hasattr(self, 'model') and self.model:
+                self.model.save_model()
+        except Exception as e:
+            log.warning(f"Error saving model: {e}")
+        
         log.info("System stopped")
     
     def process_market_data(self, data: Dict):
