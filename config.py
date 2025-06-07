@@ -24,7 +24,7 @@ class ResearchConfig:
     MIN_TRAINING_SAMPLES: int = 20
     
     # Signal thresholds
-    CONFIDENCE_THRESHOLD: float = 0.5
+    CONFIDENCE_THRESHOLD: float = 0.6
     SIGNAL_STRENGTH_THRESHOLD: float = 0.7
     
     # TCP Configuration

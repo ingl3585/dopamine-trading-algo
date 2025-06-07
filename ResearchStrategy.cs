@@ -160,7 +160,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    RiskPercent = 0.02;        // 2% risk per trade (institutional standard)
 		    StopLossTicks = 20;        // Simple fixed stop
 		    TakeProfitTicks = 80;      // 4:1 reward-to-risk (research optimal)
-		    MinConfidence = 0.5;       // Research: 60% accuracy threshold
+		    MinConfidence = 0.6;       // Research: 60% accuracy threshold
 		    MaxPositionSize = 10;       // Simple position limits
 		    
 		    // NinjaTrader settings aligned with research

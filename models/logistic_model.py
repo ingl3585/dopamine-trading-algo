@@ -7,7 +7,6 @@ import logging
 from typing import Tuple, List
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
 from features.feature_extractor import ResearchFeatures
 from config import ResearchConfig
 
@@ -55,11 +54,11 @@ class LogisticSignalModel:
             log.error(f"Prediction error: {e}")
             return 0, 0.0, "error"
     
-    def add_training_sample(self, features: ResearchFeatures, price_change: float):
+    def add_training_sample(self, features: ResearchFeatures):
         """Add new training sample"""
         
         # Convert price change to signal class
-        signal = self._price_change_to_signal(price_change)
+        signal = self._generate_signal_from_features(features)
         
         self.feature_history.append(features)
         self.signal_history.append(signal)
@@ -92,36 +91,23 @@ class LogisticSignalModel:
                 log.warning("Need multiple signal classes for training")
                 return
             
-            # Require minimum samples per class for sklearn
+            # Require samples per class for sklearn
             min_samples_per_class = min(counts)
-            if min_samples_per_class < 2:
-                log.warning(f"Need at least 2 samples per class, got {min_samples_per_class}")
+            if min_samples_per_class < 3:
+                log.warning(f"Need at least 3 samples per class, got {min_samples_per_class}")
                 return
             
-            # Split data if we have enough samples
-            if len(X) > 40:
-                X_train, X_test, y_train, y_test = train_test_split(
-                    X, y, test_size=0.2, random_state=42, stratify=y
-                )
-            else:
-                X_train, y_train = X, y
-                X_test, y_test = None, None
-            
             # Scale features
-            self.scaler.fit(X_train)
-            X_train_scaled = self.scaler.transform(X_train)
+            self.scaler.fit(X)
+            X_scaled = self.scaler.transform(X)
             
             # Train model
-            self.model.fit(X_train_scaled, y_train)
+            self.model.fit(X_scaled, y)
             self.is_trained = True
             
-            # Evaluate if we have test data
-            if X_test is not None:
-                X_test_scaled = self.scaler.transform(X_test)
-                accuracy = self.model.score(X_test_scaled, y_test)
-                log.info(f"Model retrained - Test accuracy: {accuracy:.3f}")
-            else:
-                log.info("Model retrained on full dataset")
+            # Simple accuracy check on training data
+            accuracy = self.model.score(X_scaled, y)
+            log.info(f"Model trained on {len(X)} samples - accuracy: {accuracy:.3f}")
             
             # Save model
             self.save_model()
@@ -152,89 +138,78 @@ class LogisticSignalModel:
         except Exception as e:
             log.error(f"Model load error: {e}")
 
-    def _generate_signal_from_features(self, features: ResearchFeatures, price_change: float) -> int:
-        """Generate signals using research-backed multi-indicator approach - FIXED"""
+    def _generate_signal_from_features(self, features: ResearchFeatures) -> int:
+        """Generate signals - loose for training, strict for live trading"""
         
-        # 1. Trend Analysis (15m timeframe) - More realistic thresholds
+        # 1. Trend Analysis (15m timeframe)
         trend_bullish = (
-            features.ema_trend_15m > 0 and           # EMA > SMA (any positive difference)
-            features.price_vs_sma_15m > -0.002 and  # Price within 0.2% of SMA or above
-            30 < features.rsi_15m < 75               # RSI in reasonable range
+            features.ema_trend_15m > 0 and           
+            features.price_vs_sma_15m > -0.002 and  
+            30 < features.rsi_15m < 75               
         )
         
         trend_bearish = (
-            features.ema_trend_15m < 0 and           # EMA < SMA (any negative difference)  
-            features.price_vs_sma_15m < 0.002 and   # Price within 0.2% of SMA or below
-            25 < features.rsi_15m < 70               # RSI in reasonable range
+            features.ema_trend_15m < 0 and           
+            features.price_vs_sma_15m < 0.002 and   
+            25 < features.rsi_15m < 70               
         )
         
-        # 2. Entry Signals (5m timeframe) - More realistic thresholds
-        bb_oversold = features.bb_position_5m < 0.3      # Lower 30% of BB range
-        bb_overbought = features.bb_position_5m > 0.7    # Upper 30% of BB range
+        # 2. Entry Signals (5m timeframe)
+        bb_oversold = features.bb_position_5m < 0.2      
+        bb_overbought = features.bb_position_5m > 0.8    
+        rsi_oversold = features.rsi_5m < 30              
+        rsi_overbought = features.rsi_5m > 70            
+        volume_above_avg = features.volume_ratio_5m > 0.8 
+        price_above_ema = features.price_vs_sma_5m > 0.001   # Price 0.1% above 5m SMA
+        price_below_ema = features.price_vs_sma_5m < -0.001  # Price 0.1% below 5m SMA 
         
-        rsi_oversold = features.rsi_5m < 40              # Oversold
-        rsi_overbought = features.rsi_5m > 60            # Overbought
+        # 4. Signal Generation
+        # PERFECT signals (all conditions + price position)
+        perfect_buy = (trend_bullish and bb_oversold and rsi_oversold and 
+                    volume_above_avg and price_below_ema)  # Buy when price below MA (pullback)
         
-        volume_above_avg = features.volume_ratio_5m > 0.8  # 80% of average volume
+        perfect_sell = (trend_bearish and bb_overbought and rsi_overbought and 
+                        volume_above_avg and price_above_ema)  # Sell when price above MA (rally)
         
-        # 3. Signal Generation with multiple confidence levels
-        strong_buy = (trend_bullish and bb_oversold and rsi_oversold and volume_above_avg)
-        moderate_buy = (trend_bullish and (bb_oversold or rsi_oversold))
-        weak_buy = (features.ema_trend_15m > 0 and features.rsi_5m < 45)
+        # GOOD signals (trend + price position + 2 other conditions)
+        good_buy = (trend_bullish and price_below_ema and 
+                    sum([bb_oversold, rsi_oversold, volume_above_avg]) >= 2)
         
-        strong_sell = (trend_bearish and bb_overbought and rsi_overbought and volume_above_avg)
-        moderate_sell = (trend_bearish and (bb_overbought or rsi_overbought))
-        weak_sell = (features.ema_trend_15m < 0 and features.rsi_5m > 55)
+        good_sell = (trend_bearish and price_above_ema and 
+                    sum([bb_overbought, rsi_overbought, volume_above_avg]) >= 2)
+        
+        # BASIC signals (just trend + price breakout)
+        basic_buy = (trend_bullish and price_above_ema and 
+                    features.volume_ratio_5m > 1.0)  # Trend + breakout above MA
+        
+        basic_sell = (trend_bearish and price_below_ema and 
+                    features.volume_ratio_5m > 1.0)  # Trend + breakdown below MA
         
         # Return signals with priority
-        if strong_buy or moderate_buy or weak_buy:
+        if perfect_buy or good_buy or basic_buy:
             return 1  # BUY
-        elif strong_sell or moderate_sell or weak_sell:
+        elif perfect_sell or good_sell or basic_sell:
             return 2  # SELL
         else:
             return 0  # HOLD
     
     def _assess_quality(self, confidence: float) -> str:
-        """Assess signal quality based on confidence"""
-        if confidence >= 0.8:
-            return "excellent"
-        elif confidence >= 0.7:
+        """Simplified quality assessment - research aligned"""
+        if confidence >= 0.7:
             return "good"
-        elif confidence >= 0.5:
-            return "fair"
         else:
             return "poor"
     
-    def _price_change_to_signal(self, price_change: float) -> int:
-        """Fallback for compatibility - simplified threshold"""
-        if price_change > 0.0003:   # 0.03%
-            return 1  # Buy signal
-        elif price_change < -0.0003: # 0.03%
-            return 2  # Sell signal
-        else:
-            return 0  # Hold signal
-    
     def _should_retrain(self) -> bool:
-        """Determine if model should retrain based on research principles"""
+        """Simplified retraining logic - research aligned"""
         
         if len(self.signal_history) < self.config.MIN_TRAINING_SAMPLES:
             return False
         
-        # Only retrain every N samples (not every bar)
-        samples_since_last_train = len(self.signal_history) % self.config.ML_RETRAIN_FREQUENCY
-        if samples_since_last_train != 0:
+        # Only retrain every N samples
+        if len(self.signal_history) % self.config.ML_RETRAIN_FREQUENCY != 0:
             return False
         
-        # Ensure we have class diversity before retraining
-        unique_classes, counts = np.unique(self.signal_history, return_counts=True)
-        min_samples_per_class = min(counts) if len(counts) > 0 else 0
-        
-        # Require at least 2 classes with minimum 3 samples each
-        has_diversity = len(unique_classes) >= 2 and min_samples_per_class >= 3
-        
-        if has_diversity:
-            log.info(f"Retraining after {self.config.ML_RETRAIN_FREQUENCY} new samples")
-            return True
-        else:
-            log.debug("Insufficient diversity for retraining")
-            return False 
+        # Simple check - need 3 classes
+        unique_classes = len(np.unique(self.signal_history))
+        return unique_classes >= 3

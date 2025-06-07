@@ -24,6 +24,14 @@ class ResearchFeatures:
     price_vs_sma_5m: float  # Price vs SMA relationship
     volume_ratio_5m: float
     
+    @classmethod
+    def get_feature_names(cls) -> List[str]:
+        """Get feature names for model interpretation"""
+        return [
+            'rsi_15m', 'bb_position_15m', 'ema_trend_15m', 'price_vs_sma_15m', 'volume_ratio_15m',
+            'rsi_5m', 'bb_position_5m', 'ema_trend_5m', 'price_vs_sma_5m', 'volume_ratio_5m'
+        ]
+    
     def to_array(self) -> np.ndarray:
         """Convert to array for ML model"""
         return np.array([
@@ -32,17 +40,9 @@ class ResearchFeatures:
             self.rsi_5m, self.bb_position_5m, self.ema_trend_5m, 
             self.price_vs_sma_5m, self.volume_ratio_5m
         ])
-    
-    @classmethod
-    def get_feature_names(cls) -> List[str]:
-        """Get feature names for model interpretation"""
-        return [
-            'rsi_15m', 'bb_position_15m', 'ema_trend_15m', 'price_vs_sma_15m', 'volume_ratio_15m',
-            'rsi_5m', 'bb_position_5m', 'ema_trend_5m', 'price_vs_sma_5m', 'volume_ratio_5m'
-        ]
 
 class FeatureExtractor:
-    """Extract research-aligned features from market data - FIXED"""
+    """Extract research-aligned features from market data"""
     
     def __init__(self, config: ResearchConfig):
         self.config = config
@@ -50,7 +50,7 @@ class FeatureExtractor:
     
     def extract_features(self, price_15m: List[float], volume_15m: List[float],
                         price_5m: List[float], volume_5m: List[float]) -> Optional[ResearchFeatures]:
-        """Extract features from multi-timeframe market data - FIXED"""
+        """Extract features from multi-timeframe market data"""
         
         try:
             # Validate input data
@@ -77,13 +77,13 @@ class FeatureExtractor:
             return ResearchFeatures(
                 rsi_15m=features_15m['rsi'],
                 bb_position_15m=features_15m['bb_position'],
-                ema_trend_15m=features_15m['ema_trend'],  # FIXED
-                price_vs_sma_15m=features_15m['price_vs_sma'],  # FIXED
+                ema_trend_15m=features_15m['ema_trend'],
+                price_vs_sma_15m=features_15m['price_vs_sma'],
                 volume_ratio_15m=features_15m['volume_ratio'],
                 rsi_5m=features_5m['rsi'],
                 bb_position_5m=features_5m['bb_position'],
-                ema_trend_5m=features_5m['ema_trend'],  # FIXED
-                price_vs_sma_5m=features_5m['price_vs_sma'],  # FIXED
+                ema_trend_5m=features_5m['ema_trend'],
+                price_vs_sma_5m=features_5m['price_vs_sma'],
                 volume_ratio_5m=features_5m['volume_ratio']
             )
             
@@ -114,14 +114,14 @@ class FeatureExtractor:
         else:
             bb_position = 0.5
         
-        # Calculate moving averages properly
+        # Calculate moving averages
         ema = self.indicators.ema(prices, self.config.EMA_PERIOD)
         sma = self.indicators.sma(prices, self.config.SMA_PERIOD)
         current_price = prices[-1]
         
-        # Create meaningful relationships instead of raw values
-        ema_trend = (ema - sma) / sma if sma != 0 else 0.0  # EMA vs SMA relationship
-        price_vs_sma = (current_price - sma) / sma if sma != 0 else 0.0  # Price vs SMA
+        # Rrelationships
+        ema_trend = (ema - sma) / sma if sma != 0 else 0.0
+        price_vs_sma = (current_price - sma) / sma if sma != 0 else 0.0
         
         volume_ratio = self.indicators.volume_ratio(volumes, self.config.VOLUME_PERIOD)
         
