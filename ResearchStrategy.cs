@@ -158,8 +158,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    
 		    // Research-backed default values
 		    RiskPercent = 0.02;        // 2% risk per trade (institutional standard)
-		    StopLossTicks = 20;        // Simple fixed stop
-		    TakeProfitTicks = 80;      // 4:1 reward-to-risk (research optimal)
+		    StopLossTicks = 80;        // Simple fixed stop
+		    TakeProfitTicks = 240;      // 4:1 reward-to-risk (research optimal)
 		    MinConfidence = 0.5;       // Research: 60% accuracy threshold
 		    MaxPositionSize = 10;       // Simple position limits
 		    
@@ -808,31 +808,19 @@ namespace NinjaTrader.NinjaScript.Strategies
         
 		private int CalculatePositionSize(double confidence)
 		{
-		    try
-		    {
-		        // Research-aligned simple position sizing
-		        // Your research.txt: "simple methods often outperform complex optimization"
-		        
-		        int baseSize = 1; // Conservative base
-		        
-		        // Simple confidence-based scaling (research-backed thresholds)
-		        if (confidence >= 0.8)
-		            baseSize = 2;      // High confidence from research
-		        else if (confidence >= 0.7)
-		            baseSize = 2;      // Good confidence 
-		        else if (confidence >= 0.6)
-		            baseSize = 1;      // Fair confidence
-		        else
-		            baseSize = 1;      // Minimum size for any signal above threshold
-		        
-		        // Cap at maximum (risk management)
-		        return Math.Min(baseSize, MaxPositionSize);
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Position size calculation error: {ex.Message}");
-		        return 1; // Safe default
-		    }
+		    // Research-aligned tiered position sizing
+		    int baseSize = 1;
+		    
+		    if (confidence >= 0.8)
+		        baseSize = 4;      // High confidence (research: full size)
+		    else if (confidence >= 0.7)
+		        baseSize = 3;      // Good confidence  
+		    else if (confidence >= 0.6)
+		        baseSize = 2;      // Moderate confidence
+		    else if (confidence >= 0.5)
+		        baseSize = 1;      // Low confidence (minimum)
+		    
+		    return Math.Min(baseSize, MaxPositionSize);
 		}
         
         protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice, 

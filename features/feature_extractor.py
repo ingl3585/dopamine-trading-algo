@@ -8,37 +8,41 @@ from config import ResearchConfig
 
 @dataclass
 class ResearchFeatures:
-    """Research-aligned feature vector - FIXED"""
+    """Enhanced research-aligned feature vector"""
     
     # 15-minute features
     rsi_15m: float
     bb_position_15m: float
-    ema_trend_15m: float  # Represents EMA vs SMA relationship
-    price_vs_sma_15m: float  # Price vs SMA relationship
+    ema_trend_15m: float
+    price_vs_sma_15m: float
     volume_ratio_15m: float
+    volume_breakout_15m: bool
     
     # 5-minute features  
     rsi_5m: float
     bb_position_5m: float
-    ema_trend_5m: float   # Represents EMA vs SMA relationship
-    price_vs_sma_5m: float  # Price vs SMA relationship
+    ema_trend_5m: float
+    price_vs_sma_5m: float
     volume_ratio_5m: float
+    volume_breakout_5m: bool
     
     @classmethod
     def get_feature_names(cls) -> List[str]:
         """Get feature names for model interpretation"""
         return [
-            'rsi_15m', 'bb_position_15m', 'ema_trend_15m', 'price_vs_sma_15m', 'volume_ratio_15m',
-            'rsi_5m', 'bb_position_5m', 'ema_trend_5m', 'price_vs_sma_5m', 'volume_ratio_5m'
+            'rsi_15m', 'bb_position_15m', 'ema_trend_15m', 'price_vs_sma_15m', 
+            'volume_ratio_15m', 'volume_breakout_15m',
+            'rsi_5m', 'bb_position_5m', 'ema_trend_5m', 'price_vs_sma_5m', 
+            'volume_ratio_5m', 'volume_breakout_5m'
         ]
     
     def to_array(self) -> np.ndarray:
         """Convert to array for ML model"""
         return np.array([
             self.rsi_15m, self.bb_position_15m, self.ema_trend_15m, 
-            self.price_vs_sma_15m, self.volume_ratio_15m,
+            self.price_vs_sma_15m, self.volume_ratio_15m, float(self.volume_breakout_15m),
             self.rsi_5m, self.bb_position_5m, self.ema_trend_5m, 
-            self.price_vs_sma_5m, self.volume_ratio_5m
+            self.price_vs_sma_5m, self.volume_ratio_5m, float(self.volume_breakout_5m)
         ])
 
 class FeatureExtractor:
@@ -73,18 +77,20 @@ class FeatureExtractor:
                 prices_5m, volumes_5m, "5m"
             )
             
-            # Combine into feature vector
+            # Combine into enhanced feature vector
             return ResearchFeatures(
                 rsi_15m=features_15m['rsi'],
                 bb_position_15m=features_15m['bb_position'],
                 ema_trend_15m=features_15m['ema_trend'],
                 price_vs_sma_15m=features_15m['price_vs_sma'],
                 volume_ratio_15m=features_15m['volume_ratio'],
+                volume_breakout_15m=features_15m['volume_breakout'],
                 rsi_5m=features_5m['rsi'],
                 bb_position_5m=features_5m['bb_position'],
                 ema_trend_5m=features_5m['ema_trend'],
                 price_vs_sma_5m=features_5m['price_vs_sma'],
-                volume_ratio_5m=features_5m['volume_ratio']
+                volume_ratio_5m=features_5m['volume_ratio'],
+                volume_breakout_5m=features_5m['volume_breakout']
             )
             
         except Exception as e:
@@ -99,7 +105,7 @@ class FeatureExtractor:
     
     def _extract_timeframe_features(self, prices: np.ndarray, 
                                    volumes: np.ndarray, timeframe: str) -> dict:
-        """Extract features for a specific timeframe - FIXED"""
+        """Extract enhanced features for a specific timeframe"""
         
         # Calculate indicators
         rsi = self.indicators.rsi(prices, self.config.RSI_PERIOD)
@@ -119,16 +125,19 @@ class FeatureExtractor:
         sma = self.indicators.sma(prices, self.config.SMA_PERIOD)
         current_price = prices[-1]
         
-        # Rrelationships
+        # Relationships
         ema_trend = (ema - sma) / sma if sma != 0 else 0.0
         price_vs_sma = (current_price - sma) / sma if sma != 0 else 0.0
         
+        # Enhanced volume analysis
         volume_ratio = self.indicators.volume_ratio(volumes, self.config.VOLUME_PERIOD)
+        volume_breakout = volume_ratio > 1.5  # Significant volume spike
         
         return {
             'rsi': rsi,
             'bb_position': bb_position,
             'ema_trend': ema_trend,
             'price_vs_sma': price_vs_sma,
-            'volume_ratio': volume_ratio
+            'volume_ratio': volume_ratio,
+            'volume_breakout': volume_breakout
         }

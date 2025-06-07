@@ -41,7 +41,10 @@ class TradingSystem:
             'buy_signals': 0,
             'sell_signals': 0,
             'hold_signals': 0,
-            'avg_confidence': 0.0
+            'avg_confidence': 0.0,
+            'high_confidence_signals': 0,
+            'moderate_confidence_signals': 0,
+            'low_confidence_signals': 0
         }
         
         log.info("Research-aligned trading system initialized")
@@ -85,6 +88,9 @@ class TradingSystem:
         except Exception as e:
             log.warning(f"Error saving model: {e}")
         
+        # Print final statistics
+        self._print_final_stats()
+        
         log.info("System stopped")
     
     def process_market_data(self, data: Dict):
@@ -109,19 +115,44 @@ class TradingSystem:
             
             # Generate signal
             action, confidence, quality = self.model.predict(features)
-            log.info(f"Signal: Action={action}, Confidence={confidence:.3f}, Quality={quality}")
+            
+            # Determine signal strength and whether to send
+            signal_strength = self._assess_signal_strength(confidence)
+            should_send = confidence >= self.config.CONFIDENCE_THRESHOLD
+            
+            log.info(f"Signal: Action={self._get_action_name(action)}, "
+                    f"Confidence={confidence:.3f}, Quality={quality}, "
+                    f"Strength={signal_strength}, Send={should_send}")
             
             # Update statistics
-            self._update_stats(action, confidence)
+            self._update_stats(action, confidence, signal_strength)
             
             # Send signal if confidence meets threshold
-            if confidence >= self.config.CONFIDENCE_THRESHOLD:
+            if should_send:
                 self.tcp_bridge.send_signal(action, confidence, quality)
+            else:
+                log.info(f"Signal below threshold ({self.config.CONFIDENCE_THRESHOLD:.1f}) - not sent")
 
+            # Add to training samples
             self.model.add_training_sample(features)
                 
         except Exception as e:
             log.error(f"Market data processing error: {e}")
+    
+    def _assess_signal_strength(self, confidence: float) -> str:
+        """Assess signal strength based on confidence levels"""
+        if confidence >= 0.8:
+            return "excellent"
+        elif confidence >= 0.7:
+            return "good"
+        elif confidence >= 0.6:
+            return "fair"
+        else:
+            return "poor"
+    
+    def _get_action_name(self, action: int) -> str:
+        """Convert action number to readable name"""
+        return {0: "HOLD", 1: "BUY", 2: "SELL"}.get(action, "UNKNOWN")
     
     def _train_on_historical_data(self, data):
         """Train using research-aligned feature-based signals"""
@@ -146,12 +177,13 @@ class TradingSystem:
                 hist_price_15m, hist_vol_15m, hist_price_5m, hist_vol_5m
             )
 
-            signal = self.model._generate_signal_from_features(features)
-            
-            # Store for training
-            self.model.feature_history.append(features)
-            self.model.signal_history.append(signal)
-            training_samples += 1
+            if features is not None:
+                signal = self.model._generate_signal_from_features(features)
+                
+                # Store for training
+                self.model.feature_history.append(features)
+                self.model.signal_history.append(signal)
+                training_samples += 1
 
         # Signal distribution
         unique_signals, counts = np.unique(self.model.signal_history, return_counts=True)
@@ -166,10 +198,11 @@ class TradingSystem:
         else:
             log.warning(f"Insufficient training samples: {training_samples}/{self.config.MIN_TRAINING_SAMPLES}")
     
-    def _update_stats(self, action: int, confidence: float):
+    def _update_stats(self, action: int, confidence: float, signal_strength: str):
         """Update system statistics"""
         self.stats['signals_generated'] += 1
         
+        # Count by action
         if action == 1:
             self.stats['buy_signals'] += 1
         elif action == 2:
@@ -177,8 +210,35 @@ class TradingSystem:
         else:
             self.stats['hold_signals'] += 1
         
+        # Count by signal strength
+        if signal_strength == "excellent":
+            self.stats['high_confidence_signals'] += 1
+        elif signal_strength == "good":
+            self.stats['moderate_confidence_signals'] += 1
+        elif signal_strength == "fair":
+            self.stats['low_confidence_signals'] += 1
+        
         # Update average confidence
         total = self.stats['signals_generated']
         self.stats['avg_confidence'] = (
             (self.stats['avg_confidence'] * (total - 1) + confidence) / total
         )
+    
+    def _print_final_stats(self):
+        """Print comprehensive final statistics"""
+        total = self.stats['signals_generated']
+        if total > 0:
+            log.info("=== FINAL SYSTEM STATISTICS ===")
+            log.info(f"Total Signals Generated: {total}")
+            log.info(f"Signal Distribution:")
+            log.info(f"  HOLD: {self.stats['hold_signals']} ({self.stats['hold_signals']/total*100:.1f}%)")
+            log.info(f"  BUY:  {self.stats['buy_signals']} ({self.stats['buy_signals']/total*100:.1f}%)")
+            log.info(f"  SELL: {self.stats['sell_signals']} ({self.stats['sell_signals']/total*100:.1f}%)")
+            log.info(f"Average Confidence: {self.stats['avg_confidence']:.3f}")
+            log.info(f"Signal Quality Distribution:")
+            log.info(f"  Excellent: {self.stats['high_confidence_signals']}")
+            log.info(f"  Good: {self.stats['moderate_confidence_signals']}")
+            log.info(f"  Fair: {self.stats['low_confidence_signals']}")
+            log.info("================================")
+        else:
+            log.info("No signals generated during session")
