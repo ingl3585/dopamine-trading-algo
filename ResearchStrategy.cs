@@ -916,11 +916,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    int baseSize = 1;
 		    
 		    if (confidence >= 0.9)
-				baseSize = 8;
+				baseSize = 6;
 			else if (confidence >= 0.8)
-		        baseSize = 6;      
-		    else if (confidence >= 0.7)
 		        baseSize = 4;      
+		    else if (confidence >= 0.7)
+		        baseSize = 3;      
 		    else if (confidence >= 0.6)
 		        baseSize = 2;      
 		    else if (confidence >= 0.5)
