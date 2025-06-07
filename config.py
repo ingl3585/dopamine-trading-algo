@@ -5,7 +5,7 @@ from typing import List
 
 @dataclass
 class ResearchConfig:
-    """Research-aligned configuration"""
+    """Research-aligned configuration with enhanced features"""
     
     # Core indicators based on academic research
     RSI_PERIOD: int = 14
@@ -19,13 +19,20 @@ class ResearchConfig:
     TIMEFRAMES: List[str] = field(default_factory=lambda: ["15m", "5m"])
     
     # Logistic Regression parameters
-    ML_LOOKBACK: int = 50
-    ML_RETRAIN_FREQUENCY: int = 100
-    MIN_TRAINING_SAMPLES: int = 30
+    ML_LOOKBACK: int = 100
+    ML_RETRAIN_FREQUENCY: int = 12
+    MIN_TRAINING_SAMPLES: int = 20
     
-    # Signal thresholds
-    CONFIDENCE_THRESHOLD: float = 0.6
-    SIGNAL_STRENGTH_THRESHOLD: float = 0.7
+    # Enhanced signal thresholds (research-aligned)
+    CONFIDENCE_THRESHOLD: float = 0.5          # Minimum to send any signal
+    CONFIDENCE_HIGH: float = 0.8               # Excellent signals
+    CONFIDENCE_MODERATE: float = 0.7           # Good signals  
+    CONFIDENCE_LOW: float = 0.6                # Fair signals
+    
+    # Volume analysis thresholds
+    VOLUME_BREAKOUT_THRESHOLD: float = 1.5     # Volume spike threshold
+    VOLUME_CONFIRM_THRESHOLD: float = 1.2      # Volume confirmation
+    VOLUME_WEAK_THRESHOLD: float = 0.8         # Below average volume
     
     # TCP Configuration
     TCP_HOST: str = "localhost"

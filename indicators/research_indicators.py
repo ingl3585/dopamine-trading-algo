@@ -4,11 +4,11 @@ import numpy as np
 from typing import Tuple
 
 class ResearchIndicators:
-    """Research-backed technical indicators - FIXED"""
+    """Research-backed technical indicators"""
     
     @staticmethod
     def rsi(prices: np.ndarray, period: int = 14) -> float:
-        """RSI - FIXED to handle edge cases properly"""
+        """RSI - to handle edge cases properly"""
         if len(prices) < period + 1:
             return 50.0
         
@@ -41,7 +41,7 @@ class ResearchIndicators:
     @staticmethod
     def bollinger_bands(prices: np.ndarray, period: int = 20, 
                        std_dev: float = 2.0) -> Tuple[float, float, float]:
-        """Bollinger Bands - IMPROVED"""
+        """Bollinger Bands"""
         if len(prices) < period:
             if len(prices) > 0:
                 mid = prices[-1]
@@ -51,7 +51,7 @@ class ResearchIndicators:
         
         recent_prices = prices[-period:]
         mid = np.mean(recent_prices)
-        std = np.std(recent_prices, ddof=0)  # Use population std
+        std = np.std(recent_prices, ddof=0)
         
         # Handle zero std (flat prices)
         if std == 0:
@@ -64,7 +64,7 @@ class ResearchIndicators:
     
     @staticmethod
     def ema(prices: np.ndarray, period: int) -> float:
-        """EMA - IMPROVED"""
+        """EMA"""
         if len(prices) < 1:
             return 0.0
         if len(prices) == 1:
@@ -74,7 +74,7 @@ class ResearchIndicators:
         
         multiplier = 2.0 / (period + 1)
         
-        # Start with SMA for first value
+        # SMA for first value
         ema_val = np.mean(prices[:period])
         
         # Calculate EMA for remaining values
@@ -85,7 +85,7 @@ class ResearchIndicators:
     
     @staticmethod
     def sma(prices: np.ndarray, period: int) -> float:
-        """Simple Moving Average - IMPROVED"""
+        """Simple Moving Average"""
         if len(prices) < 1:
             return 0.0
         if len(prices) < period:
@@ -94,7 +94,7 @@ class ResearchIndicators:
     
     @staticmethod
     def volume_ratio(volumes: np.ndarray, period: int = 20) -> float:
-        """Volume ratio - IMPROVED"""
+        """Volume ratio"""
         if len(volumes) < 1:
             return 1.0
         if len(volumes) < period:
@@ -107,4 +107,4 @@ class ResearchIndicators:
         if avg_vol <= 0:
             return 1.0
         
-        return max(0.1, current_vol / avg_vol)  # Minimum ratio of 0.1
+        return max(0.1, current_vol / avg_vol)

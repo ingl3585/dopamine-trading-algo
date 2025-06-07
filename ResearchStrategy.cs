@@ -158,10 +158,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    
 		    // Research-backed default values
 		    RiskPercent = 0.02;        // 2% risk per trade (institutional standard)
-		    StopLossTicks = 20;        // Simple fixed stop
-		    TakeProfitTicks = 40;      // 2:1 reward-to-risk (research optimal)
-		    MinConfidence = 0.6;       // Research: 60% accuracy threshold
-		    MaxPositionSize = 2;       // Simple position limits
+		    StopLossTicks = 60;        // Simple fixed stop
+		    TakeProfitTicks = 200;      // 4:1 reward-to-risk (research optimal)
+		    MinConfidence = 0.5;       // Research: 60% accuracy threshold
+		    MaxPositionSize = 10;       // Simple position limits
 		    
 		    // NinjaTrader settings aligned with research
 		    EntriesPerDirection = 1;                           // Simplicity
@@ -536,10 +536,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            prices15m.Add(price15m);
 		            volumes15m.Add(volume15m);
 		            
-		            if (prices15m.Count > 300)
+		            if (prices15m.Count > 1000)
 		            {
-		                prices15m.RemoveRange(0, 50);
-		                volumes15m.RemoveRange(0, 50);
+		                prices15m.RemoveAt(0);
+		                volumes15m.RemoveAt(0);
 		            }
 		        }
 		        
@@ -552,10 +552,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            prices5m.Add(price5m);
 		            volumes5m.Add(volume5m);
 		            
-		            if (prices5m.Count > 300)
+		            if (prices5m.Count > 400)
 		            {
-		                prices5m.RemoveRange(0, 50);
-		                volumes5m.RemoveRange(0, 50);
+		                prices5m.RemoveAt(0);
+		                volumes5m.RemoveAt(0);
 		            }
 		        }
 		        
@@ -735,8 +735,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				            
 				            EnterLong(positionSize, "ML_Long");
 				            Print($"LONG ENTRY: size={positionSize}, confidence={signal.confidence:F3}, quality={signal.quality}");
-				            
-				            // ADD THIS LINE HERE:
+
 				            VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
 				        }
 				        else
@@ -808,31 +807,21 @@ namespace NinjaTrader.NinjaScript.Strategies
         
 		private int CalculatePositionSize(double confidence)
 		{
-		    try
-		    {
-		        // Research-aligned simple position sizing
-		        // Your research.txt: "simple methods often outperform complex optimization"
-		        
-		        int baseSize = 1; // Conservative base
-		        
-		        // Simple confidence-based scaling (research-backed thresholds)
-		        if (confidence >= 0.8)
-		            baseSize = 2;      // High confidence from research
-		        else if (confidence >= 0.7)
-		            baseSize = 2;      // Good confidence 
-		        else if (confidence >= 0.6)
-		            baseSize = 1;      // Fair confidence
-		        else
-		            baseSize = 1;      // Minimum size for any signal above threshold
-		        
-		        // Cap at maximum (risk management)
-		        return Math.Min(baseSize, MaxPositionSize);
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Position size calculation error: {ex.Message}");
-		        return 1; // Safe default
-		    }
+		    // Research-aligned tiered position sizing
+		    int baseSize = 1;
+		    
+		    if (confidence >= 0.9)
+				baseSize = 8;
+			else if (confidence >= 0.8)
+		        baseSize = 6;      
+		    else if (confidence >= 0.7)
+		        baseSize = 4;      
+		    else if (confidence >= 0.6)
+		        baseSize = 2;      
+		    else if (confidence >= 0.5)
+		        baseSize = 1;  
+		    
+		    return Math.Min(baseSize, MaxPositionSize);
 		}
         
         protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice, 

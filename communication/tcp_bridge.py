@@ -111,10 +111,10 @@ class TCPBridge:
             net_ticks = int((unix_timestamp * 10000000) + 621355968000000000)
             
             signal = {
-                "action": int(action),  # Convert numpy int64 to Python int
-                "confidence": float(confidence),  # Convert numpy float64 to Python float
-                "quality": str(quality),  # Ensure it's a string
-                "timestamp": int(net_ticks)  # Ensure it's a Python int
+                "action": int(action),
+                "confidence": float(confidence),
+                "quality": str(quality),
+                "timestamp": int(net_ticks)
             }
             
             # Send signal

@@ -9,46 +9,32 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from core.trading_system import TradingSystem
 
-system = None  # Global reference for signal handler
+# Global reference for signal handler
+trading_system = None
 
 def signal_handler(signum, frame):
-    """Handle shutdown signals"""
-    print("\nShutdown signal received...")
-    if system:
-        system.shutdown()
-    sys.exit(0)
+    """Handle Ctrl+C gracefully"""
+    global trading_system
+
+    if trading_system and hasattr(trading_system, 'shutdown_event'):
+        trading_system.shutdown_event.set()
 
 def main():
     """Main entry point"""
-    global system
-    
-    print("="*60)
-    print("RESEARCH-ALIGNED TRADING SYSTEM")
-    print("="*60)
-    print("Features: RSI + Bollinger Bands + EMA + SMA + Volume")
-    print("Timeframes: 15min (trend) + 5min (entry)")
-    print("ML Model: Logistic Regression")
-    print("Architecture: Modular Python + NinjaScript")
-    print("="*60)
-    
-    # Setup signal handlers for clean shutdown
-    signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
-    if hasattr(signal, 'SIGTERM'):
-        signal.signal(signal.SIGTERM, signal_handler)  # Termination
-    
+    global trading_system
+
+    # Signal handler for shutdown
+    signal.signal(signal.SIGINT, signal_handler)
+
     try:
         print("Initializing trading system...")
-        system = TradingSystem()
-        system.start()
+        print("Press Ctrl+C to stop the system")
+        trading_system = TradingSystem()
+        trading_system.start()
+
     except Exception as e:
         print(f"System error: {e}")
         return 1
-    finally:
-        # Cleanup in finally block
-        if system:
-            system.shutdown()
-    
-    return 0
 
 if __name__ == "__main__":
     sys.exit(main())

@@ -7,14 +7,13 @@ import logging
 from typing import Tuple, List
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
 from features.feature_extractor import ResearchFeatures
 from config import ResearchConfig
 
 log = logging.getLogger(__name__)
 
 class LogisticSignalModel:
-    """Logistic Regression model for signal generation"""
+    """Enhanced Logistic Regression model with volume features"""
     
     def __init__(self, config: ResearchConfig):
         self.config = config
@@ -33,7 +32,7 @@ class LogisticSignalModel:
         self.load_model()
     
     def predict(self, features: ResearchFeatures) -> Tuple[int, float, str]:
-        """Generate trading signal using Logistic Regression"""
+        """Generate trading signal using Enhanced Logistic Regression"""
         
         if not self.is_trained or features is None:
             return 0, 0.0, "model_not_ready"
@@ -46,7 +45,7 @@ class LogisticSignalModel:
             # Get prediction and probability
             prediction = self.model.predict(scaled_features)[0]
             probabilities = self.model.predict_proba(scaled_features)[0]
-            confidence = probabilities[prediction]
+            confidence = probabilities[np.where(self.model.classes_ == prediction)[0][0]]
             quality = self._assess_quality(confidence)
             
             return prediction, confidence, quality
@@ -55,11 +54,11 @@ class LogisticSignalModel:
             log.error(f"Prediction error: {e}")
             return 0, 0.0, "error"
     
-    def add_training_sample(self, features: ResearchFeatures, price_change: float):
+    def add_training_sample(self, features: ResearchFeatures):
         """Add new training sample"""
         
         # Convert price change to signal class
-        signal = self._price_change_to_signal(price_change)
+        signal = self._generate_signal_from_features(features)
         
         self.feature_history.append(features)
         self.signal_history.append(signal)
@@ -70,12 +69,12 @@ class LogisticSignalModel:
             self.feature_history = self.feature_history[-self.config.ML_LOOKBACK:]
             self.signal_history = self.signal_history[-self.config.ML_LOOKBACK:]
         
-        # Retrain only when we have natural diversity
+        # Retrain periodically
         if self._should_retrain():
             self.train()
     
     def train(self):
-        """Train the logistic regression model"""
+        """Train the enhanced logistic regression model"""
         
         try:
             if len(self.feature_history) < self.config.MIN_TRAINING_SAMPLES:
@@ -92,36 +91,26 @@ class LogisticSignalModel:
                 log.warning("Need multiple signal classes for training")
                 return
             
-            # Require minimum samples per class for sklearn
+            # Require samples per class for sklearn
             min_samples_per_class = min(counts)
-            if min_samples_per_class < 2:
-                log.warning(f"Need at least 2 samples per class, got {min_samples_per_class}")
+            if min_samples_per_class < 3:
+                log.warning(f"Need at least 3 samples per class, got {min_samples_per_class}")
                 return
             
-            # Split data if we have enough samples
-            if len(X) > 40:
-                X_train, X_test, y_train, y_test = train_test_split(
-                    X, y, test_size=0.2, random_state=42, stratify=y
-                )
-            else:
-                X_train, y_train = X, y
-                X_test, y_test = None, None
-            
             # Scale features
-            self.scaler.fit(X_train)
-            X_train_scaled = self.scaler.transform(X_train)
+            self.scaler.fit(X)
+            X_scaled = self.scaler.transform(X)
             
             # Train model
-            self.model.fit(X_train_scaled, y_train)
+            self.model.fit(X_scaled, y)
             self.is_trained = True
             
-            # Evaluate if we have test data
-            if X_test is not None:
-                X_test_scaled = self.scaler.transform(X_test)
-                accuracy = self.model.score(X_test_scaled, y_test)
-                log.info(f"Model retrained - Test accuracy: {accuracy:.3f}")
-            else:
-                log.info("Model retrained on full dataset")
+            # Training report
+            accuracy = self.model.score(X_scaled, y)
+            signal_dist = dict(zip(unique_classes, counts))
+            log.info(f"Enhanced model trained on {len(X)} samples")
+            log.info(f"Training accuracy: {accuracy:.3f}")
+            log.info(f"Signal distribution: {signal_dist}")
             
             # Save model
             self.save_model()
@@ -135,7 +124,7 @@ class LogisticSignalModel:
             if self.is_trained:
                 joblib.dump(self.model, self.config.MODEL_PATH)
                 joblib.dump(self.scaler, self.config.SCALER_PATH)
-                log.info("Model saved successfully")
+                log.info("Enhanced model saved successfully")
         except Exception as e:
             log.error(f"Model save error: {e}")
     
@@ -146,92 +135,89 @@ class LogisticSignalModel:
                 self.model = joblib.load(self.config.MODEL_PATH)
                 self.scaler = joblib.load(self.config.SCALER_PATH)
                 self.is_trained = True
-                log.info("Model loaded successfully")
+                log.info("Enhanced model loaded successfully")
             else:
                 log.info("No saved model found - will train from scratch")
         except Exception as e:
             log.error(f"Model load error: {e}")
 
-    def _generate_signal_from_features(self, features: ResearchFeatures, price_change: float) -> int:
-        """Generate signals using research-backed multi-indicator approach - FIXED"""
+    def _generate_signal_from_features(self, features: ResearchFeatures) -> int:
+        """Enhanced signal generation with volume confirmation"""
         
-        # 1. Trend Analysis (15m timeframe - primary direction) - FIXED
-        # Now using the proper ratios instead of raw values
-        trend_bullish = (features.ema_trend_15m > 0.001 and  # EMA > SMA by at least 0.1%
-                        features.price_vs_sma_15m > 0 and    # Price above SMA
-                        features.rsi_15m > 40 and features.rsi_15m < 80)
+        # 1. Trend Analysis (15m timeframe)
+        trend_bullish = (
+            features.ema_trend_15m > -0.002 and          # Allow slight negative trend
+            features.price_vs_sma_15m > -0.005 and       # More lenient price position
+            25 < features.rsi_15m < 80                    # Wider RSI range for trend-following
+        )
         
-        trend_bearish = (features.ema_trend_15m < -0.001 and  # EMA < SMA by at least 0.1%
-                        features.price_vs_sma_15m < 0 and     # Price below SMA
-                        features.rsi_15m < 60 and features.rsi_15m > 20)
+        trend_bearish = (
+            features.ema_trend_15m < 0.002 and           # Allow slight positive trend
+            features.price_vs_sma_15m < 0.005 and        # More lenient price position
+            20 < features.rsi_15m < 75                    # Wider RSI range
+        )
         
-        # 2. Entry Signals (5m timeframe - timing confirmation)
-        bb_buy_signal = features.bb_position_5m < 0.2   # Near lower band - oversold
-        bb_sell_signal = features.bb_position_5m > 0.8  # Near upper band - overbought
+        # 2. Entry Signals (5m timeframe)
+        rsi_buy_zone = features.rsi_5m < 60              # Expanded from 30 (trend-following)
+        rsi_sell_zone = features.rsi_5m > 40             # Expanded from 70 (trend-following)
+        bb_buy_zone = features.bb_position_5m < 0.6      # Expanded zones
+        bb_sell_zone = features.bb_position_5m > 0.4     # Expanded zones
         
-        rsi_buy_signal = features.rsi_5m < 35   # Oversold
-        rsi_sell_signal = features.rsi_5m > 65  # Overbought
+        # Volume confirmation
+        volume_confirm = (features.volume_ratio_5m > 1.0 or 
+                         features.volume_breakout_5m)    # Either above average or breakout
         
-        volume_confirmation = features.volume_ratio_5m > 1.1  # Above average volume
-
-        log.debug(f"Trend: bull={trend_bullish}, bear={trend_bearish}")
-        log.debug(f"RSI: 15m={features.rsi_15m:.1f}, 5m={features.rsi_5m:.1f}")
-        log.debug(f"BB pos: {features.bb_position_5m:.2f}, Vol ratio: {features.volume_ratio_5m:.2f}")
-        log.debug(f"EMA trend 15m: {features.ema_trend_15m:.4f}, Price vs SMA 15m: {features.price_vs_sma_15m:.4f}")
+        # 3. Multi-timeframe confluence signals
+        confluence_buy = (
+            trend_bullish and 
+            (rsi_buy_zone or bb_buy_zone) and            # At least one entry signal
+            volume_confirm                               # Volume confirmation required
+        )
         
-        # 3. Signal Generation - research-aligned logic
-        if (trend_bullish and bb_buy_signal and rsi_buy_signal and volume_confirmation):
-            return 1  # Strong BUY signal
-        elif (trend_bearish and bb_sell_signal and rsi_sell_signal and volume_confirmation):
-            return 2  # Strong SELL signal
-        elif (trend_bullish and (bb_buy_signal or rsi_buy_signal)):
-            return 1  # Moderate BUY signal
-        elif (trend_bearish and (bb_sell_signal or rsi_sell_signal)):
-            return 2  # Moderate SELL signal
+        confluence_sell = (
+            trend_bearish and 
+            (rsi_sell_zone or bb_sell_zone) and          # At least one entry signal
+            volume_confirm                               # Volume confirmation required
+        )
+        
+        # 4. Trend continuation signals (for band walking)
+        band_walk_up = (features.bb_position_15m > 0.8 and 
+                       features.bb_position_5m > 0.6 and
+                       features.rsi_15m > 50)
+        
+        band_walk_down = (features.bb_position_15m < 0.2 and 
+                         features.bb_position_5m < 0.4 and
+                         features.rsi_15m < 50)
+        
+        # Return signals with priority
+        if confluence_buy or band_walk_up:
+            return 1  # BUY
+        elif confluence_sell or band_walk_down:
+            return 2  # SELL
         else:
-            return 0  # HOLD signal
+            return 0  # HOLD
     
     def _assess_quality(self, confidence: float) -> str:
-        """Assess signal quality based on confidence"""
-        if confidence >= 0.8:
+        """Enhanced quality assessment"""
+        if confidence >= self.config.CONFIDENCE_HIGH:
             return "excellent"
-        elif confidence >= 0.7:
+        elif confidence >= self.config.CONFIDENCE_MODERATE:
             return "good"
-        elif confidence >= 0.6:
+        elif confidence >= self.config.CONFIDENCE_LOW:
             return "fair"
         else:
             return "poor"
     
-    def _price_change_to_signal(self, price_change: float) -> int:
-        """Fallback for compatibility - simplified threshold"""
-        if price_change > 0.0003:   # 0.03%
-            return 1  # Buy signal
-        elif price_change < -0.0003: # 0.03%
-            return 2  # Sell signal
-        else:
-            return 0  # Hold signal
-    
     def _should_retrain(self) -> bool:
-        """Determine if model should retrain based on research principles"""
+        """Enhanced retraining logic"""
         
         if len(self.signal_history) < self.config.MIN_TRAINING_SAMPLES:
             return False
         
-        # Only retrain every N samples (not every bar)
-        samples_since_last_train = len(self.signal_history) % self.config.ML_RETRAIN_FREQUENCY
-        if samples_since_last_train != 0:
+        # Only retrain every N samples
+        if len(self.signal_history) % self.config.ML_RETRAIN_FREQUENCY != 0:
             return False
         
-        # Ensure we have class diversity before retraining
-        unique_classes, counts = np.unique(self.signal_history, return_counts=True)
-        min_samples_per_class = min(counts) if len(counts) > 0 else 0
-        
-        # Require at least 2 classes with minimum 3 samples each
-        has_diversity = len(unique_classes) >= 2 and min_samples_per_class >= 3
-        
-        if has_diversity:
-            log.info(f"Retraining after {self.config.ML_RETRAIN_FREQUENCY} new samples")
-            return True
-        else:
-            log.debug("Insufficient diversity for retraining")
-            return False
+        # Ensure signal diversity
+        unique_classes = len(np.unique(self.signal_history))
+        return unique_classes >= 3
