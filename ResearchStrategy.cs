@@ -282,10 +282,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        if (execution.Order != null)
 		        {
 		            tradesExecuted++;
-		            // Print($"Trade executed: {execution.Order.Name} - {quantity} @ {price:F2}");
-		            // Print($"Market position after execution: {marketPosition}");
-					
-					Print($"=== EXECUTION DEBUG ===");
+		            
+		            Print($"=== EXECUTION DEBUG ===");
 		            Print($"Order Name: '{execution.Order.Name}'");
 		            Print($"Order Type: {execution.Order.OrderType}");
 		            Print($"Order Action: {execution.Order.OrderAction}");
@@ -298,7 +296,20 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            Print($"Current Trade ID: '{currentTradeId}'");
 		            Print($"=======================");
 		            
-		            if (marketPosition == MarketPosition.Flat)
+		            // MOVED: Create trade ID for ML entry orders (outside position logic)
+		            if (execution.Order.Name.Contains("ML_") && 
+		                string.IsNullOrEmpty(currentTradeId) &&
+		                (execution.Order.OrderAction == OrderAction.Buy || execution.Order.OrderAction == OrderAction.SellShort))
+		            {
+		                lastTradeEntry = DateTime.Now;
+		                tradeIdCounter++;
+		                currentTradeId = $"trade_{tradeIdCounter}";
+		                Print($"Trade started: {currentTradeId} at {price:F2}");
+		            }
+		            
+					if (marketPosition == MarketPosition.Flat || 
+					    (execution.Order.Name.Contains("Profit target") && Position.Quantity == 0) ||
+					    (execution.Order.Name.Contains("Stop loss") && Position.Quantity == 0))
 		            {
 		                hasPosition = false;
 		                entryPrice = 0;
@@ -338,26 +349,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 		                
 		                Print("Position closed - ready for new signals");
 		            }
-		            else if (!hasPosition)  // Only create new trade ID when opening NEW position
+		            else if (!hasPosition)  // Only when opening NEW position
 		            {
 		                hasPosition = true;
 		                entryPrice = price;
-		                
-		                Print($"NEW position opened - creating trade ID");
-		                
-		                // Only create trade ID for entry orders (not exit orders)
-		                if (execution.Order.Name.Contains("ML_"))
-		                {
-		                    lastTradeEntry = DateTime.Now;
-		                    tradeIdCounter++;
-		                    currentTradeId = $"trade_{tradeIdCounter}";
-		                    
-		                    Print($"Trade started: {currentTradeId} at {price:F2}");
-		                }
-		                else
-		                {
-		                    Print($"Not an ML entry order - no trade ID created");
-		                }
+		                Print($"NEW position opened at {price:F2}");
 		            }
 		            else
 		            {
@@ -841,7 +837,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				        }
 				        break;
 				        
-				    case 0: // Hold/Exit signal
+				    case 0: // Hold signal
 				        if (Position.MarketPosition != MarketPosition.Flat)
 				        {
 				            if (Position.MarketPosition == MarketPosition.Long)
@@ -849,9 +845,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 				            else
 				                ExitShort("ML_Exit");
 				            
-				            Print($"EXIT SIGNAL: confidence={signal.confidence:F3}, quality={signal.quality}");
+				            Print($"HOLD SIGNAL: confidence={signal.confidence:F3}, quality={signal.quality}");
 				            
-				            // ADD THIS LINE HERE:
 				            VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
 				        }
 				        else
