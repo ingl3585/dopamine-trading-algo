@@ -1,5 +1,6 @@
 # core/trading_system.py
 
+import os
 import threading
 import logging
 import numpy as np
@@ -9,7 +10,7 @@ from config import ResearchConfig
 from features.feature_extractor import FeatureExtractor
 from models.logistic_model import LogisticSignalModel
 from communication.tcp_bridge import TCPBridge
-from pattern_learning import PatternLearningSystem, TradeRecord  # NEW
+from pattern_learning import PatternLearningSystem, TradeRecord
 
 log = logging.getLogger(__name__)
 
@@ -38,11 +39,11 @@ class TradingSystem:
         self.last_price = None
         self.trained_on_historical = False
         
-        # NEW: Pattern learning
+        # Pattern learning
         self.pattern_learner = PatternLearningSystem(min_samples=15)
         self.pattern_learner.load_data()
         
-        # NEW: Track active trades for pattern learning
+        # Track active trades for pattern learning
         self.active_trades = {}  # signal_id -> trade_info
         self.trade_counter = 0
         
@@ -70,9 +71,6 @@ class TradingSystem:
             
             # Start TCP bridge
             self.tcp_bridge.start()
-            
-            # NEW: Schedule weekly pattern reports
-            self._schedule_weekly_reports()
             
             log.info("Trading system started - pattern learning active")
             
@@ -137,7 +135,7 @@ class TradingSystem:
         except Exception as e:
             log.error(f"Market data processing error: {e}")
     
-    # NEW: Track signals for pattern learning
+    # Track signals for pattern learning
     def _track_signal(self, action, confidence, price, features):
         """Track signal for pattern learning"""
         self.trade_counter += 1
@@ -154,7 +152,7 @@ class TradingSystem:
         
         log.info(f"Tracking signal {signal_id} for pattern analysis")
     
-    # NEW: Handle trade completions from NinjaTrader
+    # Handle trade completions from NinjaTrader
     def on_trade_completed(self, completion_data):
         """Handle trade completion from NinjaTrader"""
         try:
@@ -208,56 +206,6 @@ class TradingSystem:
         except Exception as e:
             log.error(f"Trade completion error: {e}")
     
-    # NEW: Schedule weekly reports
-    def _schedule_weekly_reports(self):
-        """Schedule weekly pattern reports"""
-        def weekly_report():
-            while not self.shutdown_event.is_set():
-                # Wait 1 week (or until shutdown)
-                if self.shutdown_event.wait(timeout=7*24*3600):
-                    break
-                
-                try:
-                    if len(self.pattern_learner.trades) >= 10:
-                        report = self.pattern_learner.generate_report()
-                        self._save_report(report)
-                        
-                        # Log top insights
-                        insights = self.pattern_learner.get_insights()[:3]
-                        if insights:
-                            log.info("="*40)
-                            log.info("WEEKLY PATTERN INSIGHTS")
-                            log.info("="*40)
-                            for i, insight in enumerate(insights, 1):
-                                log.info(f"{i}. {insight.name}: {insight.impact:+.1%} impact")
-                                log.info(f"   Action: {insight.action}")
-                            log.info("="*40)
-                        
-                except Exception as e:
-                    log.error(f"Weekly report error: {e}")
-        
-        # Start weekly report thread
-        threading.Thread(target=weekly_report, daemon=True, name="WeeklyReports").start()
-        log.info("Weekly pattern reports scheduled")
-    
-    # NEW: Save reports
-    def _save_report(self, report):
-        """Save pattern report"""
-        try:
-            import os
-            os.makedirs('reports', exist_ok=True)
-            
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f'reports/pattern_report_{timestamp}.txt'
-            
-            with open(filename, 'w') as f:
-                f.write(report)
-            
-            log.info(f"Pattern report saved: {filename}")
-        except Exception as e:
-            log.error(f"Report save error: {e}")
-    
-    # Rest of methods stay the same...
     def _assess_signal_strength(self, confidence: float) -> str:
         if confidence >= 0.8:
             return "excellent"
@@ -344,15 +292,6 @@ class TradingSystem:
     def stop(self):
         """Stop the trading system"""
         log.info("Stopping trading system...")
-        
-        # NEW: Generate final pattern report
-        if len(self.pattern_learner.trades) > 0:
-            try:
-                final_report = self.pattern_learner.generate_report()
-                self._save_report(final_report)
-                log.info("Final pattern report generated")
-            except Exception as e:
-                log.error(f"Final report error: {e}")
         
         # Stop TCP bridge safely
         try:
