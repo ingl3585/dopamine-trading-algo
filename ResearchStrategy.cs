@@ -161,8 +161,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    
 		    // Research-backed default values
 		    RiskPercent = 0.02;        // 2% risk per trade (institutional standard)
-		    StopLossTicks = 75;        // Simple fixed stop
-		    TakeProfitTicks = 200;      // 4:1 reward-to-risk (research optimal)
+		    StopLossTicks = 50;        // Simple fixed stop
+		    TakeProfitTicks = 100;      // 2:1 reward-to-risk (research optimal)
 		    MinConfidence = 0.5;       // Research: 60% accuracy threshold
 		    MaxPositionSize = 10;       // Simple position limits
 		    
@@ -283,20 +283,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        {
 		            tradesExecuted++;
 		            
-		            Print($"=== EXECUTION DEBUG ===");
-		            Print($"Order Name: '{execution.Order.Name}'");
-		            Print($"Order Type: {execution.Order.OrderType}");
-		            Print($"Order Action: {execution.Order.OrderAction}");
-		            Print($"Quantity: {quantity}");
-		            Print($"Price: {price:F2}");
-		            Print($"Market Position BEFORE: {Position.MarketPosition}");
-		            Print($"Market Position AFTER: {marketPosition}");
-		            Print($"Position Quantity: {Position.Quantity}");
-		            Print($"hasPosition flag: {hasPosition}");
-		            Print($"Current Trade ID: '{currentTradeId}'");
-		            Print($"=======================");
-		            
-		            // MOVED: Create trade ID for ML entry orders (outside position logic)
+		            // Create trade ID for ML entry orders
 		            if (execution.Order.Name.Contains("ML_") && 
 		                string.IsNullOrEmpty(currentTradeId) &&
 		                (execution.Order.OrderAction == OrderAction.Buy || execution.Order.OrderAction == OrderAction.SellShort))
@@ -304,72 +291,45 @@ namespace NinjaTrader.NinjaScript.Strategies
 		                lastTradeEntry = DateTime.Now;
 		                tradeIdCounter++;
 		                currentTradeId = $"trade_{tradeIdCounter}";
+		                entryPrice = price;
+		                hasPosition = true;
 		                Print($"Trade started: {currentTradeId} at {price:F2}");
 		            }
 		            
-					if (marketPosition == MarketPosition.Flat || 
-					    (execution.Order.Name.Contains("Profit target") && Position.Quantity == 0) ||
-					    (execution.Order.Name.Contains("Stop loss") && Position.Quantity == 0))
+		            // Handle position going flat
+		            if (marketPosition == MarketPosition.Flat)
 		            {
 		                hasPosition = false;
 		                entryPrice = 0;
 		                
-		                Print($"Position now FLAT - checking for trade completion notification");
-		                Print($"Current trade ID: '{currentTradeId}'");
-		                
-		                // Only send completion notification when going flat
 		                if (!string.IsNullOrEmpty(currentTradeId))
 		                {
 		                    int duration = (int)(DateTime.Now - lastTradeEntry).TotalMinutes;
-		                    string exitReason = "unknown";
-		                    
-		                    Print($"Order name for exit reason: '{execution.Order.Name}'");
-		                    
-		                    // Determine exit reason from order name
-		                    if (execution.Order.Name.Contains("Stop"))
-		                        exitReason = "stop_loss";
-		                    else if (execution.Order.Name.Contains("Target") || execution.Order.Name.Contains("Profit"))
-		                        exitReason = "take_profit";
-		                    else if (execution.Order.Name.Contains("Close") || execution.Order.Name.Contains("Reverse"))
-		                        exitReason = "signal_exit";
-		                    else
-		                        exitReason = "market_close";
-		                    
-		                    Print($"Determined exit reason: {exitReason}");
+		                    string exitReason = DetermineExitReason(execution.Order.Name);
 		                    
 		                    NotifyTradeCompletion(currentTradeId, price, exitReason, duration);
-		                    
-		                    Print($"Trade completion sent: {currentTradeId}, Exit: {price:F2}, Reason: {exitReason}, Duration: {duration}min");
-		                    currentTradeId = "";  // Clear the trade ID
+		                    Print($"Trade completed: {currentTradeId}, Exit: {price:F2}, Reason: {exitReason}");
+		                    currentTradeId = "";
 		                }
-		                else
-		                {
-		                    Print("WARNING: No currentTradeId found for completion notification");
-		                }
-		                
-		                Print("Position closed - ready for new signals");
 		            }
-		            else if (!hasPosition)  // Only when opening NEW position
-		            {
-		                hasPosition = true;
-		                entryPrice = price;
-		                Print($"NEW position opened at {price:F2}");
-		            }
-		            else
-		            {
-		                // Position is being added to (additional contracts)
-		                Print($"Adding to existing position - no new trade ID");
-		            }
-		        }
-		        else
-		        {
-		            Print("WARNING: execution.Order is null");
 		        }
 		    }
 		    catch (Exception ex)
 		    {
 		        Print($"Execution update error: {ex.Message}");
 		    }
+		}
+		
+		private string DetermineExitReason(string orderName)
+		{
+		    if (orderName.Contains("Stop"))
+		        return "stop_loss";
+		    else if (orderName.Contains("Target") || orderName.Contains("Profit"))
+		        return "take_profit";
+		    else if (orderName.Contains("Exit") || orderName.Contains("Reverse"))
+		        return "signal_exit";
+		    else
+		        return "market_close";
 		}
         
         #endregion
@@ -608,7 +568,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            prices15m.Add(price15m);
 		            volumes15m.Add(volume15m);
 		            
-		            if (prices15m.Count > 1000)
+		            if (prices15m.Count > 400)
 		            {
 		                prices15m.RemoveAt(0);
 		                volumes15m.RemoveAt(0);
@@ -624,7 +584,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            prices5m.Add(price5m);
 		            volumes5m.Add(volume5m);
 		            
-		            if (prices5m.Count > 400)
+		            if (prices5m.Count > 1000)
 		            {
 		                prices5m.RemoveAt(0);
 		                volumes5m.RemoveAt(0);
@@ -781,86 +741,106 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    return true;
 		}
         
-        private void ExecuteMLSignal(SignalData signal)
-        {
-            try
-            {
-                // Calculate position size based on research guidelines
-                int positionSize = CalculatePositionSize(signal.confidence);
-                
-                if (positionSize <= 0)
-                {
-                    Print($"Position size calculation resulted in 0 - skipping signal");
-                    return;
-                }
-                
-				switch (signal.action)
-				{
-				    case 1: // Buy signal
-				        if (Position.MarketPosition != MarketPosition.Long)
-				        {
-				            if (Position.MarketPosition == MarketPosition.Short)
-				            {
-				                ExitShort("ML_Reverse");
-				                Print("Reversing from SHORT to LONG");
-				            }
-				            
-				            EnterLong(positionSize, "ML_Long");
-				            Print($"LONG ENTRY: size={positionSize}, confidence={signal.confidence:F3}, quality={signal.quality}");
-
-				            VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
-				        }
-				        else
-				        {
-				            Print("Already LONG - ignoring buy signal");
-				        }
-				        break;
-				        
-				    case 2: // Sell signal
-				        if (Position.MarketPosition != MarketPosition.Short)
-				        {
-				            if (Position.MarketPosition == MarketPosition.Long)
-				            {
-				                ExitLong("ML_Reverse");
-				                Print("Reversing from LONG to SHORT");
-				            }
-				            
-				            EnterShort(positionSize, "ML_Short");
-				            Print($"SHORT ENTRY: size={positionSize}, confidence={signal.confidence:F3}, quality={signal.quality}");
-				            
-				            // ADD THIS LINE HERE:
-				            VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
-				        }
-				        else
-				        {
-				            Print("Already SHORT - ignoring sell signal");
-				        }
-				        break;
-				        
-				    case 0: // Hold signal
-				        if (Position.MarketPosition != MarketPosition.Flat)
-				        {
-				            if (Position.MarketPosition == MarketPosition.Long)
-				                ExitLong("ML_Exit");
-				            else
-				                ExitShort("ML_Exit");
-				            
-				            Print($"HOLD SIGNAL: confidence={signal.confidence:F3}, quality={signal.quality}");
-				            
-				            VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
-				        }
-				        else
-				        {
-				            Print("Already FLAT - ignoring exit signal");
-				        }
-				        break;
-				}
-            }
-            catch (Exception ex)
-            {
-                Print($"Signal execution error: {ex.Message}");
-            }
-        }
+		private void ExecuteMLSignal(SignalData signal)
+		{
+		    try
+		    {
+		        int positionSize = CalculatePositionSize(signal.confidence);
+		        
+		        if (positionSize <= 0) return;
+		        
+		        switch (signal.action)
+		        {
+		            case 1: // Buy signal
+		                if (Position.MarketPosition != MarketPosition.Long)
+		                {
+		                    if (Position.MarketPosition == MarketPosition.Short)
+		                        ExitShort("ML_Reverse");
+		                    
+		                    // Simple entry with manual stop/target setup
+		                    EnterLong(positionSize, "ML_Long");
+		                    
+		                    Print($"LONG ENTRY: size={positionSize}, confidence={signal.confidence:F3}");
+		                    VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
+		                }
+		                break;
+		                
+		            case 2: // Sell signal
+		                if (Position.MarketPosition != MarketPosition.Short)
+		                {
+		                    if (Position.MarketPosition == MarketPosition.Long)
+		                        ExitLong("ML_Reverse");
+		                    
+		                    // Simple entry with manual stop/target setup
+		                    EnterShort(positionSize, "ML_Short");
+		                    
+		                    Print($"SHORT ENTRY: size={positionSize}, confidence={signal.confidence:F3}");
+		                    VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
+		                }
+		                break;
+		                
+		            case 0: // Hold signal
+		                if (Position.MarketPosition != MarketPosition.Flat)
+		                {
+		                    if (Position.MarketPosition == MarketPosition.Long)
+		                        ExitLong("ML_Exit");
+		                    else
+		                        ExitShort("ML_Exit");
+		                    
+		                    Print($"EXIT SIGNAL: confidence={signal.confidence:F3}");
+		                    VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
+		                }
+		                break;
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Signal execution error: {ex.Message}");
+		    }
+		}
+		
+		protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice, 
+                                    int quantity, int filled, double averageFillPrice, 
+                                    OrderState orderState, DateTime time, ErrorCode error, string comment)
+		{
+		    // Set exit orders when entry order is filled
+		    if (order.Name.Contains("ML_") && orderState == OrderState.Filled)
+		    {
+		        SetExitOrders(order.Name, averageFillPrice);
+		    }
+		}
+		
+		private void SetExitOrders(string entrySignal, double fillPrice)
+		{
+		    try
+		    {
+		        entryPrice = fillPrice;
+		        hasPosition = true;
+		        
+		        Print($"Setting exit orders for {entrySignal} at fill price {fillPrice:F2}");
+		        
+		        if (Position.MarketPosition == MarketPosition.Long)
+		        {
+		            // For LONG positions
+		            SetStopLoss(entrySignal, CalculationMode.Ticks, StopLossTicks, false);
+		            SetProfitTarget(entrySignal, CalculationMode.Ticks, TakeProfitTicks);
+		            
+		            Print($"LONG exits set - Stop: {StopLossTicks} ticks, Target: {TakeProfitTicks} ticks");
+		        }
+		        else if (Position.MarketPosition == MarketPosition.Short)
+		        {
+		            // For SHORT positions  
+		            SetStopLoss(entrySignal, CalculationMode.Ticks, StopLossTicks, false);
+		            SetProfitTarget(entrySignal, CalculationMode.Ticks, TakeProfitTicks);
+		            
+		            Print($"SHORT exits set - Stop: {StopLossTicks} ticks, Target: {TakeProfitTicks} ticks");
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Exit order setup error: {ex.Message}");
+		    }
+		}
 		
 		private string GetActionName(int action)
 		{
@@ -916,70 +896,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    int baseSize = 1;
 		    
 		    if (confidence >= 0.9)
-				baseSize = 6;
+				baseSize = 4;
 			else if (confidence >= 0.8)
-		        baseSize = 4;      
-		    else if (confidence >= 0.7)
 		        baseSize = 3;      
-		    else if (confidence >= 0.6)
+		    else if (confidence >= 0.7)
 		        baseSize = 2;      
+		    else if (confidence >= 0.6)
+		        baseSize = 1;      
 		    else if (confidence >= 0.5)
 		        baseSize = 1;  
 		    
 		    return Math.Min(baseSize, MaxPositionSize);
-		}
-        
-        protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice, 
-                                            int quantity, int filled, double averageFillPrice, 
-                                            OrderState orderState, DateTime time, ErrorCode error, string comment)
-        {
-            // Set exit orders when entry order is filled
-            if (order.Name.Contains("ML_") && orderState == OrderState.Filled)
-            {
-                SetExitOrders(order.Name);
-            }
-        }
-        
-		private void SetExitOrders(string entrySignal)
-		{
-		    try
-		    {
-		        entryPrice = Close[0];
-		        hasPosition = true;
-		        
-		        Print($"Setting exit orders for {entrySignal}");
-		        Print($"Current position: {Position.MarketPosition}, Quantity: {Position.Quantity}");
-		        
-		        // FIXED: Use CalculationMode.Ticks with proper stop loss setup
-		        // The key is to use SetStopLoss correctly - it should CLOSE the position, not create new one
-		        
-		        if (Position.MarketPosition == MarketPosition.Long)
-		        {
-		            // For LONG positions, stop loss should be BELOW entry price
-		            SetStopLoss(entrySignal, CalculationMode.Ticks, StopLossTicks, false);
-		            SetProfitTarget(entrySignal, CalculationMode.Ticks, TakeProfitTicks);
-		            
-		            Print($"LONG exit orders set - Entry: {entryPrice:F2}");
-		            Print($"Stop Loss: {StopLossTicks} ticks below entry = {entryPrice - (StopLossTicks * TickSize):F2}");
-		            Print($"Take Profit: {TakeProfitTicks} ticks above entry = {entryPrice + (TakeProfitTicks * TickSize):F2}");
-		        }
-		        else if (Position.MarketPosition == MarketPosition.Short)
-		        {
-		            // For SHORT positions, stop loss should be ABOVE entry price
-		            SetStopLoss(entrySignal, CalculationMode.Ticks, StopLossTicks, false);
-		            SetProfitTarget(entrySignal, CalculationMode.Ticks, TakeProfitTicks);
-		            
-		            Print($"SHORT exit orders set - Entry: {entryPrice:F2}");
-		            Print($"Stop Loss: {StopLossTicks} ticks above entry = {entryPrice + (StopLossTicks * TickSize):F2}");
-		            Print($"Take Profit: {TakeProfitTicks} ticks below entry = {entryPrice - (TakeProfitTicks * TickSize):F2}");
-		        }
-		        
-		        Print($"Exit orders configured for position size: {Position.Quantity}");
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Exit order setup error: {ex.Message}");
-		    }
 		}
         
         #endregion
