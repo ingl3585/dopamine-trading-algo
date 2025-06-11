@@ -6,6 +6,7 @@ import os
 import logging
 from typing import Tuple, List
 from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from features.feature_extractor import ResearchFeatures
 from config import ResearchConfig
@@ -13,17 +14,33 @@ from config import ResearchConfig
 log = logging.getLogger(__name__)
 
 class LogisticSignalModel:
-    """Enhanced Logistic Regression model with volume features"""
+    """Enhanced Logistic Regression model with ensemble support"""
     
     def __init__(self, config: ResearchConfig):
         self.config = config
+        
+        # Logistic regression
         self.model = LogisticRegression(
             random_state=42,
             max_iter=1000,
             class_weight='balanced'
         )
+        
+        # Random Forest for ensemble
+        self.forest = RandomForestClassifier(
+            n_estimators=50,
+            max_depth=8,
+            random_state=42,
+            class_weight='balanced'
+        )
+        
         self.scaler = StandardScaler()
         self.is_trained = False
+        
+        # Ensemble weights
+        self.use_ensemble = True
+        self.logistic_weight = 0.4
+        self.forest_weight = 0.6
         
         # Training data storage
         self.feature_history: List[ResearchFeatures] = []
@@ -32,21 +49,39 @@ class LogisticSignalModel:
         self.load_model()
     
     def predict(self, features: ResearchFeatures) -> Tuple[int, float, str]:
-        """Generate trading signal using Enhanced Logistic Regression"""
+        """Generate trading signal - now with ensemble"""
         
         if not self.is_trained or features is None:
             return 0, 0.0, "model_not_ready"
         
         try:
-            # Prepare features
             feature_array = features.to_array().reshape(1, -1)
             scaled_features = self.scaler.transform(feature_array)
             
-            # Get prediction and probability
-            prediction = self.model.predict(scaled_features)[0]
-            probabilities = self.model.predict_proba(scaled_features)[0]
-            confidence = probabilities[np.where(self.model.classes_ == prediction)[0][0]]
-            quality = self._assess_quality(confidence)
+            if self.use_ensemble:
+                # Ensemble prediction
+                log_probs = self.model.predict_proba(scaled_features)[0]
+                rf_probs = self.forest.predict_proba(scaled_features)[0]
+                
+                # Weighted average
+                ensemble_probs = (self.logistic_weight * log_probs + 
+                                self.forest_weight * rf_probs)
+                
+                prediction = np.argmax(ensemble_probs)
+                confidence = ensemble_probs[prediction]
+                
+                # Check model agreement for quality
+                log_pred = np.argmax(log_probs)
+                rf_pred = np.argmax(rf_probs)
+                agreement = log_pred == rf_pred
+                
+                quality = self._assess_quality(confidence, agreement)
+            else:
+                # Original single model
+                prediction = self.model.predict(scaled_features)[0]
+                probabilities = self.model.predict_proba(scaled_features)[0]
+                confidence = probabilities[np.where(self.model.classes_ == prediction)[0][0]]
+                quality = self._assess_quality(confidence)
             
             return prediction, confidence, quality
             
@@ -54,27 +89,8 @@ class LogisticSignalModel:
             log.error(f"Prediction error: {e}")
             return 0, 0.0, "error"
     
-    def add_training_sample(self, features: ResearchFeatures):
-        """Add new training sample"""
-        
-        # Convert price change to signal class
-        signal = self._generate_signal_from_features(features)
-        
-        self.feature_history.append(features)
-        self.signal_history.append(signal)
-        
-        # Maintain limited history
-        max_history = self.config.ML_LOOKBACK * 2
-        if len(self.feature_history) > max_history:
-            self.feature_history = self.feature_history[-self.config.ML_LOOKBACK:]
-            self.signal_history = self.signal_history[-self.config.ML_LOOKBACK:]
-        
-        # Retrain periodically
-        if self._should_retrain():
-            self.train()
-    
     def train(self):
-        """Train the enhanced logistic regression model"""
+        """Train both models"""
         
         try:
             if len(self.feature_history) < self.config.MIN_TRAINING_SAMPLES:
@@ -85,13 +101,11 @@ class LogisticSignalModel:
             X = np.array([f.to_array() for f in self.feature_history])
             y = np.array(self.signal_history)
             
-            # Validate we have multiple classes with sufficient samples
             unique_classes, counts = np.unique(y, return_counts=True)
             if len(unique_classes) < 2:
                 log.warning("Need multiple signal classes for training")
                 return
             
-            # Require samples per class for sklearn
             min_samples_per_class = min(counts)
             if min_samples_per_class < 3:
                 log.warning(f"Need at least 3 samples per class, got {min_samples_per_class}")
@@ -101,48 +115,97 @@ class LogisticSignalModel:
             self.scaler.fit(X)
             X_scaled = self.scaler.transform(X)
             
-            # Train model
+            # Train both models
             self.model.fit(X_scaled, y)
+            self.forest.fit(X, y)
             self.is_trained = True
             
-            # Training report
-            accuracy = self.model.score(X_scaled, y)
+            # Performance comparison
+            log_accuracy = self.model.score(X_scaled, y)
+            rf_accuracy = self.forest.score(X, y)
+            
             signal_dist = dict(zip(unique_classes, counts))
-            log.info(f"Enhanced model trained on {len(X)} samples")
-            log.info(f"Training accuracy: {accuracy:.3f}")
+            log.info(f"Ensemble model trained on {len(X)} samples")
+            log.info(f"Logistic: {log_accuracy:.3f}, Forest: {rf_accuracy:.3f}")
             log.info(f"Signal distribution: {signal_dist}")
             
-            # Save model
             self.save_model()
             
         except Exception as e:
             log.error(f"Training error: {e}")
     
     def save_model(self):
-        """Save trained model and scaler"""
+        """Save both models"""
         try:
             if self.is_trained:
                 joblib.dump(self.model, self.config.MODEL_PATH)
+                joblib.dump(self.forest, self.config.MODEL_PATH.replace('.joblib', '_forest.joblib'))
                 joblib.dump(self.scaler, self.config.SCALER_PATH)
-                log.info("Enhanced model saved successfully")
+                log.info("Ensemble model saved successfully")
         except Exception as e:
             log.error(f"Model save error: {e}")
     
     def load_model(self):
-        """Load saved model and scaler"""
+        """Load both models"""
         try:
-            if os.path.exists(self.config.MODEL_PATH) and os.path.exists(self.config.SCALER_PATH):
+            forest_path = self.config.MODEL_PATH.replace('.joblib', '_forest.joblib')
+            
+            if (os.path.exists(self.config.MODEL_PATH) and 
+                os.path.exists(self.config.SCALER_PATH)):
+                
                 self.model = joblib.load(self.config.MODEL_PATH)
                 self.scaler = joblib.load(self.config.SCALER_PATH)
+                
+                # Load forest if available
+                if os.path.exists(forest_path):
+                    self.forest = joblib.load(forest_path)
+                    log.info("Ensemble model loaded successfully")
+                else:
+                    log.info("Logistic model loaded, forest will train from scratch")
+                
                 self.is_trained = True
-                log.info("Enhanced model loaded successfully")
             else:
                 log.info("No saved model found - will train from scratch")
         except Exception as e:
             log.error(f"Model load error: {e}")
+    
+    def _assess_quality(self, confidence: float, agreement: bool = True) -> str:
+        """Enhanced quality assessment"""
+        base_quality = "poor"
+        
+        if confidence >= self.config.CONFIDENCE_HIGH:
+            base_quality = "excellent"
+        elif confidence >= self.config.CONFIDENCE_MODERATE:
+            base_quality = "good"
+        elif confidence >= self.config.CONFIDENCE_LOW:
+            base_quality = "fair"
+        
+        # Boost quality if models agree
+        if self.use_ensemble and agreement:
+            if base_quality == "fair":
+                return "good"
+            elif base_quality == "good":
+                return "excellent"
+        
+        return base_quality
+    
+    def add_training_sample(self, features: ResearchFeatures):
+        """Add new training sample (unchanged)"""
+        signal = self._generate_signal_from_features(features)
+        
+        self.feature_history.append(features)
+        self.signal_history.append(signal)
+        
+        max_history = self.config.ML_LOOKBACK * 2
+        if len(self.feature_history) > max_history:
+            self.feature_history = self.feature_history[-self.config.ML_LOOKBACK:]
+            self.signal_history = self.signal_history[-self.config.ML_LOOKBACK:]
+        
+        if self._should_retrain():
+            self.train()
 
     def _generate_signal_from_features(self, features: ResearchFeatures) -> int:
-        """Enhanced signal generation with volume confirmation"""
+        """Enhanced signal generation with volume confirmation (unchanged)"""
         
         # 1. Trend Analysis (15m timeframe)
         trend_bullish = (
@@ -197,19 +260,8 @@ class LogisticSignalModel:
         else:
             return 0  # HOLD
     
-    def _assess_quality(self, confidence: float) -> str:
-        """Enhanced quality assessment"""
-        if confidence >= self.config.CONFIDENCE_HIGH:
-            return "excellent"
-        elif confidence >= self.config.CONFIDENCE_MODERATE:
-            return "good"
-        elif confidence >= self.config.CONFIDENCE_LOW:
-            return "fair"
-        else:
-            return "poor"
-    
     def _should_retrain(self) -> bool:
-        """Enhanced retraining logic"""
+        """Enhanced retraining logic (unchanged)"""
         
         if len(self.signal_history) < self.config.MIN_TRAINING_SAMPLES:
             return False
