@@ -28,8 +28,11 @@ class LogisticSignalModel:
         
         # Random Forest for ensemble
         self.forest = RandomForestClassifier(
-            n_estimators=50,
-            max_depth=8,
+            n_estimators=20,          # Reduced trees
+            max_depth=5,              # Reduced depth  
+            min_samples_split=10,     # Require more samples to split
+            min_samples_leaf=5,       # Require more samples per leaf
+            max_features='sqrt',      # Limit features per tree
             random_state=42,
             class_weight='balanced'
         )

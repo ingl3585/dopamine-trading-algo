@@ -166,7 +166,7 @@ class TradingSystem:
             return False, confidence
         
         # 1. Require minimum timeframe alignment for directional signals
-        if features.timeframe_alignment < 0.4:
+        if features.timeframe_alignment < 0.3:
             log.debug(f"Signal filtered: poor alignment {features.timeframe_alignment:.2f}")
             return False, confidence
         

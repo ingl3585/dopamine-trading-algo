@@ -191,31 +191,42 @@ class FeatureExtractor:
         }
     
     def _calculate_alignment(self, features_15m: dict, features_5m: dict, features_1m: dict) -> float:
-        """ENHANCED: Calculate simple timeframe alignment"""
+        """Timeframe alignment calculation"""
         
-        # Get trend direction for each timeframe
-        trend_15m = 1 if features_15m['ema_trend'] > 0.002 else (-1 if features_15m['ema_trend'] < -0.002 else 0)
-        trend_5m = 1 if features_5m['ema_trend'] > 0.001 else (-1 if features_5m['ema_trend'] < -0.001 else 0)
-        trend_1m = 1 if features_1m['ema_trend'] > 0.0005 else (-1 if features_1m['ema_trend'] < -0.0005 else 0)
+        # More relaxed trend thresholds
+        trend_15m = 1 if features_15m['ema_trend'] > 0.0005 else (-1 if features_15m['ema_trend'] < -0.0005 else 0)
+        trend_5m = 1 if features_5m['ema_trend'] > 0.0003 else (-1 if features_5m['ema_trend'] < -0.0003 else 0)
+        trend_1m = 1 if features_1m['ema_trend'] > 0.0001 else (-1 if features_1m['ema_trend'] < -0.0001 else 0)
         
-        trends = [trend_15m, trend_5m, trend_1m]
-        non_neutral = [t for t in trends if t != 0]
-        
-        # Perfect alignment
-        if len(set(trends)) == 1 and trends[0] != 0:
+        # Perfect alignment: all trends same direction
+        if trend_15m != 0 and trend_15m == trend_5m == trend_1m:
             return 1.0
         
-        # Good alignment (non-neutral trends agree)
-        elif len(non_neutral) >= 2 and len(set(non_neutral)) == 1:
-            return 0.7
+        # Strong alignment: 15m and 5m agree
+        if trend_15m != 0 and trend_15m == trend_5m:
+            if trend_1m == 0 or trend_1m == trend_15m:
+                return 0.8
+            else:
+                return 0.5  # Minor divergence but main trend clear
         
-        # Partial alignment
-        elif len(non_neutral) >= 1:
-            return 0.4
+        # Moderate alignment: 15m trend with neutral shorter timeframes
+        if trend_15m != 0:
+            neutral_count = [trend_5m, trend_1m].count(0)
+            if neutral_count >= 1:
+                return 0.6  # Clear long-term trend
         
-        # No clear direction
-        else:
-            return 0.0
+        # Partial alignment: any two timeframes agree
+        trends = [trend_15m, trend_5m, trend_1m]
+        non_zero = [t for t in trends if t != 0]
+        if len(non_zero) >= 2 and len(set(non_zero)) == 1:
+            return 0.4  # Some agreement
+        
+        # Weak signals
+        if len(non_zero) >= 1:
+            return 0.2
+        
+        # No direction
+        return 0.1
     
     def _calculate_entry_quality(self, features_1m: dict, features_5m: dict) -> float:
         """ENHANCED: Calculate 1-minute entry timing quality"""
