@@ -49,7 +49,7 @@ class TradingSystem:
         
         # Simple state tracking for better entry timing
         self.last_signal_time = datetime.min
-        self.entry_timing_threshold = 0.6  # Minimum entry quality threshold
+        self.entry_timing_threshold = 0.55  # Was 0.6
         
         # Statistics
         self.stats = {
