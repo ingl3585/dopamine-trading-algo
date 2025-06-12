@@ -37,6 +37,15 @@ namespace NinjaTrader.NinjaScript.Strategies
         [Range(1, 200)]
         [Display(Name = "Take Profit Ticks", Description = "Take profit distance in ticks", Order = 3, GroupName = "Risk Management")]
         public int TakeProfitTicks { get; set; }
+		
+		[NinjaScriptProperty]
+		[Display(Name = "Allow Scale In", Description = "Allow scaling into positions", Order = 7, GroupName = "Risk Management")]
+		public bool AllowScaleIn { get; set; }
+		
+		[NinjaScriptProperty]
+		[Range(2, 5)]
+		[Display(Name = "Max Position Pieces", Description = "Maximum scaling pieces", Order = 8, GroupName = "Risk Management")]
+		public int MaxPositionPieces { get; set; }
         
         [NinjaScriptProperty]
         [Range(0.1, 1.0)]
@@ -66,6 +75,8 @@ namespace NinjaTrader.NinjaScript.Strategies
         private List<double> volumes15m = new List<double>();
         private List<double> prices5m = new List<double>();
         private List<double> volumes5m = new List<double>();
+		private List<double> prices1m = new List<double>();
+        private List<double> volumes1m = new List<double>();
         
         // Position tracking
         private double entryPrice;
@@ -74,6 +85,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private int tradesExecuted;
         private int connectionAttempts;
         private DateTime lastConnectionAttempt;
+		private DateTime lastTradeEntry;
+		private int tradeIdCounter = 0;
+		private string currentTradeId = "";
         
         // Connection status
         private bool isConnectedToFeatureServer;
@@ -88,6 +102,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		private Bollinger bb;
 		private RSI rsi14;
 		private VOL volumeIndicator;
+		private ATR atr14;
 		
 		#endregion
         
@@ -125,7 +140,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		                    // Send initial historical data for training
 		                    if (isConnectedToFeatureServer)
 		                    {
-		                        Print($"Sending historical data for training: 15m={prices15m.Count}, 5m={prices5m.Count}");
+		                        Print($"Sending historical data: 15m={prices15m.Count}, 5m={prices5m.Count}, 1m={prices1m.Count}");
 		                        SendMarketDataToPython();
 		                    }
 		                }
@@ -158,10 +173,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    
 		    // Research-backed default values
 		    RiskPercent = 0.02;        // 2% risk per trade (institutional standard)
-		    StopLossTicks = 60;        // Simple fixed stop
-		    TakeProfitTicks = 200;      // 4:1 reward-to-risk (research optimal)
+		    StopLossTicks = 50;        // Simple fixed stop
+		    TakeProfitTicks = 100;      // 2:1 reward-to-risk (research optimal)
 		    MinConfidence = 0.5;       // Research: 60% accuracy threshold
 		    MaxPositionSize = 10;       // Simple position limits
+			AllowScaleIn = true;
+			MaxPositionPieces = 3;
 		    
 		    // NinjaTrader settings aligned with research
 		    EntriesPerDirection = 1;                           // Simplicity
@@ -185,6 +202,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             // Add multi-timeframe data series
             AddDataSeries(BarsPeriodType.Minute, 15);  // BarsArray[1] - 15-minute
             AddDataSeries(BarsPeriodType.Minute, 5);   // BarsArray[2] - 5-minute
+			AddDataSeries(BarsPeriodType.Minute, 1);   // BarsArray[3] - 1-minute
 			
 			if (ShowIndicators)
 			{
@@ -194,6 +212,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 			    bb = Bollinger(BarsArray[0], 2.0, 20);
 			    rsi14 = RSI(BarsArray[0], 14, 3);
 			    volumeIndicator = VOL(BarsArray[0]);
+				atr14 = ATR(BarsArray[0], 14);
 			    
 			    // Configure EMA plot
 			    ema20.Plots[0].Brush = Brushes.Orange;
@@ -216,11 +235,15 @@ namespace NinjaTrader.NinjaScript.Strategies
 			    // Configure RSI
 			    rsi14.Plots[0].Brush = Brushes.Purple;
 			    rsi14.Plots[0].Width = 2;
+				
+				// Configure ATR
+				atr14.Plots[0].Brush = Brushes.Gray;
 			    
 			    // Add indicators to chart
 			    AddChartIndicator(ema20);
 			    AddChartIndicator(sma50);
 			    AddChartIndicator(bb);
+				AddChartIndicator(atr14);
 			    
 			    // RSI goes in separate panel
 			    AddChartIndicator(rsi14);
@@ -234,7 +257,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        // Validate we have enough data on all timeframes before processing
 		        if (CurrentBars[0] < 1 || 
 		            (BarsArray.Length > 1 && CurrentBars[1] < 1) || 
-		            (BarsArray.Length > 2 && CurrentBars[2] < 1))
+		            (BarsArray.Length > 2 && CurrentBars[2] < 1) ||
+		            (BarsArray.Length > 3 && CurrentBars[3] < 1))
 		        {
 		            return; // Wait until all timeframes have data
 		        }
@@ -270,41 +294,70 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    }
 		}
         
-        protected override void OnExecutionUpdate(Execution execution, string executionId, 
-                                                double price, int quantity, MarketPosition marketPosition, 
-                                                string orderId, DateTime time)
-        {
-            try
-            {
-                if (execution.Order != null)
-                {
-                    tradesExecuted++;
-                    Print($"Trade executed: {execution.Order.Name} - {quantity} @ {price:F2}");
-                    
-                    if (marketPosition == MarketPosition.Flat)
-                    {
-                        hasPosition = false;
-                        entryPrice = 0;
-                        Print("Position closed - ready for new signals");
-                    }
-                    else
-                    {
-                        hasPosition = true;
-                        entryPrice = price;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Print($"Execution update error: {ex.Message}");
-            }
-        }
+		protected override void OnExecutionUpdate(Execution execution, string executionId, 
+		                                        double price, int quantity, MarketPosition marketPosition, 
+		                                        string orderId, DateTime time)
+		{
+		    try
+		    {
+		        if (execution.Order != null)
+		        {
+		            tradesExecuted++;
+		            
+		            // Create trade ID for ML entry orders
+		            if (execution.Order.Name.Contains("ML_") && 
+		                string.IsNullOrEmpty(currentTradeId) &&
+		                (execution.Order.OrderAction == OrderAction.Buy || execution.Order.OrderAction == OrderAction.SellShort))
+		            {
+		                lastTradeEntry = DateTime.Now;
+		                tradeIdCounter++;
+		                currentTradeId = $"trade_{tradeIdCounter}";
+		                entryPrice = price;
+		                hasPosition = true;
+		                Print($"Trade started: {currentTradeId} at {price:F2}");
+		            }
+		            
+		            // Handle position going flat
+		            if (marketPosition == MarketPosition.Flat)
+		            {
+		                hasPosition = false;
+		                entryPrice = 0;
+		                
+		                if (!string.IsNullOrEmpty(currentTradeId))
+		                {
+		                    int duration = (int)(DateTime.Now - lastTradeEntry).TotalMinutes;
+		                    string exitReason = DetermineExitReason(execution.Order.Name);
+		                    
+		                    NotifyTradeCompletion(currentTradeId, price, exitReason, duration);
+		                    Print($"Trade completed: {currentTradeId}, Exit: {price:F2}, Reason: {exitReason}");
+		                    currentTradeId = "";
+		                }
+		            }
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Execution update error: {ex.Message}");
+		    }
+		}
+		
+		private string DetermineExitReason(string orderName)
+		{
+		    if (orderName.Contains("Stop"))
+		        return "stop_loss";
+		    else if (orderName.Contains("Target") || orderName.Contains("Profit"))
+		        return "take_profit";
+		    else if (orderName.Contains("Exit") || orderName.Contains("Reverse"))
+		        return "signal_exit";
+		    else
+		        return "market_close";
+		}
         
         #endregion
         
         #region TCP Communication
         
-		private void ConnectToPython()
+        private void ConnectToPython()
 		{
 		    try
 		    {
@@ -314,7 +367,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            connectionAttempts++;
 		        }
 		        
-		        // Connect to Python feature server
 		        if (!isConnectedToFeatureServer)
 		        {
 		            try
@@ -330,7 +382,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            }
 		        }
 		        
-		        // Connect to Python signal server
 		        if (!isConnectedToSignalServer)
 		        {
 		            try
@@ -346,12 +397,12 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            }
 		        }
 		        
-		        // Only print success message once
 		        if (isConnectedToFeatureServer && isConnectedToSignalServer && State == State.Realtime)
 		        {
+		            // Connection message
 		            Print("Research strategy fully connected to Python ML system");
-		            Print("Using: RSI + Bollinger Bands + EMA + SMA + Volume (15m/5m timeframes)");
-		            Print("ML Model: Logistic Regression");
+		            Print("Using: RSI + Bollinger Bands + EMA + SMA + Volume (15m/5m/1m timeframes)");
+		            Print("ML Model: Enhanced Ensemble with 1-minute entry timing");
 		        }
 		    }
 		    catch (Exception ex)
@@ -454,7 +505,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             
             try
             {
-                // Create simple JSON manually (avoiding System.Text.Json dependency)
                 var jsonBuilder = new StringBuilder();
                 jsonBuilder.Append("{");
                 
@@ -494,6 +544,23 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
                 jsonBuilder.Append("],");
                 
+                // ENHANCED: Add 1-minute data
+                jsonBuilder.Append("\"price_1m\":[");
+                for (int i = 0; i < prices1m.Count; i++)
+                {
+                    if (i > 0) jsonBuilder.Append(",");
+                    jsonBuilder.Append(prices1m[i].ToString("F6"));
+                }
+                jsonBuilder.Append("],");
+                
+                jsonBuilder.Append("\"volume_1m\":[");
+                for (int i = 0; i < volumes1m.Count; i++)
+                {
+                    if (i > 0) jsonBuilder.Append(",");
+                    jsonBuilder.Append(volumes1m[i].ToString("F2"));
+                }
+                jsonBuilder.Append("],");
+                
                 // Add timestamp
                 jsonBuilder.Append($"\"timestamp\":{DateTime.Now.Ticks}");
                 jsonBuilder.Append("}");
@@ -506,10 +573,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                 stream.Write(header, 0, 4);
                 stream.Write(jsonBytes, 0, jsonBytes.Length);
                 
-                // Debug output every 50 bars
                 if (CurrentBar % 50 == 0)
                 {
-                    Print($"Sent market data: 15m bars={prices15m.Count}, 5m bars={prices5m.Count}");
+                    // ENHANCED: Update debug message
+                    Print($"Sent 3-timeframe data: 15m={prices15m.Count}, 5m={prices5m.Count}, 1m={prices1m.Count}");
                 }
             }
             catch (Exception ex)
@@ -536,7 +603,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            prices15m.Add(price15m);
 		            volumes15m.Add(volume15m);
 		            
-		            if (prices15m.Count > 1000)
+		            if (prices15m.Count > 2000)
 		            {
 		                prices15m.RemoveAt(0);
 		                volumes15m.RemoveAt(0);
@@ -552,17 +619,33 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            prices5m.Add(price5m);
 		            volumes5m.Add(volume5m);
 		            
-		            if (prices5m.Count > 400)
+		            if (prices5m.Count > 6000)
 		            {
 		                prices5m.RemoveAt(0);
 		                volumes5m.RemoveAt(0);
 		            }
 		        }
 		        
-		        // MUCH less frequent debug output - only every 100 bars
+		        // Add 1-minute data collection
+		        if (BarsArray.Length > 3 && CurrentBars[3] >= 0)
+		        {
+		            double price1m = Closes[3][0];
+		            double volume1m = Volumes[3][0];
+		            
+		            prices1m.Add(price1m);
+		            volumes1m.Add(volume1m);
+		            
+		            if (prices1m.Count > 30000)
+		            {
+		                prices1m.RemoveAt(0);
+		                volumes1m.RemoveAt(0);
+		            }
+		        }
+		        
 		        if (CurrentBar % 100 == 0 && State == State.Realtime)
 		        {
-		            Print($"Data: 15m={prices15m.Count} bars, 5m={prices5m.Count} bars");
+		            // Include 1m data in debug output
+		            Print($"Data: 15m={prices15m.Count}, 5m={prices5m.Count}, 1m={prices1m.Count} bars");
 		        }
 		    }
 		    catch (Exception ex)
@@ -709,87 +792,140 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    return true;
 		}
         
-        private void ExecuteMLSignal(SignalData signal)
-        {
-            try
-            {
-                // Calculate position size based on research guidelines
-                int positionSize = CalculatePositionSize(signal.confidence);
-                
-                if (positionSize <= 0)
-                {
-                    Print($"Position size calculation resulted in 0 - skipping signal");
-                    return;
-                }
-                
-				switch (signal.action)
-				{
-				    case 1: // Buy signal
-				        if (Position.MarketPosition != MarketPosition.Long)
-				        {
-				            if (Position.MarketPosition == MarketPosition.Short)
-				            {
-				                ExitShort("ML_Reverse");
-				                Print("Reversing from SHORT to LONG");
-				            }
-				            
-				            EnterLong(positionSize, "ML_Long");
-				            Print($"LONG ENTRY: size={positionSize}, confidence={signal.confidence:F3}, quality={signal.quality}");
-
-				            VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
-				        }
-				        else
-				        {
-				            Print("Already LONG - ignoring buy signal");
-				        }
-				        break;
-				        
-				    case 2: // Sell signal
-				        if (Position.MarketPosition != MarketPosition.Short)
-				        {
-				            if (Position.MarketPosition == MarketPosition.Long)
-				            {
-				                ExitLong("ML_Reverse");
-				                Print("Reversing from LONG to SHORT");
-				            }
-				            
-				            EnterShort(positionSize, "ML_Short");
-				            Print($"SHORT ENTRY: size={positionSize}, confidence={signal.confidence:F3}, quality={signal.quality}");
-				            
-				            // ADD THIS LINE HERE:
-				            VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
-				        }
-				        else
-				        {
-				            Print("Already SHORT - ignoring sell signal");
-				        }
-				        break;
-				        
-				    case 0: // Hold/Exit signal
-				        if (Position.MarketPosition != MarketPosition.Flat)
-				        {
-				            if (Position.MarketPosition == MarketPosition.Long)
-				                ExitLong("ML_Exit");
-				            else
-				                ExitShort("ML_Exit");
-				            
-				            Print($"EXIT SIGNAL: confidence={signal.confidence:F3}, quality={signal.quality}");
-				            
-				            // ADD THIS LINE HERE:
-				            VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
-				        }
-				        else
-				        {
-				            Print("Already FLAT - ignoring exit signal");
-				        }
-				        break;
-				}
-            }
-            catch (Exception ex)
-            {
-                Print($"Signal execution error: {ex.Message}");
-            }
-        }
+		private void ExecuteMLSignal(SignalData signal)
+		{
+		    try
+		    {
+		        int positionSize = CalculatePositionSize(signal.confidence);
+		        
+		        if (positionSize <= 0) return;
+		        
+		        switch (signal.action)
+		        {
+		            case 1: // Buy signal
+		                if (Position.MarketPosition != MarketPosition.Long)
+		                {
+		                    if (Position.MarketPosition == MarketPosition.Short)
+		                        ExitShort("ML_Reverse");
+		                    
+		                    EnterLong(positionSize, "ML_Long");
+		                    Print($"LONG ENTRY: size={positionSize}, confidence={signal.confidence:F3}");
+		                    VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
+		                }
+		                else if (AllowScaleIn && signal.confidence > 0.75 && Position.Quantity < MaxPositionPieces)
+		                {
+		                    // Simple scale in - only if moving in our favor
+		                    if (Close[0] > Position.AveragePrice * 1.002) // 0.2% favorable
+		                    {
+		                        int scaleSize = Math.Max(1, positionSize / 2);
+		                        EnterLong(scaleSize, "ML_Long_Scale");
+		                        Print($"SCALE IN LONG: size={scaleSize}");
+		                    }
+		                }
+		                break;
+		                
+		            case 2: // Sell signal
+		                if (Position.MarketPosition != MarketPosition.Short)
+		                {
+		                    if (Position.MarketPosition == MarketPosition.Long)
+		                        ExitLong("ML_Reverse");
+		                    
+		                    EnterShort(positionSize, "ML_Short");
+		                    Print($"SHORT ENTRY: size={positionSize}, confidence={signal.confidence:F3}");
+		                    VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
+		                }
+		                else if (AllowScaleIn && signal.confidence > 0.75 && Position.Quantity < MaxPositionPieces)
+		                {
+		                    // Simple scale in - only if moving in our favor
+		                    if (Close[0] < Position.AveragePrice * 0.998) // 0.2% favorable
+		                    {
+		                        int scaleSize = Math.Max(1, positionSize / 2);
+		                        EnterShort(scaleSize, "ML_Short_Scale");
+		                        Print($"SCALE IN SHORT: size={scaleSize}");
+		                    }
+		                }
+		                break;
+		                
+		            case 0: // Hold signal
+		                if (Position.MarketPosition != MarketPosition.Flat)
+		                {
+		                    // Partial exit on low confidence
+		                    if (signal.confidence < 0.4 && Position.Quantity > 1)
+		                    {
+		                        int partialSize = Position.Quantity / 2;
+		                        if (Position.MarketPosition == MarketPosition.Long)
+		                            ExitLong(partialSize, "ML_Partial_Exit", "");
+		                        else
+		                            ExitShort(partialSize, "ML_Partial_Exit", "");
+		                        Print($"PARTIAL EXIT: {partialSize} contracts");
+		                    }
+		                    else
+		                    {
+		                        // Full exit
+		                        if (Position.MarketPosition == MarketPosition.Long)
+		                            ExitLong("ML_Exit");
+		                        else
+		                            ExitShort("ML_Exit");
+		                    }
+		                    VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
+		                }
+		                break;
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Enhanced signal execution error: {ex.Message}");
+		    }
+		}
+		
+		protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice, 
+                                    int quantity, int filled, double averageFillPrice, 
+                                    OrderState orderState, DateTime time, ErrorCode error, string comment)
+		{
+		    // Set exit orders when entry order is filled
+		    if (order.Name.Contains("ML_") && orderState == OrderState.Filled)
+		    {
+		        SetExitOrders(order.Name, averageFillPrice);
+		    }
+		}
+		
+		private void SetExitOrders(string entrySignal, double fillPrice)
+		{
+		    try
+		    {
+		        entryPrice = fillPrice;
+		        hasPosition = true;
+		        
+		        // Dynamic exit calculation
+		        double atrValue = atr14[0];
+		        double baseMultiplier = 2.5; // Base ATR multiplier
+		        
+		        // Calculate dynamic stops/targets
+		        int dynamicStop = Math.Max(30, (int)(atrValue / TickSize * baseMultiplier));
+		        int dynamicTarget = (int)(dynamicStop * 2.0); // 2:1 ratio
+		        
+		        // Cap maximum values
+		        dynamicStop = Math.Min(dynamicStop, 120);
+		        dynamicTarget = Math.Min(dynamicTarget, 240);
+		        
+		        Print($"Dynamic exits: Stop={dynamicStop} ticks, Target={dynamicTarget} ticks (ATR={atrValue:F2})");
+		        
+		        if (Position.MarketPosition == MarketPosition.Long)
+		        {
+		            SetStopLoss(entrySignal, CalculationMode.Ticks, dynamicStop, false);
+		            SetProfitTarget(entrySignal, CalculationMode.Ticks, dynamicTarget);
+		        }
+		        else if (Position.MarketPosition == MarketPosition.Short)
+		        {
+		            SetStopLoss(entrySignal, CalculationMode.Ticks, dynamicStop, false);
+		            SetProfitTarget(entrySignal, CalculationMode.Ticks, dynamicTarget);
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Dynamic exit order setup error: {ex.Message}");
+		    }
+		}
 		
 		private string GetActionName(int action)
 		{
@@ -798,6 +934,40 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        case 1: return "BUY";
 		        case 2: return "SELL";
 		        default: return "HOLD";
+		    }
+		}
+		
+		private void NotifyTradeCompletion(string tradeId, double exitPrice, string exitReason, int durationMinutes)
+		{
+		    try
+		    {
+		        Print($"NotifyTradeCompletion called: {tradeId}");  // DEBUG LINE
+		        
+		        if (featureClient?.Connected != true) 
+		        {
+		            Print($"Cannot send trade completion - featureClient not connected");  // DEBUG LINE
+		            return;
+		        }
+		        
+		        Print($"Sending trade completion via feature client");  // DEBUG LINE
+		        
+		        // Create simple JSON manually
+		        var json = $"{{\"type\":\"trade_completion\",\"signal_id\":\"{tradeId}\",\"exit_price\":{exitPrice},\"exit_reason\":\"{exitReason}\",\"duration_minutes\":{durationMinutes},\"timestamp\":{DateTime.Now.Ticks}}}";
+		        
+		        Print($"JSON to send: {json}");  // DEBUG LINE
+		        
+		        byte[] data = Encoding.UTF8.GetBytes(json);
+		        byte[] header = BitConverter.GetBytes(data.Length);
+		        
+		        var stream = featureClient.GetStream();
+		        stream.Write(header, 0, 4);
+		        stream.Write(data, 0, data.Length);
+		        
+		        Print($"Trade completion SUCCESSFULLY sent: {tradeId}, Exit: {exitPrice:F2}, Duration: {durationMinutes}min");
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Trade completion ERROR: {ex.Message}");
 		    }
 		}
         
@@ -811,50 +981,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    int baseSize = 1;
 		    
 		    if (confidence >= 0.9)
-				baseSize = 8;
+				baseSize = 4;
 			else if (confidence >= 0.8)
-		        baseSize = 6;      
+		        baseSize = 3;      
 		    else if (confidence >= 0.7)
-		        baseSize = 4;      
-		    else if (confidence >= 0.6)
 		        baseSize = 2;      
+		    else if (confidence >= 0.6)
+		        baseSize = 1;      
 		    else if (confidence >= 0.5)
 		        baseSize = 1;  
 		    
 		    return Math.Min(baseSize, MaxPositionSize);
-		}
-        
-        protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice, 
-                                            int quantity, int filled, double averageFillPrice, 
-                                            OrderState orderState, DateTime time, ErrorCode error, string comment)
-        {
-            // Set exit orders when entry order is filled
-            if (order.Name.Contains("ML_") && orderState == OrderState.Filled)
-            {
-                SetExitOrders(order.Name);
-            }
-        }
-        
-		private void SetExitOrders(string entrySignal)
-		{
-		    try
-		    {
-		        entryPrice = Close[0];
-		        hasPosition = true;
-		        
-		        // Research-backed simple exit strategy
-		        // Your research.txt: "simple fixed stops work well" and "2:1 reward-to-risk ratio"
-		        
-		        SetStopLoss(entrySignal, CalculationMode.Ticks, StopLossTicks, false);
-		        SetProfitTarget(entrySignal, CalculationMode.Ticks, TakeProfitTicks);
-		        
-		        Print($"Research-aligned exits set - Entry: {entryPrice:F2}, " +
-		              $"Stop: {StopLossTicks} ticks, Target: {TakeProfitTicks} ticks (2:1 R:R)");
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Exit order setup error: {ex.Message}");
-		    }
 		}
         
         #endregion

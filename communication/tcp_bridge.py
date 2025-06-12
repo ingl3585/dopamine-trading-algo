@@ -12,14 +12,15 @@ from config import ResearchConfig
 log = logging.getLogger(__name__)
 
 class TCPBridge:
-    """TCP communication bridge with NinjaTrader"""
+    """TCP communication bridge with NinjaTrader - enhanced for trade completions"""
     
     def __init__(self, config: ResearchConfig):
         self.config = config
         self.running = False
         
-        # Callback for market data
+        # Callbacks
         self.on_market_data: Optional[Callable] = None
+        self.on_trade_completion: Optional[Callable] = None  # NEW
         
         # Initialize sockets but don't accept yet
         self._feat_srv = socket.socket()
@@ -58,7 +59,7 @@ class TCPBridge:
         log.info("TCP reader thread started")
 
     def _reader(self):
-        """Read market data from NinjaTrader"""
+        """Read market data and trade completions from NinjaTrader"""
         log.info("TCP receive loop started - waiting for data...")
         
         while self.running:
@@ -85,8 +86,14 @@ class TCPBridge:
                 try:
                     message = json.loads(data.decode())
                     
-                    if self.on_market_data and "price_15m" in message:
-                        self.on_market_data(message)
+                    # NEW: Handle different message types
+                    if message.get('type') == 'trade_completion':
+                        if self.on_trade_completion:
+                            self.on_trade_completion(message)
+                    elif "price_15m" in message:
+                        # Regular market data
+                        if self.on_market_data:
+                            self.on_market_data(message)
                     
                 except json.JSONDecodeError as e:
                     log.error(f"JSON decode error: {e}")
