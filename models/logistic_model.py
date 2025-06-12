@@ -208,60 +208,145 @@ class LogisticSignalModel:
             self.train()
 
     def _generate_signal_from_features(self, features: ResearchFeatures) -> int:
-        """Enhanced signal generation with volume confirmation (unchanged)"""
+        """RESEARCH-VALIDATED: Professional signal generation with proper hierarchy"""
         
-        # 1. Trend Analysis (15m timeframe)
-        trend_bullish = (
-            features.ema_trend_15m > -0.002 and          # Allow slight negative trend
-            features.price_vs_sma_15m > -0.005 and       # More lenient price position
-            25 < features.rsi_15m < 80                    # Wider RSI range for trend-following
+        # 1. MARKET REGIME IDENTIFICATION (Critical First Step)
+        # Research shows this must come first to avoid wrong-footed trades
+        trending_up = (
+            features.ema_trend_15m > 0.0008 and          # Strong 15m uptrend
+            features.price_vs_sma_15m > 0.003 and        # Price well above SMA
+            features.rsi_15m > 40 and features.rsi_15m < 85  # Not extreme
         )
         
-        trend_bearish = (
-            features.ema_trend_15m < 0.002 and           # Allow slight positive trend
-            features.price_vs_sma_15m < 0.005 and        # More lenient price position
-            20 < features.rsi_15m < 75                    # Wider RSI range
+        trending_down = (
+            features.ema_trend_15m < -0.0008 and         # Strong 15m downtrend  
+            features.price_vs_sma_15m < -0.003 and       # Price well below SMA
+            features.rsi_15m > 15 and features.rsi_15m < 60  # Not extreme
         )
         
-        # 2. Entry Signals (5m timeframe)
-        rsi_buy_zone = features.rsi_5m < 60              # Expanded from 30 (trend-following)
-        rsi_sell_zone = features.rsi_5m > 40             # Expanded from 70 (trend-following)
-        bb_buy_zone = features.bb_position_5m < 0.6      # Expanded zones
-        bb_sell_zone = features.bb_position_5m > 0.4     # Expanded zones
-        
-        # Volume confirmation
-        volume_confirm = (features.volume_ratio_5m > 1.0 or 
-                         features.volume_breakout_5m)    # Either above average or breakout
-        
-        # 3. Multi-timeframe confluence signals
-        confluence_buy = (
-            trend_bullish and 
-            (rsi_buy_zone or bb_buy_zone) and            # At least one entry signal
-            volume_confirm                               # Volume confirmation required
+        # Range-bound: Weak trends on both timeframes
+        ranging_market = (
+            abs(features.ema_trend_15m) < 0.0005 and     # Weak 15m trend
+            abs(features.ema_trend_5m) < 0.0003          # Weak 5m trend
         )
         
-        confluence_sell = (
-            trend_bearish and 
-            (rsi_sell_zone or bb_sell_zone) and          # At least one entry signal
-            volume_confirm                               # Volume confirmation required
+        # 2. VOLUME ANALYSIS (Essential for All Signals)
+        # Research: Volume confirmation is critical for signal reliability
+        strong_volume = features.volume_ratio_15m > 1.5 or features.volume_breakout_5m
+        decent_volume = features.volume_ratio_5m > 1.1
+        
+        # 3. TRENDING MARKET SIGNALS (Highest Priority - Research Validated)
+        
+        # Band Walking (John Bollinger's research - continuation signals)
+        if trending_up:
+            # Upper band walk = bullish continuation
+            upper_band_walk = (
+                features.bb_position_15m > 0.75 and      # Near/above upper band
+                features.bb_position_5m > 0.6 and        # 5m confirmation
+                strong_volume and                        # Volume support
+                features.rsi_15m < 80                    # Not extremely overbought
+            )
+            if upper_band_walk:
+                return 1  # BUY - Ride the trend
+        
+        elif trending_down:
+            # Lower band walk = bearish continuation  
+            lower_band_walk = (
+                features.bb_position_15m < 0.25 and      # Near/below lower band
+                features.bb_position_5m < 0.4 and        # 5m confirmation
+                strong_volume and                        # Volume support
+                features.rsi_15m > 20                    # Not extremely oversold
+            )
+            if lower_band_walk:
+                return 2  # SELL - Ride the trend
+        
+        # 4. BREAKOUT SIGNALS (Trend Initiation - High Priority)
+        
+        if trending_up or not ranging_market:  # Uptrend or weak downtrend
+            bullish_breakout = (
+                features.bb_position_5m > 0.8 and        # Breaking above upper band
+                features.rsi_5m < 75 and                 # Room to run
+                features.volume_breakout_5m and          # Volume confirmation
+                features.ema_trend_5m > 0.0003           # 5m momentum
+            )
+            if bullish_breakout:
+                return 1  # BUY - Breakout momentum
+        
+        elif trending_down or not ranging_market:  # Downtrend or weak uptrend
+            bearish_breakout = (
+                features.bb_position_5m < 0.2 and        # Breaking below lower band
+                features.rsi_5m > 25 and                 # Room to fall
+                features.volume_breakout_5m and          # Volume confirmation
+                features.ema_trend_5m < -0.0003          # 5m momentum
+            )
+            if bearish_breakout:
+                return 2  # SELL - Breakout momentum
+        
+        # 5. PULLBACK ENTRIES (Trend Following - Medium Priority)
+        # Research: High probability entries in established trends
+        
+        if trending_up:
+            # Buy pullbacks in uptrends
+            bullish_pullback = (
+                features.rsi_5m < 45 and                 # Oversold in uptrend
+                features.bb_position_5m < 0.5 and        # Below middle band
+                decent_volume and                        # Volume support
+                features.ema_trend_5m > -0.0001          # 5m not counter-trending
+            )
+            if bullish_pullback:
+                return 1  # BUY - Pullback entry
+        
+        elif trending_down:
+            # Sell bounces in downtrends
+            bearish_pullback = (
+                features.rsi_5m > 55 and                 # Overbought in downtrend
+                features.bb_position_5m > 0.5 and        # Above middle band
+                decent_volume and                        # Volume support
+                features.ema_trend_5m < 0.0001           # 5m not counter-trending
+            )
+            if bearish_pullback:
+                return 2  # SELL - Pullback entry
+        
+        # 6. MEAN REVERSION SIGNALS (Range-Bound Markets Only - Lower Priority)
+        # Research: Only use in confirmed ranging markets
+        
+        if ranging_market:
+            # Oversold reversal
+            oversold_reversal = (
+                features.rsi_5m < 25 and                 # Oversold
+                features.bb_position_5m < 0.15 and       # Below lower band
+                features.volume_ratio_5m > 1.3 and       # Volume spike
+                features.bb_position_15m < 0.3           # 15m confirmation
+            )
+            if oversold_reversal:
+                return 1  # BUY - Mean reversion
+            
+            # Overbought reversal
+            overbought_reversal = (
+                features.rsi_5m > 75 and                 # Overbought
+                features.bb_position_5m > 0.85 and       # Above upper band
+                features.volume_ratio_5m > 1.3 and       # Volume spike
+                features.bb_position_15m > 0.7           # 15m confirmation
+            )
+            if overbought_reversal:
+                return 2  # SELL - Mean reversion
+        
+        # 7. QUALITY FILTERS (Research-Based Risk Management)
+        
+        # Avoid low-quality setups
+        low_quality_conditions = (
+            features.volume_ratio_5m < 0.8 or            # Very weak volume
+            (trending_up and features.rsi_15m > 85) or   # Extreme overbought in uptrend
+            (trending_down and features.rsi_15m < 15) or # Extreme oversold in downtrend
+            features.timeframe_alignment < 0.1           # Very poor alignment
         )
         
-        # 4. Trend continuation signals (for band walking)
-        band_walk_up = (features.bb_position_15m > 0.8 and 
-                       features.bb_position_5m > 0.6 and
-                       features.rsi_15m > 50)
+        if low_quality_conditions:
+            return 0  # HOLD - Avoid low quality
         
-        band_walk_down = (features.bb_position_15m < 0.2 and 
-                         features.bb_position_5m < 0.4 and
-                         features.rsi_15m < 50)
-        
-        # Return signals with priority
-        if confluence_buy or band_walk_up:
-            return 1  # BUY
-        elif confluence_sell or band_walk_down:
-            return 2  # SELL
-        else:
-            return 0  # HOLD
+        # 8. DEFAULT: HOLD
+        # Research: "Do nothing" is often the best action
+        return 0  # HOLD - No clear high-probability setup
     
     def _should_retrain(self) -> bool:
         """Enhanced retraining logic (unchanged)"""
