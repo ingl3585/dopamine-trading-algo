@@ -65,7 +65,7 @@ class TradingSystem:
             'low_confidence_signals': 0,
             'entry_quality_avg': 0.0,
             'timeframe_alignment_avg': 0.0
-        }
+        } 
         
         log.info("Trading system with 1-minute entry timing initialized")
     
