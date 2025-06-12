@@ -208,155 +208,196 @@ class LogisticSignalModel:
             self.train()
 
     def _generate_signal_from_features(self, features: ResearchFeatures) -> int:
-        """QUALITY FOCUSED: 2-3 high-probability MNQ setups per day"""
+        """IMPROVED: Research-backed signal generation with balanced quality/quantity"""
         
-        # MNQ-specific thresholds (more demanding for quality)
-        STRONG_TREND_THRESHOLD = 0.0003      # Meaningful trend for MNQ
-        VOLUME_STRENGTH_THRESHOLD = 1.3      # Strong volume confirmation
-        RSI_QUALITY_RANGE = (25, 75)        # Avoid extreme RSI zones
-        
-        # 1. PREMIUM TREND CONTINUATION SETUPS
-        # These are your bread and butter - clear trend with pullback entry
-        
-        strong_uptrend = (
-            features.ema_trend_15m > STRONG_TREND_THRESHOLD and
-            features.price_vs_sma_15m > 0.001 and
-            features.rsi_15m > 30 and features.rsi_15m < 70
+        # 1. MARKET REGIME IDENTIFICATION (Relaxed for more signals)
+        trending_up = (
+            features.ema_trend_15m > 0.0001 and          # RELAXED from 0.0003 (3x more permissive)
+            features.price_vs_sma_15m > 0.0005 and      # RELAXED from 0.001 (2x more permissive)
+            features.rsi_15m > 25 and features.rsi_15m < 85  # Wider range for more signals
         )
         
-        strong_downtrend = (
-            features.ema_trend_15m < -STRONG_TREND_THRESHOLD and
-            features.price_vs_sma_15m < -0.001 and
-            features.rsi_15m > 30 and features.rsi_15m < 70
+        trending_down = (
+            features.ema_trend_15m < -0.0001 and         # RELAXED from -0.0003 (3x more permissive)        
+            features.price_vs_sma_15m < -0.0005 and     # RELAXED from -0.001 (2x more permissive)
+            features.rsi_15m > 15 and features.rsi_15m < 75  # Wider range for more signals
         )
         
-        # Premium long setup: Uptrend + pullback + volume
-        if strong_uptrend:
-            quality_pullback_long = (
-                features.rsi_5m < 55 and features.rsi_5m > 35 and    # Pullback zone
-                features.bb_position_5m < 0.7 and                    # Not at upper band
-                features.bb_position_5m > 0.3 and                    # Not at lower band
-                features.volume_ratio_5m > VOLUME_STRENGTH_THRESHOLD and
-                features.ema_trend_5m > -0.0002                      # 5m not strongly opposing
+        # Range-bound: More permissive for mean reversion
+        ranging_market = (
+            abs(features.ema_trend_15m) < 0.0015 and     # RELAXED from 0.001 (1.5x more permissive)
+            abs(features.ema_trend_5m) < 0.0008          # RELAXED from 0.0005 (1.6x more permissive)
+        )
+        
+        # 2. VOLUME ANALYSIS (Relaxed thresholds)
+        strong_volume = features.volume_ratio_15m > 1.0 or features.volume_breakout_5m  # RELAXED from 1.1
+        decent_volume = features.volume_ratio_5m > 0.7   # RELAXED from 0.8
+        
+        # 3. TIER 1 SIGNALS - Premium Quality (Your original logic with relaxed thresholds)
+        
+        # Band Walking (Premium signals)
+        if trending_up:
+            upper_band_walk = (
+                features.bb_position_15m > 0.6 and       # RELAXED from 0.7
+                features.bb_position_5m > 0.5 and        # RELAXED from 0.55
+                strong_volume and                        # Volume support
+                features.rsi_15m < 80
             )
-            if quality_pullback_long:
-                return 1  # PREMIUM LONG
+            if upper_band_walk:
+                return 1  # TIER 1 BUY - Premium signal
         
-        # Premium short setup: Downtrend + pullback + volume
-        if strong_downtrend:
-            quality_pullback_short = (
-                features.rsi_5m > 45 and features.rsi_5m < 65 and    # Pullback zone
-                features.bb_position_5m > 0.3 and                    # Not at lower band
-                features.bb_position_5m < 0.7 and                    # Not at upper band
-                features.volume_ratio_5m > VOLUME_STRENGTH_THRESHOLD and
-                features.ema_trend_5m < 0.0002                       # 5m not strongly opposing
+        elif trending_down:
+            lower_band_walk = (
+                features.bb_position_15m < 0.4 and       # RELAXED from 0.3
+                features.bb_position_5m < 0.5 and        # RELAXED from 0.45
+                strong_volume and                        # Volume support
+                features.rsi_15m > 20
             )
-            if quality_pullback_short:
-                return 2  # PREMIUM SHORT
+            if lower_band_walk:
+                return 2  # TIER 1 SELL - Premium signal
         
-        # 2. BREAKOUT SETUPS (High volume required)
-        # Only take breakouts with exceptional volume
+        # 4. TIER 2 SIGNALS - Standard Quality (NEW - Fill the signal gap)
         
-        exceptional_volume = features.volume_ratio_5m > 1.8
+        # Simple trend following (generates more signals)
+        if trending_up or (features.ema_trend_5m > 0.00005 and not trending_down):  # RELAXED from 0.0001
+            standard_buy = (
+                features.rsi_5m > 35 and features.rsi_5m < 70 and    # Good RSI zone
+                features.bb_position_5m > 0.3 and                    # Above lower band
+                decent_volume and                                     # Minimum volume
+                features.price_vs_sma_5m > -0.001                    # Not too far below SMA
+            )
+            if standard_buy:
+                return 1  # TIER 2 BUY - Standard signal
         
-        if exceptional_volume:
-            # Bullish breakout from consolidation
+        if trending_down or (features.ema_trend_5m < -0.00005 and not trending_up):  # RELAXED from -0.0001
+            standard_sell = (
+                features.rsi_5m > 30 and features.rsi_5m < 65 and    # Good RSI zone
+                features.bb_position_5m < 0.7 and                    # Below upper band
+                decent_volume and                                     # Minimum volume
+                features.price_vs_sma_5m < 0.001                     # Not too far above SMA
+            )
+            if standard_sell:
+                return 2  # TIER 2 SELL - Standard signal
+        
+        # 5. BREAKOUT SIGNALS (Moderately relaxed)
+        
+        if not ranging_market:  # Only in non-ranging conditions
             bullish_breakout = (
-                features.bb_position_5m > 0.85 and                   # Breaking upper band
-                features.rsi_5m > 45 and features.rsi_5m < 80 and    # Not overbought
-                features.ema_trend_5m > 0.0001 and                   # 5m momentum
-                abs(features.ema_trend_15m) < 0.0005                 # Was consolidating
+                features.bb_position_5m > 0.7 and       # RELAXED from 0.75
+                features.rsi_5m < 75 and                 # RELAXED from 78
+                features.volume_breakout_5m and          # Volume confirmation
+                features.ema_trend_5m > 0.00005          # RELAXED from 0.0001
             )
             if bullish_breakout:
-                return 1  # BREAKOUT LONG
+                return 1  # BUY - Breakout momentum
             
-            # Bearish breakdown from consolidation
-            bearish_breakdown = (
-                features.bb_position_5m < 0.15 and                   # Breaking lower band
-                features.rsi_5m > 20 and features.rsi_5m < 55 and    # Not oversold
-                features.ema_trend_5m < -0.0001 and                  # 5m momentum
-                abs(features.ema_trend_15m) < 0.0005                 # Was consolidating
+            bearish_breakout = (
+                features.bb_position_5m < 0.3 and       # RELAXED from 0.25
+                features.rsi_5m > 25 and                 # RELAXED from 22
+                features.volume_breakout_5m and          # Volume confirmation
+                features.ema_trend_5m < -0.00005         # RELAXED from -0.0001
             )
-            if bearish_breakdown:
-                return 2  # BREAKOUT SHORT
+            if bearish_breakout:
+                return 2  # SELL - Breakout momentum
         
-        # 3. MEAN REVERSION IN RANGING MARKET
-        # Only when market is clearly ranging (not trending)
+        # 6. PULLBACK ENTRIES (More opportunities)
         
-        ranging_market = (
-            abs(features.ema_trend_15m) < 0.0002 and              # Flat 15m trend
-            abs(features.ema_trend_5m) < 0.0003                   # Relatively flat 5m
-        )
+        if trending_up:
+            bullish_pullback = (
+                features.rsi_5m < 50 and                 # RELAXED from 48
+                features.bb_position_5m < 0.6 and       # RELAXED from 0.55
+                decent_volume and                        # Volume support
+                features.ema_trend_5m > -0.0003          # RELAXED from -0.0002
+            )
+            if bullish_pullback:
+                return 1  # BUY - Pullback entry
+        
+        elif trending_down:
+            bearish_pullback = (
+                features.rsi_5m > 50 and                 # RELAXED from 52
+                features.bb_position_5m > 0.4 and       # RELAXED from 0.45
+                decent_volume and                        # Volume support
+                features.ema_trend_5m < 0.0003           # RELAXED from 0.0002
+            )
+            if bearish_pullback:
+                return 2  # SELL - Pullback entry
+        
+        # 7. MEAN REVERSION SIGNALS (Enhanced for ranging markets)
         
         if ranging_market:
-            # Oversold bounce setup
-            oversold_quality = (
-                features.rsi_5m < 30 and                           # Oversold
-                features.bb_position_5m < 0.2 and                 # At lower band
-                features.volume_ratio_5m > 1.2 and                # Good volume
-                features.rsi_15m < 40                              # 15m also oversold
+            oversold_reversal = (
+                features.rsi_5m < 30 and                 # RELAXED from 28
+                features.bb_position_5m < 0.25 and       # RELAXED from 0.2
+                features.volume_ratio_5m > 0.7 and       # RELAXED from 0.9
+                features.bb_position_15m < 0.4           # RELAXED from 0.35
             )
-            if oversold_quality:
-                return 1  # MEAN REVERSION LONG
+            if oversold_reversal:
+                return 1  # BUY - Mean reversion
             
-            # Overbought fade setup
-            overbought_quality = (
-                features.rsi_5m > 70 and                           # Overbought
-                features.bb_position_5m > 0.8 and                 # At upper band
-                features.volume_ratio_5m > 1.2 and                # Good volume
-                features.rsi_15m > 60                              # 15m also overbought
+            overbought_reversal = (
+                features.rsi_5m > 70 and                 # RELAXED from 72
+                features.bb_position_5m > 0.75 and       # RELAXED from 0.8
+                features.volume_ratio_5m > 0.7 and       # RELAXED from 0.9
+                features.bb_position_15m > 0.6           # RELAXED from 0.65
             )
-            if overbought_quality:
-                return 2  # MEAN REVERSION SHORT
+            if overbought_reversal:
+                return 2  # SELL - Mean reversion
         
-        # 4. MOMENTUM CONTINUATION (Very selective)
-        # Only when all timeframes align and momentum is building
+        # 8. MOMENTUM CONTINUATION (NEW - Catches more opportunities)
         
-        strong_momentum_up = (
-            features.ema_trend_15m > 0.0002 and
-            features.ema_trend_5m > 0.0001 and
-            features.ema_trend_1m > 0.00005 and
-            features.volume_ratio_5m > 1.4
+        # Simple momentum when not in strong opposite trend
+        if not trending_down:
+            momentum_up = (
+                features.ema_trend_5m > 0.00005 and      # RELAXED from 0.0001
+                features.rsi_5m > 40 and features.rsi_5m < 70 and  # RELAXED ranges
+                features.volume_ratio_5m > 0.6 and       # RELAXED from 0.7
+                features.bb_position_5m > 0.35           # RELAXED from 0.4
+            )
+            if momentum_up:
+                return 1  # BUY - Momentum continuation
+        
+        if not trending_up:
+            momentum_down = (
+                features.ema_trend_5m < -0.00005 and     # RELAXED from -0.0001
+                features.rsi_5m > 30 and features.rsi_5m < 60 and  # RELAXED ranges
+                features.volume_ratio_5m > 0.6 and       # RELAXED from 0.7
+                features.bb_position_5m < 0.65           # RELAXED from 0.6
+            )
+            if momentum_down:
+                return 2  # SELL - Momentum continuation
+        
+        # 9. BASIC OPPORTUNITY SIGNALS (NEW - Simple signals for missed opportunities)
+        
+        # Very basic signals when conditions are reasonable
+        basic_volume_ok = features.volume_ratio_5m > 0.6
+        not_extreme_rsi = 20 < features.rsi_5m < 80
+        
+        if basic_volume_ok and not_extreme_rsi:
+            # Simple trend + reasonable RSI
+            if (features.ema_trend_5m > 0.0001 and     # RELAXED from 0.0002
+                features.rsi_5m < 65 and 
+                features.bb_position_5m > 0.25):
+                return 1  # BASIC BUY
+            
+            if (features.ema_trend_5m < -0.0001 and    # RELAXED from -0.0002
+                features.rsi_5m > 35 and 
+                features.bb_position_5m < 0.75):
+                return 2  # BASIC SELL
+        
+        # 10. SAFETY FILTERS (Keep essential protection)
+        
+        # Only filter truly dangerous conditions
+        extreme_conditions = (
+            features.volume_ratio_5m < 0.4 or            # VERY weak volume
+            features.rsi_15m > 95 or features.rsi_15m < 5 or  # EXTREME RSI only
+            features.timeframe_alignment < 0.02          # VERY poor alignment
         )
         
-        strong_momentum_down = (
-            features.ema_trend_15m < -0.0002 and
-            features.ema_trend_5m < -0.0001 and
-            features.ema_trend_1m < -0.00005 and
-            features.volume_ratio_5m > 1.4
-        )
+        if extreme_conditions:
+            return 0  # HOLD - Dangerous conditions
         
-        if strong_momentum_up:
-            momentum_long = (
-                features.rsi_5m > 40 and features.rsi_5m < 75 and
-                features.bb_position_5m > 0.4
-            )
-            if momentum_long:
-                return 1  # MOMENTUM LONG
-        
-        if strong_momentum_down:
-            momentum_short = (
-                features.rsi_5m > 25 and features.rsi_5m < 60 and
-                features.bb_position_5m < 0.6
-            )
-            if momentum_short:
-                return 2  # MOMENTUM SHORT
-        
-        # 5. STRICT SAFETY FILTERS
-        # Avoid signals during dangerous market conditions
-        
-        dangerous_conditions = (
-            features.volume_ratio_5m < 0.5 or                      # Very weak volume
-            features.rsi_15m > 85 or features.rsi_15m < 15 or      # Extreme 15m RSI
-            (features.rsi_5m > 80 and features.bb_position_5m > 0.9) or  # Extreme overbought
-            (features.rsi_5m < 20 and features.bb_position_5m < 0.1)     # Extreme oversold
-        )
-        
-        if dangerous_conditions:
-            return 0  # HOLD - Too risky
-        
-        # DEFAULT: HOLD (Quality over quantity)
-        return 0  # HOLD - Wait for better setup
+        # 11. DEFAULT: HOLD
+        return 0  # HOLD - No clear setup
     
     def _should_retrain(self) -> bool:
         """Enhanced retraining logic (unchanged)"""

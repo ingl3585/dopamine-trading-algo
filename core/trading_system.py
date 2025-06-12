@@ -4,6 +4,7 @@ import os
 import threading
 import logging
 import numpy as np
+from tqdm import tqdm
 from typing import Dict
 from datetime import datetime
 from config import ResearchConfig
@@ -305,7 +306,7 @@ class TradingSystem:
         return {0: "HOLD", 1: "BUY", 2: "SELL"}.get(action, "UNKNOWN")
     
     def _train_on_historical_data(self, data):
-        """Train using research-aligned feature-based signals - ENHANCED"""
+        """Train using research-aligned feature-based signals - WITH TQDM PROGRESS"""
         price_15m = data.get("price_15m", [])
         volume_15m = data.get("volume_15m", [])
         price_5m = data.get("price_5m", [])
@@ -319,8 +320,15 @@ class TradingSystem:
         # Use the longest available timeframe for training loop
         max_length = max(len(price_5m), len(price_1m) if price_1m else 0)
         
+        log.info(f"Processing historical data for training...")
+        
+        # Create progress bar
+        progress_range = range(min_samples, max_length - 5)
+        pbar = tqdm(progress_range, desc="Training", unit="samples", 
+                    bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
+        
         # Process historical data for training
-        for i in range(min_samples, max_length - 5):
+        for i in pbar:
             # Get data up to point i
             hist_price_15m = price_15m[:min(i+1, len(price_15m))]
             hist_vol_15m = volume_15m[:min(i+1, len(volume_15m))] if volume_15m else []
@@ -344,7 +352,13 @@ class TradingSystem:
                 self.model.feature_history.append(features)
                 self.model.signal_history.append(signal)
                 training_samples += 1
-
+                
+                # Update progress bar with current stats
+                if training_samples % 1000 == 0:
+                    pbar.set_postfix({"Samples": training_samples})
+        
+        pbar.close()
+        
         # Signal distribution
         unique_signals, counts = np.unique(self.model.signal_history, return_counts=True)
         signal_dist = dict(zip(unique_signals, counts))
@@ -353,7 +367,15 @@ class TradingSystem:
         
         # Train if we have enough samples
         if training_samples >= self.config.MIN_TRAINING_SAMPLES:
-            self.model.train()
+            log.info("Training machine learning models...")
+            # Add progress for model training too
+            with tqdm(total=2, desc="ML Training", unit="model") as model_pbar:
+                model_pbar.set_description("Training Logistic Regression")
+                self.model.train()
+                model_pbar.update(1)
+                model_pbar.set_description("Training Complete")
+                model_pbar.update(1)
+            
             log.info("Enhanced model training completed with 1-minute features")
         else:
             log.warning(f"Insufficient training samples: {training_samples}/{self.config.MIN_TRAINING_SAMPLES}")
