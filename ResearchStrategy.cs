@@ -658,30 +658,28 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         #region Signal Processing
         
-        private void ProcessSignal(string signalJson)
-        {
-            try
-            {
-                // Parse JSON manually (simple parsing for our known structure)
-                var signal = ParseSignalJson(signalJson);
-                if (signal == null) return;
-                
-                signalCount++;
-                
-                Print($"ML Signal #{signalCount}: Action={GetActionName(signal.action)}, " +
-                      $"Confidence={signal.confidence:F3}, Quality={signal.quality}");
-                
-                // Validate signal
-                if (!IsValidSignal(signal)) return;
-                
-                // Execute trade based on signal
-                ExecuteMLSignal(signal);
-            }
-            catch (Exception ex)
-            {
-                Print($"Signal processing error: {ex.Message}");
-            }
-        }
+		private void ProcessSignal(string signalJson)
+		{
+		    try
+		    {
+		        var signal = ParseSignalJson(signalJson);
+		        if (signal == null) return;
+				
+				if (!IsValidSignal(signal)) return;
+		        
+		        signalCount++;
+		        
+		        Print($"ML Signal #{signalCount}: Action={GetActionName(signal.action)}, " +
+		              $"Confidence={signal.confidence:F3}, Quality={signal.quality}");
+		        
+		        // Python already filtered - just execute
+		        ExecuteMLSignal(signal);
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Signal processing error: {ex.Message}");
+		    }
+		}
         
 		private SignalData ParseSignalJson(string json)
 		{
@@ -753,43 +751,28 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        return null;
 		    }
 		}
-        
+		
 		private bool IsValidSignal(SignalData signal)
 		{
-		    // Research principle: Quality over quantity
-		    // Your research.txt: "High-accuracy signals consistently outperform high-frequency, lower-quality signals"
+		    if (signal == null) return false;
 		    
-		    // Check confidence threshold
-		    if (signal.confidence < MinConfidence)
-		    {
-		        Print($"Signal confidence {signal.confidence:F3} below threshold {MinConfidence:F3}");
-		        return false;
-		    }
-		    
-		    // Research-aligned quality filter
-		    if (signal.quality == "poor")
-		    {
-		        Print("Signal quality too poor - skipping (research-aligned filtering)");
-		        return false;
-		    }
-		    
-		    // Prevent over-trading (research principle)
-		    if (Position.MarketPosition != MarketPosition.Flat && 
-		        (DateTime.Now - lastConnectionAttempt).TotalSeconds < 10) // Increased from 5 to 10
-		    {
-		        Print("Signal spacing filter - preventing over-trading");
-		        return false;
-		    }
-		    
-		    // Add signal age validation (research: signals have half-life)
+		    // 1. Signal age protection (execution-layer safety)
 		    var signalAge = (DateTime.Now.Ticks - signal.timestamp) / TimeSpan.TicksPerSecond;
-		    if (signalAge > 30) // Signals older than 30 seconds are stale
+		    if (signalAge > 30)
 		    {
 		        Print($"Signal too old: {signalAge}s - skipping");
 		        return false;
 		    }
 		    
-		    return true;
+		    // 2. Position-based spacing (C# position state)
+		    if (Position.MarketPosition != MarketPosition.Flat && 
+		        (DateTime.Now - lastConnectionAttempt).TotalSeconds < 10)
+		    {
+		        Print("Signal spacing filter - preventing over-trading");
+		        return false;
+		    }
+		    
+		    return true; // Python already handled confidence/quality filtering
 		}
         
 		private void ExecuteMLSignal(SignalData signal)
