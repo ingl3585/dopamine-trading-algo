@@ -129,7 +129,7 @@ class TradingSystem:
             signal_strength = self._assess_signal_strength(final_confidence)
             
             log.info(f"Signal: Action={self._get_action_name(action)}, "
-                    f"Confidence={confidence:.3f}→{final_confidence:.3f}, Quality={quality}, "
+                    f"Confidence={final_confidence:.3f}, Quality={quality}, "
                     f"Alignment={features.timeframe_alignment:.2f}, "
                     f"EntryQuality={features.entry_timing_quality:.2f}, Send={should_send}")
             
