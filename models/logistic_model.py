@@ -210,28 +210,28 @@ class LogisticSignalModel:
     def _generate_signal_from_features(self, features: ResearchFeatures) -> int:
         """IMPROVED: Research-backed signal generation with balanced quality/quantity"""
         
-        # 1. MARKET REGIME IDENTIFICATION (Further Relaxed - Research-Backed)
+        # 1. MARKET REGIME IDENTIFICATION (Relaxed for more signals)
         trending_up = (
-            features.ema_trend_15m > 0.0003 and          # FURTHER RELAXED from 0.0005 (40% more permissive)
-            features.price_vs_sma_15m > 0.001 and        # FURTHER RELAXED from 0.002 (50% more permissive)
+            features.ema_trend_15m > 0.0001 and          # RELAXED from 0.0003 (3x more permissive)
+            features.price_vs_sma_15m > 0.0005 and      # RELAXED from 0.001 (2x more permissive)
             features.rsi_15m > 25 and features.rsi_15m < 85  # Wider range for more signals
         )
         
         trending_down = (
-            features.ema_trend_15m < -0.0003 and         # FURTHER RELAXED from -0.0005
-            features.price_vs_sma_15m < -0.001 and       # FURTHER RELAXED from -0.002
+            features.ema_trend_15m < -0.0001 and         # RELAXED from -0.0003 (3x more permissive)        
+            features.price_vs_sma_15m < -0.0005 and     # RELAXED from -0.001 (2x more permissive)
             features.rsi_15m > 15 and features.rsi_15m < 75  # Wider range for more signals
         )
         
         # Range-bound: More permissive for mean reversion
         ranging_market = (
-            abs(features.ema_trend_15m) < 0.001 and      # INCREASED from 0.0007
-            abs(features.ema_trend_5m) < 0.0005          # INCREASED from 0.0004
+            abs(features.ema_trend_15m) < 0.0015 and     # RELAXED from 0.001 (1.5x more permissive)
+            abs(features.ema_trend_5m) < 0.0008          # RELAXED from 0.0005 (1.6x more permissive)
         )
         
-        # 2. VOLUME ANALYSIS (Research-Aligned Thresholds)
-        strong_volume = features.volume_ratio_15m > 1.1 or features.volume_breakout_5m  # RELAXED from 1.3
-        decent_volume = features.volume_ratio_5m > 0.8   # RELAXED from 1.0 (research-backed)
+        # 2. VOLUME ANALYSIS (Relaxed thresholds)
+        strong_volume = features.volume_ratio_15m > 1.0 or features.volume_breakout_5m  # RELAXED from 1.1
+        decent_volume = features.volume_ratio_5m > 0.7   # RELAXED from 0.8
         
         # 3. TIER 1 SIGNALS - Premium Quality (Your original logic with relaxed thresholds)
         
@@ -259,7 +259,7 @@ class LogisticSignalModel:
         # 4. TIER 2 SIGNALS - Standard Quality (NEW - Fill the signal gap)
         
         # Simple trend following (generates more signals)
-        if trending_up or (features.ema_trend_5m > 0.0001 and not trending_down):
+        if trending_up or (features.ema_trend_5m > 0.00005 and not trending_down):  # RELAXED from 0.0001
             standard_buy = (
                 features.rsi_5m > 35 and features.rsi_5m < 70 and    # Good RSI zone
                 features.bb_position_5m > 0.3 and                    # Above lower band
@@ -269,7 +269,7 @@ class LogisticSignalModel:
             if standard_buy:
                 return 1  # TIER 2 BUY - Standard signal
         
-        if trending_down or (features.ema_trend_5m < -0.0001 and not trending_up):
+        if trending_down or (features.ema_trend_5m < -0.00005 and not trending_up):  # RELAXED from -0.0001
             standard_sell = (
                 features.rsi_5m > 30 and features.rsi_5m < 65 and    # Good RSI zone
                 features.bb_position_5m < 0.7 and                    # Below upper band
@@ -286,7 +286,7 @@ class LogisticSignalModel:
                 features.bb_position_5m > 0.7 and       # RELAXED from 0.75
                 features.rsi_5m < 75 and                 # RELAXED from 78
                 features.volume_breakout_5m and          # Volume confirmation
-                features.ema_trend_5m > 0.0001           # RELAXED from 0.0002
+                features.ema_trend_5m > 0.00005          # RELAXED from 0.0001
             )
             if bullish_breakout:
                 return 1  # BUY - Breakout momentum
@@ -295,7 +295,7 @@ class LogisticSignalModel:
                 features.bb_position_5m < 0.3 and       # RELAXED from 0.25
                 features.rsi_5m > 25 and                 # RELAXED from 22
                 features.volume_breakout_5m and          # Volume confirmation
-                features.ema_trend_5m < -0.0001          # RELAXED from -0.0002
+                features.ema_trend_5m < -0.00005         # RELAXED from -0.0001
             )
             if bearish_breakout:
                 return 2  # SELL - Breakout momentum
@@ -328,7 +328,7 @@ class LogisticSignalModel:
             oversold_reversal = (
                 features.rsi_5m < 30 and                 # RELAXED from 28
                 features.bb_position_5m < 0.25 and       # RELAXED from 0.2
-                features.volume_ratio_5m > 0.9 and       # RELAXED from 1.1
+                features.volume_ratio_5m > 0.7 and       # RELAXED from 0.9
                 features.bb_position_15m < 0.4           # RELAXED from 0.35
             )
             if oversold_reversal:
@@ -337,7 +337,7 @@ class LogisticSignalModel:
             overbought_reversal = (
                 features.rsi_5m > 70 and                 # RELAXED from 72
                 features.bb_position_5m > 0.75 and       # RELAXED from 0.8
-                features.volume_ratio_5m > 0.9 and       # RELAXED from 1.1
+                features.volume_ratio_5m > 0.7 and       # RELAXED from 0.9
                 features.bb_position_15m > 0.6           # RELAXED from 0.65
             )
             if overbought_reversal:
@@ -348,9 +348,9 @@ class LogisticSignalModel:
         # Simple momentum when not in strong opposite trend
         if not trending_down:
             momentum_up = (
-                features.ema_trend_5m > 0.0001 and       # Simple 5m uptrend
+                features.ema_trend_5m > 0.00005 and      # RELAXED from 0.0001
                 features.rsi_5m > 40 and features.rsi_5m < 70 and  # RELAXED ranges
-                features.volume_ratio_5m > 0.7 and       # RELAXED from 0.9
+                features.volume_ratio_5m > 0.6 and       # RELAXED from 0.7
                 features.bb_position_5m > 0.35           # RELAXED from 0.4
             )
             if momentum_up:
@@ -358,9 +358,9 @@ class LogisticSignalModel:
         
         if not trending_up:
             momentum_down = (
-                features.ema_trend_5m < -0.0001 and      # Simple 5m downtrend
+                features.ema_trend_5m < -0.00005 and     # RELAXED from -0.0001
                 features.rsi_5m > 30 and features.rsi_5m < 60 and  # RELAXED ranges
-                features.volume_ratio_5m > 0.7 and       # RELAXED from 0.9
+                features.volume_ratio_5m > 0.6 and       # RELAXED from 0.7
                 features.bb_position_5m < 0.65           # RELAXED from 0.6
             )
             if momentum_down:
@@ -374,12 +374,12 @@ class LogisticSignalModel:
         
         if basic_volume_ok and not_extreme_rsi:
             # Simple trend + reasonable RSI
-            if (features.ema_trend_5m > 0.0002 and 
+            if (features.ema_trend_5m > 0.0001 and     # RELAXED from 0.0002
                 features.rsi_5m < 65 and 
                 features.bb_position_5m > 0.25):
                 return 1  # BASIC BUY
             
-            if (features.ema_trend_5m < -0.0002 and 
+            if (features.ema_trend_5m < -0.0001 and    # RELAXED from -0.0002
                 features.rsi_5m > 35 and 
                 features.bb_position_5m < 0.75):
                 return 2  # BASIC SELL
