@@ -191,77 +191,172 @@ class FeatureExtractor:
         }
     
     def _calculate_alignment(self, features_15m: dict, features_5m: dict, features_1m: dict) -> float:
-        """Timeframe alignment calculation"""
+        """IMPROVED: More nuanced timeframe alignment calculation"""
         
-        # More relaxed trend thresholds
-        trend_15m = 1 if features_15m['ema_trend'] > 0.0005 else (-1 if features_15m['ema_trend'] < -0.0005 else 0)
-        trend_5m = 1 if features_5m['ema_trend'] > 0.0003 else (-1 if features_5m['ema_trend'] < -0.0003 else 0)
-        trend_1m = 1 if features_1m['ema_trend'] > 0.0001 else (-1 if features_1m['ema_trend'] < -0.0001 else 0)
+        # 1. TREND DIRECTION ANALYSIS (More Realistic Thresholds)
         
-        # Perfect alignment: all trends same direction
+        # 15-minute trend (primary trend)
+        if features_15m['ema_trend'] > 0.0002:
+            trend_15m = 1  # Bullish
+        elif features_15m['ema_trend'] < -0.0002:
+            trend_15m = -1  # Bearish
+        else:
+            trend_15m = 0  # Neutral
+        
+        # 5-minute trend (intermediate trend)
+        if features_5m['ema_trend'] > 0.0001:
+            trend_5m = 1  # Bullish
+        elif features_5m['ema_trend'] < -0.0001:
+            trend_5m = -1  # Bearish
+        else:
+            trend_5m = 0  # Neutral
+        
+        # 1-minute trend (short-term trend)
+        if features_1m['ema_trend'] > 0.00005:
+            trend_1m = 1  # Bullish
+        elif features_1m['ema_trend'] < -0.00005:
+            trend_1m = -1  # Bearish
+        else:
+            trend_1m = 0  # Neutral
+        
+        # 2. ALIGNMENT SCORING (Professional Approach)
+        
+        # Perfect alignment (all same direction) - HIGHEST SCORE
         if trend_15m != 0 and trend_15m == trend_5m == trend_1m:
-            return 1.0
+            return 1.0  # Perfect alignment
         
-        # Strong alignment: 15m and 5m agree
+        # Strong alignment (15m and 5m agree, 1m not opposing)
         if trend_15m != 0 and trend_15m == trend_5m:
-            if trend_1m == 0 or trend_1m == trend_15m:
-                return 0.8
+            if trend_1m == trend_15m:
+                return 0.9  # Very strong alignment
+            elif trend_1m == 0:
+                return 0.8  # Strong alignment (1m neutral)
             else:
-                return 0.5  # Minor divergence but main trend clear
+                return 0.4  # Weak alignment (1m opposing)
         
-        # Moderate alignment: 15m trend with neutral shorter timeframes
+        # Moderate alignment (15m dominant with some support)
+        if trend_15m != 0:  # Clear 15m trend
+            same_direction_count = 0
+            neutral_count = 0
+            
+            if trend_5m == trend_15m:
+                same_direction_count += 1
+            elif trend_5m == 0:
+                neutral_count += 1
+                
+            if trend_1m == trend_15m:
+                same_direction_count += 1
+            elif trend_1m == 0:
+                neutral_count += 1
+            
+            # Scoring based on support
+            if same_direction_count >= 1:
+                base_score = 0.6 + (same_direction_count * 0.1)
+                if neutral_count > 0:
+                    base_score += 0.05  # Bonus for neutral (not opposing)
+                return min(0.8, base_score)
+        
+        # 3. MOMENTUM ANALYSIS (Additional Factor)
+        
+        # Check if shorter timeframes show acceleration in 15m direction
         if trend_15m != 0:
-            neutral_count = [trend_5m, trend_1m].count(0)
-            if neutral_count >= 1:
-                return 0.6  # Clear long-term trend
+            momentum_boost = 0.0
+            
+            # 5m momentum in 15m direction
+            if trend_5m == trend_15m and abs(features_5m['ema_trend']) > abs(features_15m['ema_trend']) * 0.5:
+                momentum_boost += 0.1
+            
+            # 1m momentum in 15m direction  
+            if trend_1m == trend_15m and abs(features_1m['ema_trend']) > abs(features_5m['ema_trend']) * 0.5:
+                momentum_boost += 0.1
+            
+            if momentum_boost > 0:
+                return 0.5 + momentum_boost  # Moderate alignment with momentum
         
-        # Partial alignment: any two timeframes agree
+        # 4. PARTIAL ALIGNMENT (Any two timeframes agree)
+        
         trends = [trend_15m, trend_5m, trend_1m]
-        non_zero = [t for t in trends if t != 0]
-        if len(non_zero) >= 2 and len(set(non_zero)) == 1:
-            return 0.4  # Some agreement
+        non_zero_trends = [t for t in trends if t != 0]
         
-        # Weak signals
-        if len(non_zero) >= 1:
-            return 0.2
+        if len(non_zero_trends) >= 2:
+            # Check if any two non-zero trends agree
+            if len(set(non_zero_trends)) == 1:  # All non-zero trends are same direction
+                return 0.5  # Partial alignment
+            elif trend_5m == trend_1m and trend_5m != 0:  # Short-term alignment
+                return 0.4  # Short-term agreement
         
-        # No direction
-        return 0.1
-    
+        # 5. WEAK SIGNALS (At least one clear trend)
+        
+        if trend_15m != 0 or trend_5m != 0:
+            return 0.3  # Some directional bias
+        
+        # 6. NO CLEAR DIRECTION
+        return 0.1  # Minimal alignment
+
+
     def _calculate_entry_quality(self, features_1m: dict, features_5m: dict) -> float:
-        """ENHANCED: Calculate 1-minute entry timing quality"""
+        """IMPROVED: More practical entry timing quality assessment"""
         
-        quality_factors = []
+        quality_components = []
         
-        # 1. RSI in good entry zone (not extreme)
+        # 1. RSI ENTRY ZONES (More Practical)
         rsi_1m = features_1m['rsi']
-        if 25 <= rsi_1m <= 40 or 60 <= rsi_1m <= 75:
-            quality_factors.append(1.0)  # Good entry zones
-        elif 40 <= rsi_1m <= 60:
-            quality_factors.append(0.5)  # Neutral zone
-        else:
-            quality_factors.append(0.2)  # Extreme zones
         
-        # 2. Bollinger band position for entry timing
+        if 20 <= rsi_1m <= 35 or 65 <= rsi_1m <= 80:
+            quality_components.append(0.9)  # Excellent entry zones
+        elif 35 <= rsi_1m <= 45 or 55 <= rsi_1m <= 65:
+            quality_components.append(0.7)  # Good entry zones
+        elif 45 <= rsi_1m <= 55:
+            quality_components.append(0.5)  # Neutral zone
+        else:
+            quality_components.append(0.3)  # Challenging zones
+        
+        # 2. BOLLINGER BAND POSITIONING (Refined)
         bb_1m = features_1m['bb_position']
-        if bb_1m < 0.3 or bb_1m > 0.7:
-            quality_factors.append(0.8)  # Near bands = good entry
-        else:
-            quality_factors.append(0.5)  # Middle zone
         
-        # 3. Volume confirmation
-        if features_1m['volume_ratio'] > 1.2:
-            quality_factors.append(0.8)  # Volume support
+        if bb_1m < 0.2 or bb_1m > 0.8:
+            quality_components.append(0.8)  # Near bands - good for entries
+        elif bb_1m < 0.35 or bb_1m > 0.65:
+            quality_components.append(0.6)  # Approaching bands
         else:
-            quality_factors.append(0.4)  # Weak volume
+            quality_components.append(0.4)  # Middle area
         
-        # 4. Trend consistency between 1m and 5m
+        # 3. VOLUME CONFIRMATION (Simplified)
+        volume_ratio_1m = features_1m['volume_ratio']
+        
+        if volume_ratio_1m > 1.5:
+            quality_components.append(0.9)  # Strong volume
+        elif volume_ratio_1m > 1.2:
+            quality_components.append(0.7)  # Good volume
+        elif volume_ratio_1m > 0.8:
+            quality_components.append(0.5)  # Adequate volume
+        else:
+            quality_components.append(0.3)  # Weak volume
+        
+        # 4. TREND CONSISTENCY (1m vs 5m)
         trend_consistency = abs(features_1m['ema_trend'] - features_5m['ema_trend'])
-        if trend_consistency < 0.005:
-            quality_factors.append(0.9)  # Very consistent
-        elif trend_consistency < 0.01:
-            quality_factors.append(0.6)  # Moderately consistent
-        else:
-            quality_factors.append(0.3)  # Inconsistent
         
-        return np.mean(quality_factors)
+        if trend_consistency < 0.0002:
+            quality_components.append(0.8)  # Very consistent
+        elif trend_consistency < 0.0005:
+            quality_components.append(0.6)  # Moderately consistent
+        elif trend_consistency < 0.001:
+            quality_components.append(0.4)  # Somewhat consistent
+        else:
+            quality_components.append(0.2)  # Inconsistent
+        
+        # 5. PRICE POSITION RELATIVE TO MOVING AVERAGES
+        price_vs_sma_1m = features_1m['price_vs_sma']
+        
+        if abs(price_vs_sma_1m) < 0.002:
+            quality_components.append(0.7)  # Near SMA - good for entries
+        elif abs(price_vs_sma_1m) < 0.005:
+            quality_components.append(0.5)  # Reasonable distance
+        else:
+            quality_components.append(0.3)  # Extended from SMA
+        
+        # Return weighted average (emphasize most important factors)
+        weights = [0.25, 0.2, 0.2, 0.2, 0.15]  # RSI and BB most important
+        weighted_score = sum(score * weight for score, weight in zip(quality_components, weights))
+        
+        return min(0.95, max(0.1, weighted_score))  # Clamp between 0.1 and 0.95
