@@ -532,84 +532,93 @@ class MetaLearningDirector:
     """Master controller that learns optimal subsystem combinations"""
     
     def __init__(self, memory_db: PermanentMemoryDB):
-        self.memory_db = memory_db
-        self.subsystem_weights = {
-            'dna': 0.25,
-            'micro': 0.25,
-            'temporal': 0.25,
-            'immune': 0.25
+        super().__init__(memory_db)
+        self.disagreement_patterns = defaultdict(list)
+        self.consensus_requirements = {
+            'min_agreeing_systems': 2,
+            'max_disagreement_threshold': 0.4,
+            'high_confidence_override': 0.8
         }
-        self.performance_history = defaultdict(list)
-        self.combination_results = defaultdict(list)
+    
+    def get_consensus_signal(self, subsystem_signals: Dict[str, float], 
+                           subsystem_scores: Dict[str, float]) -> Tuple[float, float, str]:
+        """Get signal with consensus validation"""
         
-    def update_weights(self, subsystem_scores: Dict[str, float], outcome: float):
-        """Update subsystem weights based on performance"""
-        # Record which subsystems contributed to this decision
-        for subsystem, score in subsystem_scores.items():
-            self.performance_history[subsystem].append((score, outcome))
-            
-            # Keep only recent history
-            if len(self.performance_history[subsystem]) > 100:
-                self.performance_history[subsystem] = self.performance_history[subsystem][-100:]
+        # Check for high-confidence override
+        for system, score in subsystem_scores.items():
+            if score > self.consensus_requirements['high_confidence_override']:
+                signal = subsystem_signals[system]
+                if abs(signal) > 0.3:  # Strong signal
+                    return signal, score, f"high_confidence_override_{system}"
         
-        # Calculate subsystem effectiveness
-        effectiveness = {}
-        for subsystem, history in self.performance_history.items():
-            if len(history) >= 10:  # Need minimum samples
-                # Weight recent performance more heavily
-                weighted_outcomes = []
-                for i, (score, result) in enumerate(history):
-                    weight = (i + 1) / len(history)  # Linear weighting favoring recent
-                    weighted_outcomes.append(result * weight)
-                
-                effectiveness[subsystem] = np.mean(weighted_outcomes)
+        # Count agreement
+        positive_systems = []
+        negative_systems = []
+        neutral_systems = []
+        
+        for system, signal in subsystem_signals.items():
+            if signal > 0.15:
+                positive_systems.append((system, signal, subsystem_scores[system]))
+            elif signal < -0.15:
+                negative_systems.append((system, signal, subsystem_scores[system]))
             else:
-                effectiveness[subsystem] = 0.0
+                neutral_systems.append((system, signal, subsystem_scores[system]))
         
-        # Adjust weights based on effectiveness
-        if effectiveness:
-            total_effectiveness = sum(max(0, eff) for eff in effectiveness.values())
-            if total_effectiveness > 0:
-                for subsystem in self.subsystem_weights:
-                    if subsystem in effectiveness:
-                        self.subsystem_weights[subsystem] = max(0.1, effectiveness[subsystem] / total_effectiveness)
+        # Require minimum agreement
+        if len(positive_systems) >= self.consensus_requirements['min_agreeing_systems']:
+            # Weighted average of agreeing systems
+            total_weight = sum(score for _, _, score in positive_systems)
+            weighted_signal = sum(signal * score for _, signal, score in positive_systems)
+            return weighted_signal / total_weight if total_weight > 0 else 0, \
+                   min(total_weight / len(positive_systems), 1.0), \
+                   f"consensus_buy_{len(positive_systems)}"
+                   
+        elif len(negative_systems) >= self.consensus_requirements['min_agreeing_systems']:
+            total_weight = sum(score for _, _, score in negative_systems)
+            weighted_signal = sum(signal * score for _, signal, score in negative_systems)
+            return weighted_signal / total_weight if total_weight > 0 else 0, \
+                   min(total_weight / len(negative_systems), 1.0), \
+                   f"consensus_sell_{len(negative_systems)}"
         
-        # Normalize weights
-        total_weight = sum(self.subsystem_weights.values())
-        if total_weight > 0:
-            for subsystem in self.subsystem_weights:
-                self.subsystem_weights[subsystem] /= total_weight
+        # Record disagreement for learning
+        self.record_disagreement(subsystem_signals, subsystem_scores)
+        
+        return 0.0, 0.0, "no_consensus"
     
-    def get_weighted_signal(self, subsystem_signals: Dict[str, float]) -> Tuple[float, float]:
-        """Combine subsystem signals using learned weights"""
-        weighted_signal = 0.0
-        total_confidence = 0.0
+    def record_disagreement(self, signals: Dict[str, float], scores: Dict[str, float]):
+        """Record patterns when subsystems disagree"""
+        disagreement_data = {
+            'timestamp': datetime.now(),
+            'signals': signals.copy(),
+            'scores': scores.copy(),
+            'disagreement_level': self.calculate_disagreement_level(signals)
+        }
+        self.disagreement_patterns['recent'].append(disagreement_data)
         
-        for subsystem, signal in subsystem_signals.items():
-            if subsystem in self.subsystem_weights:
-                weight = self.subsystem_weights[subsystem]
-                weighted_signal += signal * weight
-                total_confidence += weight
-        
-        # Normalize
-        if total_confidence > 0:
-            final_signal = weighted_signal / total_confidence
-            confidence = min(total_confidence, 1.0)
-        else:
-            final_signal = 0.0
-            confidence = 0.0
-        
-        return final_signal, confidence
+        # Keep only recent disagreements
+        if len(self.disagreement_patterns['recent']) > 100:
+            self.disagreement_patterns['recent'] = self.disagreement_patterns['recent'][-100:]
     
-    def get_best_combinations(self) -> List[Tuple[str, float]]:
-        """Get best performing subsystem combinations"""
-        combinations = []
-        for combo, results in self.combination_results.items():
-            if len(results) >= 5:  # Minimum sample size
-                avg_result = np.mean(results)
-                combinations.append((combo, avg_result))
+    def calculate_disagreement_level(self, signals: Dict[str, float]) -> float:
+        """Calculate how much subsystems disagree"""
+        signal_values = list(signals.values())
+        return np.std(signal_values) if signal_values else 0.0
+    
+    def learn_from_disagreements(self, outcome: float):
+        """Learn when disagreements predict market moves"""
+        if not self.disagreement_patterns['recent']:
+            return
+            
+        recent_disagreement = self.disagreement_patterns['recent'][-1]
+        disagreement_level = recent_disagreement['disagreement_level']
         
-        return sorted(combinations, key=lambda x: x[1], reverse=True)[:5]
+        # High disagreement that preceded good outcome = market turning point
+        if disagreement_level > 0.3 and outcome > 0.01:
+            self.disagreement_patterns['turning_points'].append({
+                'disagreement_data': recent_disagreement,
+                'outcome': outcome,
+                'pattern_type': 'successful_chaos'
+            })
 
 class AdvancedMarketIntelligence:
     """Main Market Intelligence Engine"""
@@ -1054,6 +1063,134 @@ Top DNA Patterns:
         report += f"\nPattern Security:\n"
         report += f"  - Beneficial Patterns: {insights['beneficial_patterns_count']}\n"
         report += f"  - Dangerous Patterns: {insights['dangerous_patterns_count']}\n"
+        
+        return report
+
+# Pattern interpretability and explanation system
+
+class PatternInterpreter:
+    """Make AI patterns human-readable"""
+    
+    def __init__(self):
+        self.dna_translations = {
+            'AAAA': 'Strong sustained uptrend',
+            'CCCC': 'Strong sustained downtrend', 
+            'ATGC': 'Classic reversal pattern',
+            'ACGT': 'Volatility spike pattern',
+            'TTTT': 'Weak momentum up',
+            'GGGG': 'Weak momentum down'
+        }
+        
+        self.volume_patterns = {
+            'high_volume_breakout': 'Volume confirms price movement',
+            'low_volume_drift': 'Weak conviction in price move',
+            'volume_divergence': 'Volume contradicts price action'
+        }
+    
+    def explain_dna_pattern(self, dna_sequence: str, success_rate: float) -> str:
+        """Convert DNA sequence to human explanation"""
+        explanations = []
+        
+        # Check for known patterns
+        for pattern, meaning in self.dna_translations.items():
+            if pattern in dna_sequence:
+                explanations.append(f"Contains {meaning.lower()}")
+        
+        # Analyze sequence characteristics
+        up_moves = dna_sequence.count('A') + dna_sequence.count('T')
+        down_moves = dna_sequence.count('C') + dna_sequence.count('G')
+        
+        if up_moves > down_moves * 1.5:
+            explanations.append("predominantly bullish sequence")
+        elif down_moves > up_moves * 1.5:
+            explanations.append("predominantly bearish sequence")
+        else:
+            explanations.append("balanced directional movement")
+        
+        # Success context
+        if success_rate > 0.7:
+            confidence_desc = "highly reliable"
+        elif success_rate > 0.6:
+            confidence_desc = "moderately reliable"
+        else:
+            confidence_desc = "developing pattern"
+        
+        base_explanation = ", ".join(explanations)
+        return f"{confidence_desc.title()} pattern: {base_explanation} (success rate: {success_rate:.1%})"
+    
+    def explain_trade_reasoning(self, intelligence_result: Dict) -> str:
+        """Explain why the AI made this decision"""
+        reasoning_parts = []
+        
+        # DNA evidence
+        if intelligence_result.get('similar_patterns_count', 0) > 0:
+            reasoning_parts.append(f"Found {intelligence_result['similar_patterns_count']} similar DNA patterns in memory")
+        
+        # Subsystem contributions
+        signals = intelligence_result.get('subsystem_signals', {})
+        for system, signal in signals.items():
+            if abs(signal) > 0.2:
+                direction = "bullish" if signal > 0 else "bearish"
+                strength = "strong" if abs(signal) > 0.4 else "moderate"
+                reasoning_parts.append(f"{system} system shows {strength} {direction} signal")
+        
+        # Risk factors
+        if intelligence_result.get('is_dangerous_pattern'):
+            reasoning_parts.append("WARNING: IMMUNE SYSTEM detected dangerous pattern - avoiding")
+        elif intelligence_result.get('is_beneficial_pattern'):
+            reasoning_parts.append("POSITIVE: IMMUNE SYSTEM recognizes beneficial pattern")
+        
+        # Confidence explanation
+        confidence = intelligence_result.get('confidence', 0)
+        if confidence > 0.8:
+            reasoning_parts.append(f"Very high confidence ({confidence:.2f}) from pattern convergence")
+        elif confidence > 0.6:
+            reasoning_parts.append(f"Good confidence ({confidence:.2f}) from multiple signals")
+        elif confidence > 0.4:
+            reasoning_parts.append(f"Moderate confidence ({confidence:.2f}) - proceeding cautiously")
+        else:
+            reasoning_parts.append(f"Low confidence ({confidence:.2f}) - holding position")
+        
+        return "; ".join(reasoning_parts)
+    
+    def generate_pattern_report(self, intelligence_engine) -> str:
+        """Generate human-readable intelligence report"""
+        status = intelligence_engine.get_system_status()
+        insights = intelligence_engine.get_pattern_insights()
+        
+        report = f"""
+MARKET INTELLIGENCE REPORT
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+PATTERN LIBRARY STATUS:
+- DNA Patterns: {status['total_dna_patterns']} sequences learned
+- Micro Patterns: {status['total_micro_patterns']} micro-behaviors identified  
+- Temporal Patterns: {status['total_temporal_patterns']} time-based patterns
+- Win Rate: {status['win_rate']:.1%} (last 20 trades)
+
+TOP DNA DISCOVERIES:
+"""
+        
+        for i, pattern in enumerate(insights['top_dna_patterns'][:3], 1):
+            explanation = self.explain_dna_pattern(pattern['sequence'], pattern['success_rate'])
+            report += f"  {i}. {explanation}\n"
+        
+        report += f"""
+OPTIMAL TRADING WINDOWS:
+"""
+        for i, window in enumerate(insights['best_temporal_windows'][:3], 1):
+            report += f"  {i}. {window['day_of_week']} {window['time']} - {window['pattern_type']} (Success: {window['success_rate']:.1%})\n"
+        
+        report += f"""
+IMMUNE SYSTEM STATUS:
+- Beneficial Patterns: {insights['beneficial_patterns_count']} learned
+- Dangerous Patterns: {insights['dangerous_patterns_count']} avoided
+- System Health: {status['immune_strength']:.1%}
+
+CURRENT SYSTEM WEIGHTS:
+"""
+        for system, weight in status['system_weights'].items():
+            report += f"  - {system.upper()}: {weight:.1%}\n"
         
         return report
 
