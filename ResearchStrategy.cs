@@ -603,7 +603,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            prices15m.Add(price15m);
 		            volumes15m.Add(volume15m);
 		            
-		            if (prices15m.Count > 832)
+		            if (prices15m.Count > 415)
 		            {
 		                prices15m.RemoveAt(0);
 		                volumes15m.RemoveAt(0);
@@ -619,7 +619,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            prices5m.Add(price5m);
 		            volumes5m.Add(volume5m);
 		            
-		            if (prices5m.Count > 2496)
+		            if (prices5m.Count > 1248)
 		            {
 		                prices5m.RemoveAt(0);
 		                volumes5m.RemoveAt(0);
@@ -635,7 +635,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            prices1m.Add(price1m);
 		            volumes1m.Add(volume1m);
 		            
-		            if (prices1m.Count > 12495)
+		            if (prices1m.Count > 6247)
 		            {
 		                prices1m.RemoveAt(0);
 		                volumes1m.RemoveAt(0);
