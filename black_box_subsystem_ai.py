@@ -82,7 +82,7 @@ class ToolSelector(nn.Module):
 class DecisionIntegrator(nn.Module):
     """Integrates subsystem outputs with learned tool usage weights"""
     
-    def __init__(self, subsystem_features_size: int = 16, hidden_size: int = 64):
+    def __init__(self, subsystem_features_size: int = 4, hidden_size: int = 64):
         super().__init__()
         
         # Process subsystem outputs
@@ -122,6 +122,7 @@ class DecisionIntegrator(nn.Module):
     
     def forward(self, subsystem_features, tool_weights, context_features):
         # Process subsystem features
+        subsystem_features = subsystem_features.view(-1, 4, 4) 
         processed_subsystems = self.subsystem_processor(subsystem_features)
         
         # Reshape for attention (treat each subsystem as a sequence element)
@@ -330,10 +331,12 @@ class BlackBoxSubsystemAI:
                 tool_confidences = torch.clamp(tool_confidences + exploration_bonus, 0, 1)
             
             # Decision integration
+            projected_context = tool_outputs['context_features']
+
             decision_outputs = self.decision_integrator(
-                subsystem_tensor, 
+                subsystem_tensor,
                 tool_confidences.unsqueeze(0),
-                tool_outputs['context_features']
+                projected_context
             )
             
             # Extract outputs
