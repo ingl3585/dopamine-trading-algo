@@ -156,58 +156,58 @@ class TradingSystem:
             log.error(f"Enhanced market data processing error: {e}")
     
     def _apply_entry_timing_logic(self, action: int, confidence: float, features) -> tuple:
-        """ENHANCED: Apply 1-minute entry timing logic"""
+        """RELAXED: More permissive thresholds for actual trading signals"""
         
         # Don't modify HOLD signals
         if action == 0:
             return confidence >= self.config.CONFIDENCE_THRESHOLD, confidence
         
-        # Higher confidence threshold for quality trades
-        if confidence < 0.65:  # Raised from default 0.5
+        # RELAXED confidence threshold (was 0.65, now 0.55)
+        if confidence < 0.55:  # More permissive
             return False, confidence
         
-        # 1. REQUIRE GOOD TIMEFRAME ALIGNMENT
-        if features.timeframe_alignment < 0.4:  # Strong alignment required
+        # 1. RELAXED TIMEFRAME ALIGNMENT (was 0.4, now 0.25)
+        if features.timeframe_alignment < 0.25:  # Much more permissive
             log.debug(f"Signal filtered: insufficient alignment {features.timeframe_alignment:.2f}")
             return False, confidence
         
-        # 2. REQUIRE EXCELLENT ENTRY TIMING
-        if features.entry_timing_quality < 0.65:  # High quality entries only
+        # 2. RELAXED ENTRY TIMING (was 0.65, now 0.50)
+        if features.entry_timing_quality < 0.50:  # More realistic
             log.debug(f"Signal filtered: poor entry timing {features.entry_timing_quality:.2f}")
             return False, confidence
         
-        # 3. QUALITY TIERS (no external restrictions)
+        # 3. QUALITY TIERS with relaxed thresholds
         
-        # PREMIUM SETUPS - Boost confidence for exceptional quality
-        if (features.timeframe_alignment > 0.6 and 
-            features.entry_timing_quality > 0.75 and
-            confidence > 0.75):
+        # PREMIUM SETUPS (relaxed from 0.6/0.75/0.75 to 0.5/0.65/0.65)
+        if (features.timeframe_alignment > 0.5 and 
+            features.entry_timing_quality > 0.65 and
+            confidence > 0.65):
             
-            final_confidence = min(0.95, confidence * 1.1)  # 10% confidence boost
+            final_confidence = min(0.95, confidence * 1.1)
             log.info(f"PREMIUM SETUP: Alignment={features.timeframe_alignment:.2f}, "
                     f"Timing={features.entry_timing_quality:.2f}, Confidence={final_confidence:.3f}")
             return True, final_confidence
         
-        # GOOD SETUPS - Standard quality trades
-        elif (features.timeframe_alignment > 0.45 and 
-            features.entry_timing_quality > 0.65 and
-            confidence > 0.65):
+        # GOOD SETUPS (relaxed from 0.45/0.65/0.65 to 0.35/0.55/0.60)
+        elif (features.timeframe_alignment > 0.35 and 
+            features.entry_timing_quality > 0.55 and
+            confidence > 0.60):
             
-            final_confidence = min(0.92, confidence * 1.05)  # Small 5% boost
+            final_confidence = min(0.92, confidence * 1.05)
             log.info(f"QUALITY SETUP: Alignment={features.timeframe_alignment:.2f}, "
                     f"Timing={features.entry_timing_quality:.2f}, Confidence={final_confidence:.3f}")
             return True, final_confidence
         
-        # ACCEPTABLE SETUPS - Minimum quality threshold
-        elif (features.timeframe_alignment >= 0.4 and 
-            features.entry_timing_quality >= 0.65 and
-            confidence >= 0.65):
+        # ACCEPTABLE SETUPS (relaxed from 0.4/0.65/0.65 to 0.25/0.50/0.55)
+        elif (features.timeframe_alignment >= 0.25 and 
+            features.entry_timing_quality >= 0.50 and
+            confidence >= 0.55):
             
             log.info(f"STANDARD SETUP: Alignment={features.timeframe_alignment:.2f}, "
                     f"Timing={features.entry_timing_quality:.2f}, Confidence={confidence:.3f}")
             return True, confidence
         
-        # Otherwise, quality standards not met
+        # Otherwise, still not meeting minimum standards
         log.debug(f"Quality filter: Alignment={features.timeframe_alignment:.2f}, "
                 f"Timing={features.entry_timing_quality:.2f}, Confidence={confidence:.3f}")
         return False, confidence
