@@ -9,54 +9,70 @@ from datetime import datetime
 from config import ResearchConfig
 from tcp_bridge import TCPBridge
 from advanced_market_intelligence import AdvancedMarketIntelligence
+from trade_manager_ai import TradeManagerAI
 
 log = logging.getLogger(__name__)
 
 class TradingSystem:
     """Pure Black Box Market Intelligence Engine"""
-    
+
     def __init__(self):
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
-        
+
         self.config = ResearchConfig()
-        
-        # THE ONLY INTELLIGENCE - No traditional models, no feature extraction
+
+        # Core intelligence
         self.intelligence_engine = AdvancedMarketIntelligence()
         self.intelligence_engine.start_continuous_learning()
-        
-        # TCP Bridge - Raw data pipeline
+
+        # TCP bridge FIRST (so we can pass it to TradeManagerAI)
         self.tcp_bridge = TCPBridge(self.config)
         self.tcp_bridge.on_market_data = self.process_raw_market_data
         self.tcp_bridge.on_trade_completion = self.on_trade_completed
-        
-        # Simple state tracking
+
+        # Trade manager with RL agent
+        self.trade_manager = TradeManagerAI(
+            self.intelligence_engine,
+            self.tcp_bridge
+        )
+
+        # Book-keeping
+        self.in_trade = False
+        self.entry_time = None
+        self.entry_prices = []
+        self.entry_volumes = []
+
         self.signal_count = 0
         self.bootstrap_complete = False
-        
-        # Pure intelligence statistics
         self.stats = {
             'total_signals': 0,
             'intelligence_signals': 0,
             'patterns_discovered': 0
         }
-        
+
         log.info("Pure Black Box Intelligence Engine initialized")
     
     def start(self):
-        """Start the Pure Intelligence Engine"""
         try:
-            log.info("Starting Pure Black Box Intelligence Engine")
-            log.info("Philosophy: 100% Pattern Discovery - Zero Hardcoded Rules")
-            
             self.tcp_bridge.start()
-            
-            # Simple loop - just wait for Ctrl+C
             while True:
                 time.sleep(1)
-                
+
+                if self.in_trade and self.entry_time:
+                    should_exit, reason = self.trade_manager.should_exit_now(
+                        self.entry_prices, self.entry_volumes, self.entry_time
+                    )
+                    if should_exit:
+                        print(f"[INTELLIGENCE EXIT] Triggered: {reason}")
+                        self.tcp_bridge.send_signal(0, 0.5, f"auto_exit_{reason}")
+                        self.in_trade = False
+                        self.entry_time = None
+                        self.entry_prices = []
+                        self.entry_volumes = []
+
         except KeyboardInterrupt:
             log.info("Shutdown requested")
         finally:
@@ -134,6 +150,9 @@ class TradingSystem:
                 return
             
             print(f"Processing with PURE INTELLIGENCE using {timeframe} data...")
+
+            if price_1m:
+                self.trade_manager.on_new_bar(data)
             
             # PURE INTELLIGENCE DECISION - No traditional models
             intelligence_result = self.intelligence_engine.process_market_data(
@@ -145,7 +164,6 @@ class TradingSystem:
             
             # Send signal if intelligence is confident
             if final_signal['send_signal']:
-                print(f"SENDING PURE INTELLIGENCE SIGNAL: {final_signal['reasoning']}")
                 self.tcp_bridge.send_signal(
                     final_signal['action'], 
                     final_signal['confidence'], 
@@ -153,6 +171,13 @@ class TradingSystem:
                 )
                 log.info(f"PURE INTELLIGENCE: {final_signal['reasoning']}")
                 self.stats['intelligence_signals'] += 1
+
+                # New: track entry info
+                if final_signal['action'] in [1, 2]:
+                    self.in_trade = True
+                    self.entry_time = datetime.now()
+                    self.entry_prices = intel_prices.copy()
+                    self.entry_volumes = intel_volumes.copy()
             else:
                 print(f"INTELLIGENCE HOLDING: {final_signal['reasoning']}")
             
@@ -271,6 +296,11 @@ class TradingSystem:
             )
             
             log.info(f"Trade outcome fed to intelligence: {exit_reason} -> {outcome}")
+
+            self.in_trade = False
+            self.entry_time = None
+            self.entry_prices = []
+            self.entry_volumes = []
             
         except Exception as e:
             log.error(f"Trade completion error: {e}")

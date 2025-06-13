@@ -105,7 +105,8 @@ class TCPBridge:
         
         log.info("TCP receive loop stopped")
 
-    def send_signal(self, action: int, confidence: float, quality: str):
+    def send_signal(self, action: int, confidence: float, quality: str,
+                    stop_atr: float = 0.0, tp_atr: float = 0.0):
         """Send trading signal to NinjaTrader"""
         try:
             if not hasattr(self, 'ssock') or not self.ssock:
@@ -121,6 +122,8 @@ class TCPBridge:
                 "action": int(action),
                 "confidence": float(confidence),
                 "quality": str(quality),
+                "stop_atr": float(stop_atr),           
+                "tp_atr": float(tp_atr),               
                 "timestamp": int(net_ticks)
             }
             

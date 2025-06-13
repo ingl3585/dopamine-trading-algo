@@ -28,3 +28,14 @@ class ResearchConfig:
         import os
         os.makedirs('patterns', exist_ok=True)
         os.makedirs('data', exist_ok=True)
+
+class RLConfigMixin:
+    """
+    Online-RL hyper-params.  Import alongside ResearchConfig
+    (e.g. `from config import ResearchConfig, RLConfigMixin`).
+    """
+    CHECKPOINT_DIR = "weights"        # auto-saved *.pt files
+    EXPERIENCE_DIR = "experience"     # Parquet shards if you want archives
+    MAX_POSITION_SIZE = 1             # contracts
+    MAX_INTRADAY_DRAWDOWN_PCT = 5.0   # hard stop-trading guard
+    REWARD_SCALING = 1.0              # tweak if rewards blow up
