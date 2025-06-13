@@ -94,7 +94,6 @@ class LogisticSignalModel:
     
     def train(self):
         """Train both models"""
-        
         try:
             if len(self.feature_history) < self.config.MIN_TRAINING_SAMPLES:
                 log.warning("Insufficient training samples")

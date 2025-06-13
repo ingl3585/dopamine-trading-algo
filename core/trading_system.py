@@ -4,7 +4,6 @@ import os
 import threading
 import logging
 import numpy as np
-from tqdm import tqdm
 from typing import Dict
 from datetime import datetime
 from config import ResearchConfig
@@ -156,61 +155,39 @@ class TradingSystem:
             log.error(f"Enhanced market data processing error: {e}")
     
     def _apply_entry_timing_logic(self, action: int, confidence: float, features) -> tuple:
-        """RELAXED: More permissive thresholds for actual trading signals"""
+        """ENHANCED: Apply 1-minute entry timing logic"""
         
         # Don't modify HOLD signals
         if action == 0:
             return confidence >= self.config.CONFIDENCE_THRESHOLD, confidence
         
-        # RELAXED confidence threshold (was 0.65, now 0.55)
-        if confidence < 0.55:  # More permissive
+        # Check basic confidence threshold first
+        if confidence < self.config.CONFIDENCE_THRESHOLD:
             return False, confidence
         
-        # 1. RELAXED TIMEFRAME ALIGNMENT (was 0.4, now 0.25)
-        if features.timeframe_alignment < 0.25:  # Much more permissive
-            log.debug(f"Signal filtered: insufficient alignment {features.timeframe_alignment:.2f}")
+        # 1. Require minimum timeframe alignment for directional signals
+        if features.timeframe_alignment < 0.3:
+            log.debug(f"Signal filtered: poor alignment {features.timeframe_alignment:.2f}")
             return False, confidence
         
-        # 2. RELAXED ENTRY TIMING (was 0.65, now 0.50)
-        if features.entry_timing_quality < 0.50:  # More realistic
+        # 2. Require good entry timing quality
+        if features.entry_timing_quality < self.entry_timing_threshold:
             log.debug(f"Signal filtered: poor entry timing {features.entry_timing_quality:.2f}")
             return False, confidence
         
-        # 3. QUALITY TIERS with relaxed thresholds
+        # 3. Prevent over-trading (simple time-based filter)
+        time_since_last = (datetime.now() - self.last_signal_time).total_seconds()
+        if time_since_last < 300:  # 5 minutes minimum between signals
+            log.debug(f"Signal filtered: too soon after last signal ({time_since_last:.0f}s)")
+            return False, confidence
         
-        # PREMIUM SETUPS (relaxed from 0.6/0.75/0.75 to 0.5/0.65/0.65)
-        if (features.timeframe_alignment > 0.5 and 
-            features.entry_timing_quality > 0.65 and
-            confidence > 0.65):
-            
-            final_confidence = min(0.95, confidence * 1.1)
-            log.info(f"PREMIUM SETUP: Alignment={features.timeframe_alignment:.2f}, "
-                    f"Timing={features.entry_timing_quality:.2f}, Confidence={final_confidence:.3f}")
-            return True, final_confidence
+        # 4. Boost confidence for excellent entry timing
+        final_confidence = confidence
+        if features.timeframe_alignment > 0.8 and features.entry_timing_quality > 0.8:
+            final_confidence = min(0.95, confidence * 1.1)  # 10% boost, capped at 95%
+            log.debug(f"Confidence boosted for excellent timing: {confidence:.3f} → {final_confidence:.3f}")
         
-        # GOOD SETUPS (relaxed from 0.45/0.65/0.65 to 0.35/0.55/0.60)
-        elif (features.timeframe_alignment > 0.35 and 
-            features.entry_timing_quality > 0.55 and
-            confidence > 0.60):
-            
-            final_confidence = min(0.92, confidence * 1.05)
-            log.info(f"QUALITY SETUP: Alignment={features.timeframe_alignment:.2f}, "
-                    f"Timing={features.entry_timing_quality:.2f}, Confidence={final_confidence:.3f}")
-            return True, final_confidence
-        
-        # ACCEPTABLE SETUPS (relaxed from 0.4/0.65/0.65 to 0.25/0.50/0.55)
-        elif (features.timeframe_alignment >= 0.25 and 
-            features.entry_timing_quality >= 0.50 and
-            confidence >= 0.55):
-            
-            log.info(f"STANDARD SETUP: Alignment={features.timeframe_alignment:.2f}, "
-                    f"Timing={features.entry_timing_quality:.2f}, Confidence={confidence:.3f}")
-            return True, confidence
-        
-        # Otherwise, still not meeting minimum standards
-        log.debug(f"Quality filter: Alignment={features.timeframe_alignment:.2f}, "
-                f"Timing={features.entry_timing_quality:.2f}, Confidence={confidence:.3f}")
-        return False, confidence
+        return True, final_confidence
     
     def _track_signal(self, action, confidence, price, features):
         """Track signal for pattern learning - ENHANCED"""
@@ -306,7 +283,7 @@ class TradingSystem:
         return {0: "HOLD", 1: "BUY", 2: "SELL"}.get(action, "UNKNOWN")
     
     def _train_on_historical_data(self, data):
-        """Train using research-aligned feature-based signals - CLEAN PROGRESS"""
+        """Train using research-aligned feature-based signals - ENHANCED"""
         price_15m = data.get("price_15m", [])
         volume_15m = data.get("volume_15m", [])
         price_5m = data.get("price_5m", [])
@@ -320,15 +297,8 @@ class TradingSystem:
         # Use the longest available timeframe for training loop
         max_length = max(len(price_5m), len(price_1m) if price_1m else 0)
         
-        log.info(f"Processing historical data for training...")
-        
-        # Create progress bar for data processing only
-        progress_range = range(min_samples, max_length - 5)
-        pbar = tqdm(progress_range, desc="Processing", unit="samples", 
-                    bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
-        
         # Process historical data for training
-        for i in pbar:
+        for i in range(min_samples, max_length - 5):
             # Get data up to point i
             hist_price_15m = price_15m[:min(i+1, len(price_15m))]
             hist_vol_15m = volume_15m[:min(i+1, len(volume_15m))] if volume_15m else []
@@ -352,22 +322,15 @@ class TradingSystem:
                 self.model.feature_history.append(features)
                 self.model.signal_history.append(signal)
                 training_samples += 1
-                
-                # Update progress bar postfix occasionally
-                if training_samples % 1000 == 0:
-                    pbar.set_postfix({"Valid": training_samples})
-        
-        pbar.close()
-        
+
         # Signal distribution
         unique_signals, counts = np.unique(self.model.signal_history, return_counts=True)
         signal_dist = dict(zip(unique_signals, counts))
         log.info(f"Enhanced training completed: {training_samples} samples")
         log.info(f"Signal distribution: {signal_dist}")
         
-        # Train models with simple logging (no progress bar)
+        # Train if we have enough samples
         if training_samples >= self.config.MIN_TRAINING_SAMPLES:
-            log.info("Training machine learning models...")
             self.model.train()
             log.info("Enhanced model training completed with 1-minute features")
         else:
