@@ -1,25 +1,25 @@
-# core/trading_system.py
+# core/trading_system.py - CLEAN VERSION following your original prompt
 
 import os
 import threading
 import logging
 import numpy as np
-from tqdm import tqdm
 from typing import Dict
 from datetime import datetime
 from config import ResearchConfig
 from features.feature_extractor import FeatureExtractor
 from models.logistic_model import LogisticSignalModel
 from communication.tcp_bridge import TCPBridge
-from pattern_learning import PatternLearningSystem, TradeRecord
+from advanced_market_intelligence import AdvancedMarketIntelligence
+import queue
+import time
 
 log = logging.getLogger(__name__)
 
 class TradingSystem:
-    """Main trading system with pattern learning - ENHANCED with 1-minute timing"""
+    """Market Intelligence Engine - Black Box Learning System"""
     
     def __init__(self):
-        # Configure logging first
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -27,64 +27,82 @@ class TradingSystem:
         
         self.config = ResearchConfig()
         self.feature_extractor = FeatureExtractor(self.config)
-        self.model = LogisticSignalModel(self.config)
+        self.traditional_model = LogisticSignalModel(self.config)
         
-        # TCP bridge with trade completion handling
+        # The core intelligence engine - this is the "black box"
+        self.intelligence_engine = AdvancedMarketIntelligence()
+        self.intelligence_engine.start_continuous_learning()
+        
+        # TCP Bridge
         self.tcp_bridge = TCPBridge(self.config)
+        self.tcp_bridge.on_market_data = self.process_market_data
         self.tcp_bridge.on_trade_completion = self.on_trade_completed
-
-        # Handle shutdown
+        
+        # Background intelligence processing
+        self.intelligence_queue = queue.Queue()
+        self.start_intelligence_processor()
+        
+        # Shutdown handling
         self.shutdown_event = threading.Event()
         
-        # Price tracking
-        self.last_price = None
-        self.trained_on_historical = False
+        # State tracking - MINIMAL, let intelligence learn
+        self.signal_count = 0
+        self.intelligence_active = False
         
-        # Pattern learning
-        self.pattern_learner = PatternLearningSystem(min_samples=15)
-        self.pattern_learner.load_data()
-        
-        # Track active trades for pattern learning
-        self.active_trades = {}  # signal_id -> trade_info
-        self.trade_counter = 0
-        
-        # Simple state tracking for better entry timing
-        self.last_signal_time = datetime.min
-        self.entry_timing_threshold = 0.5  # Was 0.6
-        
-        # Statistics
+        # Statistics for monitoring
         self.stats = {
-            'signals_generated': 0,
-            'trades_completed': 0,
-            'patterns_found': 0,
-            'buy_signals': 0,
-            'sell_signals': 0,
-            'hold_signals': 0,
-            'avg_confidence': 0.0,
-            'high_confidence_signals': 0,
-            'moderate_confidence_signals': 0,
-            'low_confidence_signals': 0,
-            'entry_quality_avg': 0.0,
-            'timeframe_alignment_avg': 0.0
-        } 
+            'total_signals': 0,
+            'intelligence_enhanced': 0,
+            'intelligence_filtered': 0,
+            'traditional_signals': 0,
+            'consensus_signals': 0
+        }
         
-        log.info("Trading system with 1-minute entry timing initialized")
+        log.info("Market Intelligence Engine initialized - Black Box Learning Active")
+    
+    def start_intelligence_processor(self):
+        """Background intelligence processing - non-blocking"""
+        def intelligence_worker():
+            while True:
+                try:
+                    data = self.intelligence_queue.get(timeout=1)
+                    if data is None:  # Shutdown signal
+                        break
+                    
+                    # Process with intelligence engine
+                    prices = data['prices']
+                    volumes = data['volumes']
+                    callback = data['callback']
+                    
+                    # The intelligence engine does its pattern recognition magic
+                    intelligence_result = self.intelligence_engine.process_market_data(
+                        prices, volumes, datetime.now()
+                    )
+                    
+                    # Execute callback with result
+                    callback(intelligence_result)
+                    
+                except queue.Empty:
+                    continue
+                except Exception as e:
+                    log.error(f"Intelligence processing error: {e}")
+        
+        thread = threading.Thread(target=intelligence_worker, daemon=True, name="IntelligenceProcessor")
+        thread.start()
+        log.info("Intelligence processor thread started")
     
     def start(self):
-        """Start the trading system"""
+        """Start the Market Intelligence Engine"""
         try:
-            # Set TCP callback
-            self.tcp_bridge.on_market_data = self.process_market_data
+            log.info("Starting Market Intelligence Engine")
+            log.info("Strategy: Multi-Layer AI with Continuous Learning")
+            log.info("Philosophy: Black Box Pattern Discovery")
             
-            # Start TCP bridge
             self.tcp_bridge.start()
-            
-            log.info("Enhanced trading system started with 1-minute entry timing")
-            log.info("Strategy: 15m (trend) → 5m (momentum) → 1m (precise entry)")
             
             while not self.shutdown_event.is_set():
                 self.shutdown_event.wait(timeout=1)
-            
+                
         except KeyboardInterrupt:
             log.info("Shutdown requested via Ctrl+C")
         except Exception as e:
@@ -93,18 +111,17 @@ class TradingSystem:
             self.stop()
     
     def process_market_data(self, data: Dict):
-        """Process incoming market data and generate signals - ENHANCED"""
+        """Process market data - CLEAN version following black box philosophy"""
         try:
-            # Extract data for all timeframes
+            # Extract all timeframe data
             price_15m = data.get("price_15m", [])
             volume_15m = data.get("volume_15m", [])
             price_5m = data.get("price_5m", [])
             volume_5m = data.get("volume_5m", [])
-            # Extract 1-minute data
             price_1m = data.get("price_1m", [])
             volume_1m = data.get("volume_1m", [])
             
-            # Extract enhanced features (now includes 1m data)
+            # Extract features for traditional model
             features = self.feature_extractor.extract_features(
                 price_15m, volume_15m, price_5m, volume_5m, price_1m, volume_1m
             )
@@ -112,350 +129,222 @@ class TradingSystem:
             if features is None:
                 return
 
-            # Train on historical data
-            if not self.trained_on_historical:
-                log.info(f"Training on historical data: 15m={len(price_15m)}, 5m={len(price_5m)}, 1m={len(price_1m)}")
-                self._train_on_historical_data(data)
-                self.trained_on_historical = True
+            # Generate traditional signal (baseline)
+            traditional_action, traditional_confidence, traditional_quality = \
+                self.traditional_model.predict(features)
             
-            # Generate signal
-            action, confidence, quality = self.model.predict(features)
-            
-            # Apply 1-minute entry timing logic
-            should_send, final_confidence = self._apply_entry_timing_logic(
-                action, confidence, features
-            )
-            
-            # Determine signal strength
-            signal_strength = self._assess_signal_strength(final_confidence)
-            
-            log.info(f"Signal: Action={self._get_action_name(action)}, "
-                    f"Confidence={final_confidence:.3f}, Quality={quality}, "
-                    f"Alignment={features.timeframe_alignment:.2f}, "
-                    f"EntryQuality={features.entry_timing_quality:.2f}, Send={should_send}")
-            
-            # Update enhanced statistics
-            self._update_enhanced_stats(action, final_confidence, signal_strength, features)
-            
-            # Track signal for pattern learning
-            if should_send and action != 0:
-                current_price = price_1m[-1] if price_1m else (price_5m[-1] if price_5m else 0)
-                self._track_signal(action, final_confidence, current_price, features)
-            
-            # Send signal if all conditions met
-            if should_send:
-                self.tcp_bridge.send_signal(action, final_confidence, quality)
-                self.last_signal_time = datetime.now()
-            else:
-                log.info(f"Signal not sent - timing/confidence filters applied")
-
-            # Add to training samples
-            self.model.add_training_sample(features)
+            # Queue intelligence processing (non-blocking)
+            def intelligence_callback(intelligence_result):
+                """This is where the magic happens - signal fusion"""
+                final_signal = self.fuse_intelligence_signals(
+                    traditional_action, traditional_confidence, traditional_quality,
+                    intelligence_result
+                )
                 
+                # Send the final signal if it meets criteria
+                if final_signal['send_signal']:
+                    self.tcp_bridge.send_signal(
+                        final_signal['action'], 
+                        final_signal['confidence'], 
+                        final_signal['quality']
+                    )
+                    
+                    # Log the intelligence decision
+                    log.info(f"INTELLIGENCE SIGNAL: {final_signal['reasoning']}")
+            
+            # Prepare data for intelligence engine
+            # Use 1-minute data for precision, 5-minute as fallback
+            intel_prices = price_1m if len(price_1m) >= 50 else price_5m
+            intel_volumes = volume_1m if len(volume_1m) >= 50 else volume_5m
+            
+            # Queue for background processing
+            self.intelligence_queue.put({
+                'prices': intel_prices[-200:],  # Last 200 bars max
+                'volumes': intel_volumes[-200:],
+                'callback': intelligence_callback
+            })
+            
+            # Continue learning from this data point
+            self.traditional_model.add_training_sample(features)
+            self.signal_count += 1
+            
+            # Activate intelligence after we have some data
+            if not self.intelligence_active and self.signal_count > 20:
+                self.intelligence_active = True
+                log.info("Intelligence engine fully activated - Pattern learning engaged")
+            
         except Exception as e:
-            log.error(f"Enhanced market data processing error: {e}")
+            log.error(f"Market data processing error: {e}")
     
-    def _apply_entry_timing_logic(self, action: int, confidence: float, features) -> tuple:
-        """ENHANCED: Apply 1-minute entry timing logic"""
+    def fuse_intelligence_signals(self, traditional_action, traditional_confidence, 
+                                 traditional_quality, intelligence_result):
+        """Signal fusion using black box intelligence - CORE LOGIC"""
         
-        # Don't modify HOLD signals
-        if action == 0:
-            return confidence >= self.config.CONFIDENCE_THRESHOLD, confidence
+        self.stats['total_signals'] += 1
         
-        # Higher confidence threshold for quality trades
-        if confidence < 0.65:  # Raised from default 0.5
-            return False, confidence
+        # Extract intelligence insights
+        intel_signal = intelligence_result.get('signal_strength', 0)
+        intel_confidence = intelligence_result.get('confidence', 0)
+        is_dangerous = intelligence_result.get('is_dangerous_pattern', False)
+        is_beneficial = intelligence_result.get('is_beneficial_pattern', False)
         
-        # 1. REQUIRE GOOD TIMEFRAME ALIGNMENT
-        if features.timeframe_alignment < 0.4:  # Strong alignment required
-            log.debug(f"Signal filtered: insufficient alignment {features.timeframe_alignment:.2f}")
-            return False, confidence
+        # BLACK BOX DECISION LOGIC
         
-        # 2. REQUIRE EXCELLENT ENTRY TIMING
-        if features.entry_timing_quality < 0.65:  # High quality entries only
-            log.debug(f"Signal filtered: poor entry timing {features.entry_timing_quality:.2f}")
-            return False, confidence
-        
-        # 3. QUALITY TIERS (no external restrictions)
-        
-        # PREMIUM SETUPS - Boost confidence for exceptional quality
-        if (features.timeframe_alignment > 0.6 and 
-            features.entry_timing_quality > 0.75 and
-            confidence > 0.75):
-            
-            final_confidence = min(0.95, confidence * 1.1)  # 10% confidence boost
-            log.info(f"PREMIUM SETUP: Alignment={features.timeframe_alignment:.2f}, "
-                    f"Timing={features.entry_timing_quality:.2f}, Confidence={final_confidence:.3f}")
-            return True, final_confidence
-        
-        # GOOD SETUPS - Standard quality trades
-        elif (features.timeframe_alignment > 0.45 and 
-            features.entry_timing_quality > 0.65 and
-            confidence > 0.65):
-            
-            final_confidence = min(0.92, confidence * 1.05)  # Small 5% boost
-            log.info(f"QUALITY SETUP: Alignment={features.timeframe_alignment:.2f}, "
-                    f"Timing={features.entry_timing_quality:.2f}, Confidence={final_confidence:.3f}")
-            return True, final_confidence
-        
-        # ACCEPTABLE SETUPS - Minimum quality threshold
-        elif (features.timeframe_alignment >= 0.4 and 
-            features.entry_timing_quality >= 0.65 and
-            confidence >= 0.65):
-            
-            log.info(f"STANDARD SETUP: Alignment={features.timeframe_alignment:.2f}, "
-                    f"Timing={features.entry_timing_quality:.2f}, Confidence={confidence:.3f}")
-            return True, confidence
-        
-        # Otherwise, quality standards not met
-        log.debug(f"Quality filter: Alignment={features.timeframe_alignment:.2f}, "
-                f"Timing={features.entry_timing_quality:.2f}, Confidence={confidence:.3f}")
-        return False, confidence
-    
-    def _track_signal(self, action, confidence, price, features):
-        """Track signal for pattern learning - ENHANCED"""
-        self.trade_counter += 1
-        signal_id = f"trade_{self.trade_counter}"
-        
-        self.active_trades[signal_id] = {
-            'action': action,
-            'confidence': confidence,
-            'entry_price': price,
-            'entry_time': datetime.now(),
-            'direction': 'long' if action == 1 else 'short',
-            'features': features,
-            'timing_data': {
-                'timeframe_alignment': features.timeframe_alignment,
-                'entry_timing_quality': features.entry_timing_quality,
-                'rsi_1m': features.rsi_1m,
-                'bb_position_1m': features.bb_position_1m
+        # 1. IMMUNE SYSTEM OVERRIDE - Dangerous patterns
+        if is_dangerous and intel_confidence > 0.5:
+            self.stats['intelligence_filtered'] += 1
+            return {
+                'action': 0,  # HOLD
+                'confidence': 0.0,
+                'quality': 'dangerous_filtered',
+                'send_signal': False,
+                'reasoning': f"DANGEROUS PATTERN DETECTED - Override traditional signal"
             }
-        }
         
-        log.info(f"Tracking enhanced signal {signal_id} (alignment: {features.timeframe_alignment:.2f}, "
-                f"timing: {features.entry_timing_quality:.2f})")
+        # 2. BENEFICIAL PATTERN BOOST
+        if is_beneficial and intel_confidence > 0.6 and traditional_action != 0:
+            boost_factor = 1.0 + (intel_confidence * 0.4)  # Up to 40% boost
+            final_confidence = min(traditional_confidence * boost_factor, 0.95)
+            self.stats['intelligence_enhanced'] += 1
+            return {
+                'action': traditional_action,
+                'confidence': final_confidence,
+                'quality': 'intelligence_enhanced',
+                'send_signal': final_confidence >= self.config.CONFIDENCE_THRESHOLD,
+                'reasoning': f"BENEFICIAL PATTERN BOOST - Traditional {traditional_confidence:.3f} → {final_confidence:.3f}"
+            }
+        
+        # 3. CONSENSUS VALIDATION - Both systems agree
+        intel_action = self.signal_to_action(intel_signal)
+        if (traditional_action == intel_action and traditional_action != 0 and 
+            intel_confidence > 0.5):
+            
+            # High confidence consensus
+            consensus_confidence = min(
+                (traditional_confidence * 0.7 + intel_confidence * 0.3) * 1.15,  # 15% consensus bonus
+                0.95
+            )
+            self.stats['consensus_signals'] += 1
+            return {
+                'action': traditional_action,
+                'confidence': consensus_confidence,
+                'quality': 'consensus_validated',
+                'send_signal': consensus_confidence >= self.config.CONFIDENCE_THRESHOLD,
+                'reasoning': f"CONSENSUS SIGNAL - Both systems agree: {consensus_confidence:.3f}"
+            }
+        
+        # 4. INTELLIGENCE OVERRIDE - High confidence intelligence signal
+        if (intel_confidence > 0.75 and intel_action != 0 and 
+            abs(intel_signal) > 0.3):
+            
+            self.stats['intelligence_enhanced'] += 1
+            return {
+                'action': intel_action,
+                'confidence': intel_confidence * 0.9,  # Slight discount for override
+                'quality': 'intelligence_override',
+                'send_signal': True,
+                'reasoning': f"INTELLIGENCE OVERRIDE - High confidence: {intel_confidence:.3f}"
+            }
+        
+        # 5. TRADITIONAL SIGNAL - Intelligence not confident enough
+        if traditional_confidence >= self.config.CONFIDENCE_THRESHOLD:
+            self.stats['traditional_signals'] += 1
+            return {
+                'action': traditional_action,
+                'confidence': traditional_confidence,
+                'quality': traditional_quality,
+                'send_signal': True,
+                'reasoning': f"TRADITIONAL SIGNAL - Intelligence neutral: {traditional_confidence:.3f}"
+            }
+        
+        # 6. NO SIGNAL - Nothing confident enough
+        return {
+            'action': 0,
+            'confidence': 0.0,
+            'quality': 'no_consensus',
+            'send_signal': False,
+            'reasoning': f"NO CLEAR SIGNAL - Awaiting better setup"
+        }
+    
+    def signal_to_action(self, signal_strength):
+        """Convert intelligence signal strength to action"""
+        if signal_strength > 0.2:
+            return 1  # BUY
+        elif signal_strength < -0.2:
+            return 2  # SELL
+        else:
+            return 0  # HOLD
     
     def on_trade_completed(self, completion_data):
-        """Handle trade completion with enhanced analysis"""
+        """Handle trade completion - Feed back to intelligence"""
         try:
-            signal_id = completion_data.get('signal_id', '')
             exit_price = completion_data.get('exit_price', 0)
             exit_reason = completion_data.get('exit_reason', 'unknown')
             duration_minutes = completion_data.get('duration_minutes', 0)
             
-            if signal_id not in self.active_trades:
-                log.warning(f"Unknown trade completed: {signal_id}")
-                return
+            # Simple PnL calculation (this would be more sophisticated in practice)
+            # For now, just tell intelligence about the trade outcome
             
-            trade_info = self.active_trades[signal_id]
+            # Record with intelligence engine for learning
+            outcome = 0.01 if exit_reason in ['take_profit', 'target'] else -0.01
             
-            # Calculate PnL
-            entry_price = trade_info['entry_price']
-            direction = trade_info['direction']
-            
-            if direction == 'long':
-                pnl = exit_price - entry_price
-            else:
-                pnl = entry_price - exit_price
-            
-            # Create trade record
-            trade_record = TradeRecord(
-                entry_time=trade_info['entry_time'],
-                exit_time=datetime.now(),
-                entry_price=entry_price,
-                exit_price=exit_price,
-                direction=direction,
-                confidence=trade_info['confidence'],
-                time_of_day=trade_info['entry_time'].hour,
-                day_of_week=trade_info['entry_time'].weekday(),
-                pnl=pnl,
-                duration_minutes=duration_minutes,
-                exit_reason=exit_reason
+            self.intelligence_engine.record_trade_outcome(
+                datetime.now(), 
+                outcome,
+                exit_price, 
+                exit_price
             )
             
-            # Add to pattern learner
-            self.pattern_learner.add_trade(trade_record)
-            
-            # Update stats
-            self.stats['trades_completed'] += 1
-            self.stats['patterns_found'] = len(self.pattern_learner.insights)
-            
-            # Log timing analysis
-            timing_data = trade_info['timing_data']
-            log.info(f"Trade completed: {signal_id}, PnL=${pnl:.2f}, Duration={duration_minutes}min, "
-                    f"Alignment={timing_data['timeframe_alignment']:.2f}, "
-                    f"TimingQuality={timing_data['entry_timing_quality']:.2f}")
-            
-            # Remove from active trades
-            del self.active_trades[signal_id]
+            log.info(f"Trade completed - Intelligence updated: {exit_reason}")
             
         except Exception as e:
             log.error(f"Trade completion error: {e}")
     
-    def _assess_signal_strength(self, confidence: float) -> str:
-        if confidence >= 0.8:
-            return "excellent"
-        elif confidence >= 0.7:
-            return "good"
-        elif confidence >= 0.6:
-            return "fair"
-        else:
-            return "poor"
-    
-    def _get_action_name(self, action: int) -> str:
-        return {0: "HOLD", 1: "BUY", 2: "SELL"}.get(action, "UNKNOWN")
-    
-    def _train_on_historical_data(self, data):
-        """Train using research-aligned feature-based signals - CLEAN PROGRESS"""
-        price_15m = data.get("price_15m", [])
-        volume_15m = data.get("volume_15m", [])
-        price_5m = data.get("price_5m", [])
-        volume_5m = data.get("volume_5m", [])
-        price_1m = data.get("price_1m", [])
-        volume_1m = data.get("volume_1m", [])
-        
-        min_samples = max(50, self.config.SMA_PERIOD)
-        training_samples = 0
-        
-        # Use the longest available timeframe for training loop
-        max_length = max(len(price_5m), len(price_1m) if price_1m else 0)
-        
-        log.info(f"Processing historical data for training...")
-        
-        # Create progress bar with cleaner format
-        progress_range = range(min_samples, max_length - 5)
-        
-        with tqdm(total=len(progress_range), 
-                desc="Historical Analysis", 
-                unit="bars",
-                bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
-                ncols=80) as pbar:
-            
-            # Process historical data for training
-            for i in progress_range:
-                # Get data up to point i
-                hist_price_15m = price_15m[:min(i+1, len(price_15m))]
-                hist_vol_15m = volume_15m[:min(i+1, len(volume_15m))] if volume_15m else []
-                hist_price_5m = price_5m[:min(i+1, len(price_5m))]
-                hist_vol_5m = volume_5m[:min(i+1, len(volume_5m))] if volume_5m else []
-                
-                # Include 1m data if available
-                hist_price_1m = price_1m[:min(i+1, len(price_1m))] if price_1m else []
-                hist_vol_1m = volume_1m[:min(i+1, len(volume_1m))] if volume_1m else []
-                
-                # Extract features for this specific time point
-                features = self.feature_extractor.extract_features(
-                    hist_price_15m, hist_vol_15m, hist_price_5m, hist_vol_5m,
-                    hist_price_1m, hist_vol_1m
-                )
-
-                if features is not None:
-                    signal = self.model._generate_signal_from_features(features)
-                    
-                    # Store for training
-                    self.model.feature_history.append(features)
-                    self.model.signal_history.append(signal)
-                    training_samples += 1
-                    
-                    # Update progress bar description with stats
-                    if training_samples % 2000 == 0:
-                        pbar.set_description(f"Historical Analysis ({training_samples} samples)")
-                
-                pbar.update(1)
-        
-        # Signal distribution
-        unique_signals, counts = np.unique(self.model.signal_history, return_counts=True)
-        signal_dist = dict(zip(unique_signals, counts))
-        log.info(f"Enhanced training completed: {training_samples} samples")
-        log.info(f"Signal distribution: {signal_dist}")
-        
-        # Train if we have enough samples
-        if training_samples >= self.config.MIN_TRAINING_SAMPLES:
-            log.info("Training machine learning models...")
-            
-            # Clean, simple ML training (no progress bar for fast operations)
-            self.model.train()
-            
-            log.info("Enhanced model training completed with 1-minute features")
-        else:
-            log.warning(f"Insufficient training samples: {training_samples}/{self.config.MIN_TRAINING_SAMPLES}")
-    
-    def _update_enhanced_stats(self, action: int, confidence: float, signal_strength: str, features):
-        """Update enhanced system statistics"""
-        self.stats['signals_generated'] += 1
-        
-        # Count by action
-        if action == 1:
-            self.stats['buy_signals'] += 1
-        elif action == 2:
-            self.stats['sell_signals'] += 1
-        else:
-            self.stats['hold_signals'] += 1
-        
-        # Count by signal strength
-        if signal_strength == "excellent":
-            self.stats['high_confidence_signals'] += 1
-        elif signal_strength == "good":
-            self.stats['moderate_confidence_signals'] += 1
-        elif signal_strength == "fair":
-            self.stats['low_confidence_signals'] += 1
-        
-        # Update average confidence
-        total = self.stats['signals_generated']
-        self.stats['avg_confidence'] = (
-            (self.stats['avg_confidence'] * (total - 1) + confidence) / total
-        )
-        
-        # Update timing stats
-        self.stats['entry_quality_avg'] = (
-            (self.stats['entry_quality_avg'] * (total - 1) + features.entry_timing_quality) / total
-        )
-        self.stats['timeframe_alignment_avg'] = (
-            (self.stats['timeframe_alignment_avg'] * (total - 1) + features.timeframe_alignment) / total
-        )
-    
     def stop(self):
-        """Stop the trading system"""
-        log.info("Stopping enhanced trading system...")
+        """Stop the Market Intelligence Engine"""
+        log.info("Stopping Market Intelligence Engine...")
         
-        # Stop TCP bridge safely
+        # Stop intelligence processing
+        self.intelligence_queue.put(None)
+        
+        # Stop TCP bridge
         try:
-            if hasattr(self, 'tcp_bridge') and self.tcp_bridge:
-                self.tcp_bridge.stop()
+            self.tcp_bridge.stop()
         except Exception as e:
-            log.warning(f"Error stopping TCP bridge: {e}")
+            log.warning(f"TCP bridge stop error: {e}")
         
-        # Save model safely
+        # Save traditional model
         try:
-            if hasattr(self, 'model') and self.model:
-                self.model.save_model()
+            self.traditional_model.save_model()
         except Exception as e:
-            log.warning(f"Error saving model: {e}")
+            log.warning(f"Model save error: {e}")
         
-        # Print enhanced final statistics
-        self._print_enhanced_final_stats()
+        # Export intelligence knowledge base
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            knowledge_file = f"intelligence_patterns_{timestamp}.json"
+            self.intelligence_engine.export_knowledge_base(knowledge_file)
+            log.info(f"Intelligence patterns exported to {knowledge_file}")
+        except Exception as e:
+            log.warning(f"Knowledge export error: {e}")
         
-        log.info("Enhanced system stopped")
-    
-    def _print_enhanced_final_stats(self):
-        """Print comprehensive enhanced final statistics"""
-        total = self.stats['signals_generated']
-        completed = self.stats['trades_completed']
-        patterns = self.stats['patterns_found']
-        
+        # Print final statistics
+        total = self.stats['total_signals']
         if total > 0:
-            log.info("=== ENHANCED SYSTEM STATISTICS ===")
-            log.info(f"Total Signals Generated: {total}")
-            log.info(f"Trades Completed: {completed}")
-            log.info(f"Patterns Discovered: {patterns}")
-            log.info(f"Signal Distribution:")
-            log.info(f"HOLD: {self.stats['hold_signals']} ({self.stats['hold_signals']/total*100:.1f}%)")
-            log.info(f"BUY:  {self.stats['buy_signals']} ({self.stats['buy_signals']/total*100:.1f}%)")
-            log.info(f"SELL: {self.stats['sell_signals']} ({self.stats['sell_signals']/total*100:.1f}%)")
-            log.info(f"Average Confidence: {self.stats['avg_confidence']:.3f}")
-            log.info(f"Average Entry Quality: {self.stats['entry_quality_avg']:.3f}")
-            log.info(f"Average Timeframe Alignment: {self.stats['timeframe_alignment_avg']:.3f}")
-            log.info(f"1-Minute Enhancement: Active")
-            log.info("===================================")
-        else:
-            log.info("No signals generated during session")
+            log.info("=== MARKET INTELLIGENCE FINAL REPORT ===")
+            log.info(f"Total Signals Processed: {total}")
+            log.info(f"Intelligence Enhanced: {self.stats['intelligence_enhanced']} ({self.stats['intelligence_enhanced']/total*100:.1f}%)")
+            log.info(f"Intelligence Filtered: {self.stats['intelligence_filtered']} ({self.stats['intelligence_filtered']/total*100:.1f}%)")
+            log.info(f"Consensus Signals: {self.stats['consensus_signals']} ({self.stats['consensus_signals']/total*100:.1f}%)")
+            log.info(f"Traditional Signals: {self.stats['traditional_signals']} ({self.stats['traditional_signals']/total*100:.1f}%)")
+            
+            # Get intelligence insights
+            try:
+                intel_status = self.intelligence_engine.get_system_status()
+                log.info(f"DNA Patterns Learned: {intel_status['total_dna_patterns']}")
+                log.info(f"Intelligence Win Rate: {intel_status['win_rate']:.2%}")
+                log.info("Market Intelligence Engine - Learning Complete")
+            except:
+                pass
+        
+        log.info("Market Intelligence Engine stopped")

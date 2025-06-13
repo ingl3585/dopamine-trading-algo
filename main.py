@@ -1,5 +1,4 @@
-# main.py
-
+# main.py - Enhanced version
 import sys
 import os
 import signal
@@ -10,25 +9,38 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from core.trading_system import TradingSystem
 
 # Global reference for signal handler
-trading_system = None
+enhanced_system = None
 
 def signal_handler(signum, frame):
     """Handle Ctrl+C gracefully"""
-    global trading_system
-
-    if trading_system and hasattr(trading_system, 'shutdown_event'):
-        trading_system.shutdown_event.set()
+    global enhanced_system
+    if enhanced_system:
+        enhanced_system.stop()
 
 def main():
-    """Main entry point"""
-    global trading_system
+    """Enhanced main entry point with Advanced Market Intelligence"""
+    global enhanced_system
 
     # Signal handler for shutdown
     signal.signal(signal.SIGINT, signal_handler)
 
     try:
-        print("Initializing trading system...")
+        print("=" * 60)
+        print("ADVANCED MARKET INTELLIGENCE ENGINE")
+        print("Multi-Layer AI System for MNQ Futures Trading")
+        print("=" * 60)
+        print("Features:")
+        print("  ✓ DNA Sequencing System (Market Genetics)")
+        print("  ✓ Micro-Pattern Memory Network") 
+        print("  ✓ Temporal Pattern Archaeologist")
+        print("  ✓ Market Immune System")
+        print("  ✓ Meta-Learning Director")
+        print("  ✓ Permanent Memory (Never Forgets)")
+        print("  ✓ Continuous Learning & Adaptation")
+        print("=" * 60)
         print("Press Ctrl+C to stop the system")
+        print()
+        
         trading_system = TradingSystem()
         trading_system.start()
 
@@ -37,4 +49,4 @@ def main():
         return 1
 
 if __name__ == "__main__":
-    sys.exit(main()) 
+    sys.exit(main())
