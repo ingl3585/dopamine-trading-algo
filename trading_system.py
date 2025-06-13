@@ -4,6 +4,7 @@ import os
 import threading
 import logging
 import time
+import numpy as np
 from typing import Dict
 from datetime import datetime
 from config import ResearchConfig
@@ -193,75 +194,88 @@ class TradingSystem:
             log.error(f"Raw data processing error: {e}")
     
     def convert_intelligence_to_signal(self, intelligence_result):
-        """Convert pure intelligence output to trading signal"""
+        """Convert pure intelligence output to trading signal WITH CONSENSUS VALIDATION"""
         
-        intel_signal = intelligence_result.get('signal_strength', 0)
-        intel_confidence = intelligence_result.get('confidence', 0)
-        is_dangerous = intelligence_result.get('is_dangerous_pattern', False)
-        is_beneficial = intelligence_result.get('is_beneficial_pattern', False)
+        # Extract individual subsystem signals (as per your prompt)
+        subsystem_signals = intelligence_result.get('subsystem_signals', {})
+        subsystem_scores = intelligence_result.get('subsystem_scores', {})
         
-        # 1. IMMUNE SYSTEM OVERRIDE - Intelligence recognizes danger
-        if is_dangerous and intel_confidence > 0.4:
+        # CORE REQUIREMENT: Cross-validation between subsystems
+        if len(subsystem_signals) < 2:
             return {
-                'action': 0,  # HOLD
+                'action': 0,
                 'confidence': 0.0,
-                'quality': 'dangerous_pattern',
+                'quality': 'insufficient_subsystems',
                 'send_signal': False,
-                'reasoning': f"DANGEROUS PATTERN DETECTED - Intelligence override (conf: {intel_confidence:.3f})"
+                'reasoning': "Need multiple subsystem agreement - insufficient subsystems active"
             }
         
-        # 2. HIGH CONFIDENCE INTELLIGENCE SIGNAL
-        if intel_confidence > 0.7 and abs(intel_signal) > 0.2:
-            action = self.signal_to_action(intel_signal)
+        # Use Meta-Learning Director for consensus (as per your prompt)
+        consensus_signal, consensus_confidence, consensus_reason = self.intelligence_engine.meta_director.get_consensus_signal(
+            subsystem_signals, subsystem_scores
+        )
+        
+        # 1. IMMUNE SYSTEM OVERRIDE (highest priority)
+        immune_signal = subsystem_signals.get('immune', 0)
+        immune_score = subsystem_scores.get('immune', 0)
+        
+        if immune_signal < -0.3 and immune_score > 0.4:  # Strong danger signal
+            return {
+                'action': 0,
+                'confidence': 0.0,
+                'quality': 'immune_system_override',
+                'send_signal': False,
+                'reasoning': f"IMMUNE SYSTEM OVERRIDE - Dangerous pattern detected (strength: {immune_signal:.3f})"
+            }
+        
+        # 2. HIGH CONFIDENCE CONSENSUS (your core requirement)
+        if consensus_confidence > 0.7 and abs(consensus_signal) > 0.2:
+            action = self.signal_to_action(consensus_signal)
             return {
                 'action': action,
-                'confidence': intel_confidence,
-                'quality': 'high_confidence_intelligence',
+                'confidence': consensus_confidence,
+                'quality': f'high_confidence_{consensus_reason}',
                 'send_signal': True,
-                'reasoning': f"HIGH CONFIDENCE INTELLIGENCE - Signal: {intel_signal:.3f}, Conf: {intel_confidence:.3f}"
+                'reasoning': f"HIGH CONFIDENCE CONSENSUS - {consensus_reason}: Signal: {consensus_signal:.3f}, Conf: {consensus_confidence:.3f}"
             }
         
-        # 3. BENEFICIAL PATTERN SIGNAL
-        if is_beneficial and intel_confidence > 0.5 and abs(intel_signal) > 0.15:
-            action = self.signal_to_action(intel_signal)
+        # 3. MODERATE CONSENSUS WITH IMMUNE BOOST
+        if consensus_confidence > 0.5 and abs(consensus_signal) > 0.15:
+            # Check if immune system agrees (beneficial pattern)
+            immune_boost = 1.0
+            if immune_signal > 0.2 and immune_score > 0.3:  # Beneficial pattern
+                immune_boost = 1.2
+                consensus_reason += "_immune_boosted"
+            
+            action = self.signal_to_action(consensus_signal)
+            boosted_confidence = min(consensus_confidence * immune_boost, 1.0)
+            
             return {
                 'action': action,
-                'confidence': intel_confidence * 1.1,  # Slight boost for beneficial
-                'quality': 'beneficial_pattern',
+                'confidence': boosted_confidence,
+                'quality': f'moderate_{consensus_reason}',
                 'send_signal': True,
-                'reasoning': f"BENEFICIAL PATTERN - Signal: {intel_signal:.3f}, Conf: {intel_confidence:.3f}"
+                'reasoning': f"MODERATE CONSENSUS - {consensus_reason}: Signal: {consensus_signal:.3f}, Conf: {boosted_confidence:.3f}"
             }
         
-        # 4. MODERATE CONFIDENCE INTELLIGENCE
-        if intel_confidence > 0.6 and abs(intel_signal) > 0.25:
-            action = self.signal_to_action(intel_signal)
-            return {
-                'action': action,
-                'confidence': intel_confidence * 0.9,  # Slight discount
-                'quality': 'moderate_intelligence',
-                'send_signal': True,
-                'reasoning': f"MODERATE INTELLIGENCE - Signal: {intel_signal:.3f}, Conf: {intel_confidence:.3f}"
-            }
+        # 4. NO CONSENSUS - As per your prompt design
+        disagreement_level = self.calculate_disagreement(subsystem_signals)
         
-        # 5. STRONG SIGNAL, LOWER CONFIDENCE
-        if intel_confidence > 0.4 and abs(intel_signal) > 0.35:
-            action = self.signal_to_action(intel_signal)
-            return {
-                'action': action,
-                'confidence': intel_confidence * 0.8,
-                'quality': 'strong_signal_intelligence',
-                'send_signal': True,
-                'reasoning': f"STRONG SIGNAL - Signal: {intel_signal:.3f}, Conf: {intel_confidence:.3f}"
-            }
-        
-        # 6. INTELLIGENCE SAYS HOLD
         return {
             'action': 0,
-            'confidence': intel_confidence,
-            'quality': 'intelligence_neutral',
+            'confidence': consensus_confidence,
+            'quality': f'no_consensus_{consensus_reason}',
             'send_signal': False,
-            'reasoning': f"INTELLIGENCE NEUTRAL - Signal: {intel_signal:.3f}, Conf: {intel_confidence:.3f}"
+            'reasoning': f"NO CONSENSUS - {consensus_reason}: Disagreement: {disagreement_level:.3f}, Conf: {consensus_confidence:.3f}"
         }
+    
+    def calculate_disagreement(self, signals):
+        """Calculate disagreement level between subsystems"""
+        if len(signals) < 2:
+            return 0.0
+        
+        signal_values = list(signals.values())
+        return np.std(signal_values) if signal_values else 0.0
     
     def signal_to_action(self, signal_strength):
         """Convert intelligence signal strength to action"""

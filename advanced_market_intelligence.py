@@ -532,7 +532,16 @@ class MetaLearningDirector:
     """Master controller that learns optimal subsystem combinations"""
     
     def __init__(self, memory_db: PermanentMemoryDB):
-        super().__init__(memory_db)
+        self.memory_db = memory_db
+        
+        # INITIALIZE MISSING COMPONENTS from your prompt
+        self.subsystem_weights = {
+            'dna': 0.25,
+            'micro': 0.25, 
+            'temporal': 0.25,
+            'immune': 0.25
+        }
+        
         self.disagreement_patterns = defaultdict(list)
         self.consensus_requirements = {
             'min_agreeing_systems': 2,
@@ -584,6 +593,65 @@ class MetaLearningDirector:
         self.record_disagreement(subsystem_signals, subsystem_scores)
         
         return 0.0, 0.0, "no_consensus"
+    
+    def get_weighted_signal(self, subsystem_signals: Dict[str, float]) -> Tuple[float, float]:
+        """Get weighted signal from all subsystems (MISSING METHOD)"""
+        
+        if not subsystem_signals:
+            return 0.0, 0.0
+        
+        # Calculate weighted signal
+        total_weight = 0.0
+        weighted_signal = 0.0
+        
+        for system, signal in subsystem_signals.items():
+            if system in self.subsystem_weights:
+                weight = self.subsystem_weights[system]
+                weighted_signal += signal * weight
+                total_weight += weight
+        
+        if total_weight == 0:
+            return 0.0, 0.0
+        
+        final_signal = weighted_signal / total_weight
+        
+        # Calculate confidence based on agreement
+        signal_values = list(subsystem_signals.values())
+        disagreement = np.std(signal_values) if len(signal_values) > 1 else 0.0
+        confidence = max(0.0, 1.0 - (disagreement / 0.5))  # Normalize disagreement to confidence
+        
+        return final_signal, confidence
+    
+    def update_weights(self, subsystem_signals: Dict[str, float], outcome: float):
+        """Update subsystem weights based on performance (MISSING METHOD)"""
+        
+        learning_rate = 0.01
+        
+        for system, signal in subsystem_signals.items():
+            if system in self.subsystem_weights:
+                # Reward systems that agreed with successful outcome
+                if (signal > 0 and outcome > 0) or (signal < 0 and outcome < 0):
+                    self.subsystem_weights[system] += learning_rate * abs(outcome)
+                else:
+                    self.subsystem_weights[system] -= learning_rate * abs(outcome)
+        
+        # Normalize weights
+        total_weight = sum(self.subsystem_weights.values())
+        if total_weight > 0:
+            for system in self.subsystem_weights:
+                self.subsystem_weights[system] /= total_weight
+        
+        # Ensure minimum weight (prevent any system from being completely ignored)
+        min_weight = 0.1
+        for system in self.subsystem_weights:
+            if self.subsystem_weights[system] < min_weight:
+                self.subsystem_weights[system] = min_weight
+        
+        # Re-normalize after minimum weight adjustment
+        total_weight = sum(self.subsystem_weights.values())
+        if total_weight > 0:
+            for system in self.subsystem_weights:
+                self.subsystem_weights[system] /= total_weight
     
     def record_disagreement(self, signals: Dict[str, float], scores: Dict[str, float]):
         """Record patterns when subsystems disagree"""
