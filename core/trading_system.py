@@ -4,6 +4,7 @@ import os
 import threading
 import logging
 import numpy as np
+from tqdm import tqdm
 from typing import Dict
 from datetime import datetime
 from config import ResearchConfig
@@ -161,33 +162,55 @@ class TradingSystem:
         if action == 0:
             return confidence >= self.config.CONFIDENCE_THRESHOLD, confidence
         
-        # Check basic confidence threshold first
-        if confidence < self.config.CONFIDENCE_THRESHOLD:
+        # Higher confidence threshold for quality trades
+        if confidence < 0.65:  # Raised from default 0.5
             return False, confidence
         
-        # 1. Require minimum timeframe alignment for directional signals
-        if features.timeframe_alignment < 0.3:
-            log.debug(f"Signal filtered: poor alignment {features.timeframe_alignment:.2f}")
+        # 1. REQUIRE GOOD TIMEFRAME ALIGNMENT
+        if features.timeframe_alignment < 0.4:  # Strong alignment required
+            log.debug(f"Signal filtered: insufficient alignment {features.timeframe_alignment:.2f}")
             return False, confidence
         
-        # 2. Require good entry timing quality
-        if features.entry_timing_quality < self.entry_timing_threshold:
+        # 2. REQUIRE EXCELLENT ENTRY TIMING
+        if features.entry_timing_quality < 0.65:  # High quality entries only
             log.debug(f"Signal filtered: poor entry timing {features.entry_timing_quality:.2f}")
             return False, confidence
         
-        # 3. Prevent over-trading (simple time-based filter)
-        time_since_last = (datetime.now() - self.last_signal_time).total_seconds()
-        if time_since_last < 300:  # 5 minutes minimum between signals
-            log.debug(f"Signal filtered: too soon after last signal ({time_since_last:.0f}s)")
-            return False, confidence
+        # 3. QUALITY TIERS (no external restrictions)
         
-        # 4. Boost confidence for excellent entry timing
-        final_confidence = confidence
-        if features.timeframe_alignment > 0.8 and features.entry_timing_quality > 0.8:
-            final_confidence = min(0.95, confidence * 1.1)  # 10% boost, capped at 95%
-            log.debug(f"Confidence boosted for excellent timing: {confidence:.3f} → {final_confidence:.3f}")
+        # PREMIUM SETUPS - Boost confidence for exceptional quality
+        if (features.timeframe_alignment > 0.6 and 
+            features.entry_timing_quality > 0.75 and
+            confidence > 0.75):
+            
+            final_confidence = min(0.95, confidence * 1.1)  # 10% confidence boost
+            log.info(f"PREMIUM SETUP: Alignment={features.timeframe_alignment:.2f}, "
+                    f"Timing={features.entry_timing_quality:.2f}, Confidence={final_confidence:.3f}")
+            return True, final_confidence
         
-        return True, final_confidence
+        # GOOD SETUPS - Standard quality trades
+        elif (features.timeframe_alignment > 0.45 and 
+            features.entry_timing_quality > 0.65 and
+            confidence > 0.65):
+            
+            final_confidence = min(0.92, confidence * 1.05)  # Small 5% boost
+            log.info(f"QUALITY SETUP: Alignment={features.timeframe_alignment:.2f}, "
+                    f"Timing={features.entry_timing_quality:.2f}, Confidence={final_confidence:.3f}")
+            return True, final_confidence
+        
+        # ACCEPTABLE SETUPS - Minimum quality threshold
+        elif (features.timeframe_alignment >= 0.4 and 
+            features.entry_timing_quality >= 0.65 and
+            confidence >= 0.65):
+            
+            log.info(f"STANDARD SETUP: Alignment={features.timeframe_alignment:.2f}, "
+                    f"Timing={features.entry_timing_quality:.2f}, Confidence={confidence:.3f}")
+            return True, confidence
+        
+        # Otherwise, quality standards not met
+        log.debug(f"Quality filter: Alignment={features.timeframe_alignment:.2f}, "
+                f"Timing={features.entry_timing_quality:.2f}, Confidence={confidence:.3f}")
+        return False, confidence
     
     def _track_signal(self, action, confidence, price, features):
         """Track signal for pattern learning - ENHANCED"""
@@ -283,7 +306,7 @@ class TradingSystem:
         return {0: "HOLD", 1: "BUY", 2: "SELL"}.get(action, "UNKNOWN")
     
     def _train_on_historical_data(self, data):
-        """Train using research-aligned feature-based signals - ENHANCED"""
+        """Train using research-aligned feature-based signals - WITH TQDM PROGRESS"""
         price_15m = data.get("price_15m", [])
         volume_15m = data.get("volume_15m", [])
         price_5m = data.get("price_5m", [])
@@ -297,8 +320,15 @@ class TradingSystem:
         # Use the longest available timeframe for training loop
         max_length = max(len(price_5m), len(price_1m) if price_1m else 0)
         
+        log.info(f"Processing historical data for training...")
+        
+        # Create progress bar
+        progress_range = range(min_samples, max_length - 5)
+        pbar = tqdm(progress_range, desc="Training", unit="samples", 
+                    bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
+        
         # Process historical data for training
-        for i in range(min_samples, max_length - 5):
+        for i in pbar:
             # Get data up to point i
             hist_price_15m = price_15m[:min(i+1, len(price_15m))]
             hist_vol_15m = volume_15m[:min(i+1, len(volume_15m))] if volume_15m else []
@@ -322,7 +352,13 @@ class TradingSystem:
                 self.model.feature_history.append(features)
                 self.model.signal_history.append(signal)
                 training_samples += 1
-
+                
+                # Update progress bar with current stats
+                if training_samples % 1000 == 0:
+                    pbar.set_postfix({"Samples": training_samples})
+        
+        pbar.close()
+        
         # Signal distribution
         unique_signals, counts = np.unique(self.model.signal_history, return_counts=True)
         signal_dist = dict(zip(unique_signals, counts))
@@ -331,7 +367,15 @@ class TradingSystem:
         
         # Train if we have enough samples
         if training_samples >= self.config.MIN_TRAINING_SAMPLES:
-            self.model.train()
+            log.info("Training machine learning models...")
+            # Add progress for model training too
+            with tqdm(total=2, desc="ML Training", unit="model") as model_pbar:
+                model_pbar.set_description("Training Logistic Regression")
+                self.model.train()
+                model_pbar.update(1)
+                model_pbar.set_description("Training Complete")
+                model_pbar.update(1)
+            
             log.info("Enhanced model training completed with 1-minute features")
         else:
             log.warning(f"Insufficient training samples: {training_samples}/{self.config.MIN_TRAINING_SAMPLES}")
