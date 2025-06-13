@@ -100,18 +100,17 @@ class TradingSystem:
             
             self.tcp_bridge.start()
             
-            while not self.shutdown_event.is_set():
-                self.shutdown_event.wait(timeout=1)
+            # Simple loop - just wait for Ctrl+C
+            while True:
+                time.sleep(1)
                 
         except KeyboardInterrupt:
-            log.info("Shutdown requested via Ctrl+C")
-        except Exception as e:
-            log.error(f"System error: {e}")
+            log.info("Shutdown requested")
         finally:
             self.stop()
     
     def process_market_data(self, data: Dict):
-        """Process market data - CLEAN version following black box philosophy"""
+        """Process market data - SIMPLE DEBUG VERSION"""
         try:
             # Extract all timeframe data
             price_15m = data.get("price_15m", [])
@@ -121,59 +120,87 @@ class TradingSystem:
             price_1m = data.get("price_1m", [])
             volume_1m = data.get("volume_1m", [])
             
+            print(f"=== DATA RECEIVED ===")
+            print(f"15m: {len(price_15m)} bars, 5m: {len(price_5m)} bars, 1m: {len(price_1m)} bars")
+            
             # Extract features for traditional model
             features = self.feature_extractor.extract_features(
                 price_15m, volume_15m, price_5m, volume_5m, price_1m, volume_1m
             )
 
             if features is None:
+                print("FAILED: No features extracted")
                 return
+
+            print(f"SUCCESS: Features extracted")
+            print(f"  RSI 5m: {features.rsi_5m:.1f}")
+            print(f"  BB pos 5m: {features.bb_position_5m:.3f}")
+            print(f"  EMA trend 5m: {features.ema_trend_5m:.6f}")
 
             # Generate traditional signal (baseline)
             traditional_action, traditional_confidence, traditional_quality = \
                 self.traditional_model.predict(features)
             
-            # Queue intelligence processing (non-blocking)
-            def intelligence_callback(intelligence_result):
-                """This is where the magic happens - signal fusion"""
-                final_signal = self.fuse_intelligence_signals(
-                    traditional_action, traditional_confidence, traditional_quality,
-                    intelligence_result
-                )
+            print(f"Traditional signal: action={traditional_action}, conf={traditional_confidence:.3f}")
+
+            # ADD TRAINING SAMPLE IMMEDIATELY - THIS IS THE KEY FIX
+            print("Adding training sample...")
+            self.traditional_model.add_training_sample(features)
+            print(f"Training samples so far: {len(self.traditional_model.signal_history)}")
+            
+            # Check if model is trained
+            print(f"Model is trained: {self.traditional_model.is_trained}")
+            
+            # Only do intelligence processing if we have a good traditional signal
+            if traditional_confidence > 0.3:  # Lower threshold for testing
+                print("Queuing intelligence processing...")
                 
-                # Send the final signal if it meets criteria
-                if final_signal['send_signal']:
-                    self.tcp_bridge.send_signal(
-                        final_signal['action'], 
-                        final_signal['confidence'], 
-                        final_signal['quality']
+                # Queue intelligence processing (non-blocking)
+                def intelligence_callback(intelligence_result):
+                    print("Intelligence callback received")
+                    final_signal = self.fuse_intelligence_signals(
+                        traditional_action, traditional_confidence, traditional_quality,
+                        intelligence_result
                     )
                     
-                    # Log the intelligence decision
-                    log.info(f"INTELLIGENCE SIGNAL: {final_signal['reasoning']}")
+                    # Send the final signal if it meets criteria
+                    if final_signal['send_signal']:
+                        print(f"SENDING SIGNAL: {final_signal['reasoning']}")
+                        self.tcp_bridge.send_signal(
+                            final_signal['action'], 
+                            final_signal['confidence'], 
+                            final_signal['quality']
+                        )
+                        log.info(f"INTELLIGENCE SIGNAL: {final_signal['reasoning']}")
+                    else:
+                        print(f"NO SIGNAL: {final_signal['reasoning']}")
+                
+                # Prepare data for intelligence engine
+                intel_prices = price_1m if len(price_1m) >= 50 else price_5m
+                intel_volumes = volume_1m if len(volume_1m) >= 50 else volume_5m
+                
+                # Queue for background processing
+                self.intelligence_queue.put({
+                    'prices': intel_prices[-200:],
+                    'volumes': intel_volumes[-200:],
+                    'callback': intelligence_callback
+                })
+            else:
+                print(f"Skipping intelligence (low confidence: {traditional_confidence:.3f})")
             
-            # Prepare data for intelligence engine
-            # Use 1-minute data for precision, 5-minute as fallback
-            intel_prices = price_1m if len(price_1m) >= 50 else price_5m
-            intel_volumes = volume_1m if len(volume_1m) >= 50 else volume_5m
-            
-            # Queue for background processing
-            self.intelligence_queue.put({
-                'prices': intel_prices[-200:],  # Last 200 bars max
-                'volumes': intel_volumes[-200:],
-                'callback': intelligence_callback
-            })
-            
-            # Continue learning from this data point
-            self.traditional_model.add_training_sample(features)
             self.signal_count += 1
             
             # Activate intelligence after we have some data
-            if not self.intelligence_active and self.signal_count > 20:
+            if not self.intelligence_active and self.signal_count > 5:  # Reduced threshold
                 self.intelligence_active = True
-                log.info("Intelligence engine fully activated - Pattern learning engaged")
+                log.info("Intelligence engine activated - Pattern learning engaged")
+            
+            print("=== PROCESSING COMPLETE ===\n")
             
         except Exception as e:
+            print(f"ERROR: {e}")
+            import traceback
+            traceback.print_exc()
             log.error(f"Market data processing error: {e}")
     
     def fuse_intelligence_signals(self, traditional_action, traditional_confidence, 
@@ -301,11 +328,14 @@ class TradingSystem:
             log.error(f"Trade completion error: {e}")
     
     def stop(self):
-        """Stop the Market Intelligence Engine"""
+        """Stop the Market Intelligence Engine - KEEP YOUR FULL VERSION"""
         log.info("Stopping Market Intelligence Engine...")
         
         # Stop intelligence processing
-        self.intelligence_queue.put(None)
+        try:
+            self.intelligence_queue.put(None)
+        except Exception as e:
+            log.warning(f"Intelligence queue stop error: {e}")
         
         # Stop TCP bridge
         try:
@@ -321,6 +351,7 @@ class TradingSystem:
         
         # Export intelligence knowledge base
         try:
+            from datetime import datetime
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             knowledge_file = f"intelligence_patterns_{timestamp}.json"
             self.intelligence_engine.export_knowledge_base(knowledge_file)

@@ -1,30 +1,7 @@
-# config.py
+# config.py - FIXED VERSION
 
 from dataclasses import dataclass, field
 from typing import List
-
-# Configuration for enhanced system
-@dataclass
-class EnhancedConfig(ResearchConfig):
-    """Enhanced configuration with intelligence settings"""
-    
-    # Intelligence engine settings
-    INTELLIGENCE_WEIGHT: float = 0.4  # Weight of intelligence vs traditional
-    DANGEROUS_PATTERN_OVERRIDE: bool = True  # Override on dangerous patterns
-    BENEFICIAL_PATTERN_BOOST: float = 0.5  # Max boost for beneficial patterns
-    MIN_INTELLIGENCE_CONFIDENCE: float = 0.3  # Min confidence for intelligence signals
-    
-    # Performance tracking
-    PERFORMANCE_TRACKING_WINDOW: int = 100  # Number of trades to track
-    ADAPTATION_FREQUENCY: int = 20  # Adapt weights every N trades
-    
-    # Memory management
-    MAX_DNA_PATTERNS: int = 10000  # Maximum DNA patterns to store
-    PATTERN_CLEANUP_DAYS: int = 30  # Days before cleaning old patterns
-    
-    # Enhanced risk management
-    MAX_CONSECUTIVE_LOSSES: int = 5  # Max losses before system pause
-    DRAWDOWN_THRESHOLD: float = 0.15  # Max drawdown before defensive mode
 
 @dataclass
 class ResearchConfig:
@@ -70,3 +47,25 @@ class ResearchConfig:
         """Ensure model directory exists"""
         import os
         os.makedirs(os.path.dirname(self.MODEL_PATH), exist_ok=True)
+
+@dataclass
+class EnhancedConfig(ResearchConfig):
+    """Enhanced configuration with intelligence settings"""
+    
+    # Intelligence engine settings
+    INTELLIGENCE_WEIGHT: float = 0.4  # Weight of intelligence vs traditional
+    DANGEROUS_PATTERN_OVERRIDE: bool = True  # Override on dangerous patterns
+    BENEFICIAL_PATTERN_BOOST: float = 0.5  # Max boost for beneficial patterns
+    MIN_INTELLIGENCE_CONFIDENCE: float = 0.3  # Min confidence for intelligence signals
+    
+    # Performance tracking
+    PERFORMANCE_TRACKING_WINDOW: int = 100  # Number of trades to track
+    ADAPTATION_FREQUENCY: int = 20  # Adapt weights every N trades
+    
+    # Memory management
+    MAX_DNA_PATTERNS: int = 10000  # Maximum DNA patterns to store
+    PATTERN_CLEANUP_DAYS: int = 30  # Days before cleaning old patterns
+    
+    # Enhanced risk management
+    MAX_CONSECUTIVE_LOSSES: int = 5  # Max losses before system pause
+    DRAWDOWN_THRESHOLD: float = 0.15  # Max drawdown before defensive mode
