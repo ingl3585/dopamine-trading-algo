@@ -10,23 +10,3 @@ joblib>=1.1.0
 
 # Deep Learning (for neural networks)
 torch>=1.9.0
-torchvision>=0.10.0
-
-# Database and Storage
-sqlalchemy>=1.4.0
-
-# Performance and Utilities
-numba>=0.56.0
-cython>=0.29.0
-
-# Visualization (for pattern interpretation)
-matplotlib>=3.5.0
-seaborn>=0.11.0
-plotly>=5.0.0
-
-# Time series specific
-pytz>=2021.3
-
-# Development and Testing
-pytest>=6.0.0
-pytest-cov>=3.0.0
