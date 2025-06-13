@@ -709,8 +709,8 @@ class AdvancedMarketIntelligence:
         log.info(f"Loaded {len(self.dna_system.dna_patterns)} DNA patterns from memory")
     
     def process_market_data(self, prices: List[float], volumes: List[float], 
-                          timestamp: Optional[datetime] = None) -> Dict[str, Any]:
-        """Process market data through all subsystems"""
+                        timestamp: Optional[datetime] = None) -> Dict[str, Any]:
+        """Process market data through all subsystems WITH ACTIVE DNA SEQUENCING"""
         if timestamp is None:
             timestamp = datetime.now()
         
@@ -718,56 +718,93 @@ class AdvancedMarketIntelligence:
         subsystem_signals = {}
         subsystem_scores = {}
         
-        # 1. DNA Sequencing Analysis
+        # 1. DNA Sequencing Analysis (FIX: Make this ACTIVE and prominent)
         current_dna = self.dna_system.create_dna_sequence(prices, volumes)
-        similar_patterns = self.dna_system.find_similar_patterns(current_dna)
+        print(f"DNA ACTIVE: Generated sequence {current_dna[:30]}..." if len(current_dna) > 30 else f"DNA: {current_dna}")
         
-        if similar_patterns:
-            dna_signal = np.mean([p.success_rate - 0.5 for p in similar_patterns[:3]])  # Top 3 patterns
-            dna_confidence = np.mean([p.confidence for p in similar_patterns[:3]])
+        if current_dna and len(current_dna) >= 10:  # Need minimum sequence length
+            similar_patterns = self.dna_system.find_similar_patterns(current_dna, similarity_threshold=0.6)
+            
+            if similar_patterns:
+                # Weight by confidence and recency
+                weighted_success = 0.0
+                total_weight = 0.0
+                
+                for pattern in similar_patterns[:5]:  # Top 5 similar patterns
+                    weight = pattern.confidence * min(pattern.occurrences / 10, 1.0)
+                    weighted_success += (pattern.success_rate - 0.5) * weight  # Center around 0
+                    total_weight += weight
+                
+                if total_weight > 0:
+                    dna_signal = weighted_success / total_weight
+                    dna_confidence = min(total_weight / 3, 1.0)  # Max confidence with 3+ weighted patterns
+                    
+                    print(f"DNA MATCH: {len(similar_patterns)} patterns, signal: {dna_signal:.3f}, conf: {dna_confidence:.3f}")
+                else:
+                    dna_signal = 0.0
+                    dna_confidence = 0.0
+            else:
+                # No similar patterns - this is a NEW pattern!
+                dna_signal = 0.0
+                dna_confidence = 0.2  # Low confidence for new patterns
+                print(f"DNA NEW: Novel sequence detected, adding to memory")
+                
+                # Add to patterns with neutral outcome initially
+                self.dna_system.update_pattern_outcome(current_dna, 0.0)
         else:
             dna_signal = 0.0
             dna_confidence = 0.0
+            print("DNA INACTIVE: Insufficient sequence length")
         
         subsystem_signals['dna'] = dna_signal
         subsystem_scores['dna'] = dna_confidence
         
-        # 2. Micro-Pattern Analysis
+        # 2. Micro-Pattern Analysis (ENHANCED)
         micro_pattern_id = self.micro_system.extract_micro_pattern(prices, volumes)
         if micro_pattern_id:
             micro_prob, micro_conf = self.micro_system.get_pattern_prediction(micro_pattern_id)
-            micro_signal = micro_prob - 0.5  # Convert to signal (-0.5 to +0.5)
+            micro_signal = (micro_prob - 0.5) * 2  # Scale to -1 to +1 range
+            print(f"MICRO ACTIVE: Pattern {micro_pattern_id[:8]}..., signal: {micro_signal:.3f}")
         else:
             micro_signal = 0.0
             micro_conf = 0.0
+            print("MICRO: No pattern extracted")
         
         subsystem_signals['micro'] = micro_signal
         subsystem_scores['micro'] = micro_conf
         
-        # 3. Temporal Pattern Analysis
+        # 3. Temporal Pattern Analysis (ENHANCED)
         temporal_strength = self.temporal_system.get_temporal_strength(timestamp, "general")
-        temporal_signal = temporal_strength - 0.5
-        temporal_conf = 0.5  # Base confidence for temporal
+        temporal_signal = (temporal_strength - 0.5) * 2  # Scale to -1 to +1
+        temporal_conf = 0.6 if temporal_strength != 0.5 else 0.1  # Higher confidence if not neutral
+        
+        print(f"TEMPORAL: {timestamp.strftime('%H:%M')} strength: {temporal_strength:.3f}, signal: {temporal_signal:.3f}")
         
         subsystem_signals['temporal'] = temporal_signal
         subsystem_scores['temporal'] = temporal_conf
         
-        # 4. Immune System Check
+        # 4. Immune System Check (ENHANCED)
         current_pattern = {
             'prices': prices[-10:] if len(prices) >= 10 else prices,
             'volumes': volumes[-10:] if len(volumes) >= 10 else volumes,
             'hour': timestamp.hour,
-            'day_of_week': timestamp.weekday()
+            'day_of_week': timestamp.weekday(),
+            'dna_sequence': current_dna[:20] if current_dna else "",  # Include DNA in immune pattern
+            'volatility': np.std(prices[-20:]) if len(prices) >= 20 else 0.0
         }
         
         if self.immune_system.is_dangerous_pattern(current_pattern):
-            immune_signal = -0.5  # Strong avoid signal
+            immune_signal = -0.8  # Strong avoid signal
+            immune_conf = 0.9
+            print("IMMUNE: DANGER DETECTED - avoiding")
         elif self.immune_system.is_beneficial_pattern(current_pattern):
-            immune_signal = 0.5   # Strong positive signal
+            immune_signal = 0.6   # Strong positive signal
+            immune_conf = 0.8
+            print("IMMUNE: Beneficial pattern recognized")
         else:
             immune_signal = 0.0   # Neutral
-        
-        immune_conf = self.immune_system.get_immune_strength()
+            immune_conf = 0.3
+            print("IMMUNE: Neutral - no pattern match")
         
         subsystem_signals['immune'] = immune_signal
         subsystem_scores['immune'] = immune_conf
@@ -778,7 +815,7 @@ class AdvancedMarketIntelligence:
         # Generate trading recommendation
         action = self.generate_action(final_signal, confidence)
         
-        # Prepare result
+        # Enhanced result with DNA prominence
         result = {
             'timestamp': timestamp,
             'action': action,
@@ -787,11 +824,13 @@ class AdvancedMarketIntelligence:
             'subsystem_signals': subsystem_signals,
             'subsystem_scores': subsystem_scores,
             'current_dna': current_dna,
-            'similar_patterns_count': len(similar_patterns),
+            'dna_sequence_length': len(current_dna) if current_dna else 0,
+            'similar_patterns_count': len(similar_patterns) if 'similar_patterns' in locals() else 0,
             'micro_pattern_id': micro_pattern_id,
             'is_dangerous_pattern': self.immune_system.is_dangerous_pattern(current_pattern),
             'is_beneficial_pattern': self.immune_system.is_beneficial_pattern(current_pattern),
-            'system_weights': self.meta_director.subsystem_weights.copy()
+            'system_weights': self.meta_director.subsystem_weights.copy(),
+            'all_subsystems_active': all(score > 0 for score in subsystem_scores.values())
         }
         
         # Store signal for learning
@@ -800,8 +839,12 @@ class AdvancedMarketIntelligence:
             'signal': final_signal,
             'confidence': confidence,
             'action': action,
-            'subsystem_signals': subsystem_signals.copy()
+            'subsystem_signals': subsystem_signals.copy(),
+            'dna_sequence': current_dna
         })
+        
+        # Print subsystem summary
+        print(f"SUBSYSTEMS: DNA({dna_confidence:.2f}) MICRO({micro_conf:.2f}) TEMPORAL({temporal_conf:.2f}) IMMUNE({immune_conf:.2f})")
         
         return result
     
