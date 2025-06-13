@@ -1,34 +1,56 @@
-# policy_network.py
+
+# File 1: Update policy_network.py - Make it truly black box
 
 import torch
 import torch.nn as nn
 
-class PolicyRNN(nn.Module):
+class BlackBoxPolicyNetwork(nn.Module):
     """
-    Pure black box LSTM that learns raw price stop/target distances
-    • logits (3-way: HOLD / BUY / SELL)
-    • stop_points  (raw $ distance for stops)
-    • tp_points    (raw $ distance for targets)
+    COMPLETE black box that learns ALL trading decisions:
+    - Action (buy/sell/hold)  
+    - Position size
+    - Whether to use stops/targets
+    - Stop/target levels
+    - Exit timing
     """
-    def __init__(self, obs_size: int = 15, hidden_size: int = 64):
+    
+    def __init__(self, obs_size: int = 15, hidden_size: int = 128):
         super().__init__()
-        self.lstm = nn.LSTM(obs_size, hidden_size, batch_first=True)
-        self.action_head = nn.Linear(hidden_size, 3)
         
-        # Output raw price distances (scaled for MNQ typical ranges)
-        self.stop_head = nn.Linear(hidden_size, 1)   # Will output 0-50 points
-        self.tp_head = nn.Linear(hidden_size, 1)     # Will output 0-50 points
+        # Larger network for complex decisions
+        self.lstm = nn.LSTM(obs_size, hidden_size, batch_first=True)
+        
+        # Decision heads - AI learns EVERYTHING
+        self.action_head = nn.Linear(hidden_size, 3)        # buy/sell/hold
+        self.position_size_head = nn.Linear(hidden_size, 1) # how much to trade
+        self.use_stop_head = nn.Linear(hidden_size, 1)      # whether to use stop
+        self.stop_distance_head = nn.Linear(hidden_size, 1) # stop distance
+        self.use_target_head = nn.Linear(hidden_size, 1)    # whether to use target
+        self.target_distance_head = nn.Linear(hidden_size, 1) # target distance
+        self.exit_confidence_head = nn.Linear(hidden_size, 1) # exit current position?
+        self.overall_confidence_head = nn.Linear(hidden_size, 1) # decision confidence
 
     def forward(self, x):
-        # x shape: (batch, seq_len, obs_size)
         h, _ = self.lstm(x)
-        h_last = h[:, -1]                     # final step
+        h_last = h[:, -1]  # Last timestep
         
-        logits = self.action_head(h_last)
+        # All decisions made by AI
+        action_logits = self.action_head(h_last)
+        position_size = torch.sigmoid(self.position_size_head(h_last))  # 0-1
+        use_stop = torch.sigmoid(self.use_stop_head(h_last))            # 0-1 probability
+        stop_distance = torch.sigmoid(self.stop_distance_head(h_last)) * 0.05  # 0-5% of price
+        use_target = torch.sigmoid(self.use_target_head(h_last))        # 0-1 probability
+        target_distance = torch.sigmoid(self.target_distance_head(h_last)) * 0.10  # 0-10% of price
+        exit_confidence = torch.sigmoid(self.exit_confidence_head(h_last))  # 0-1
+        overall_confidence = torch.sigmoid(self.overall_confidence_head(h_last))  # 0-1
         
-        # Scale outputs to reasonable MNQ ranges
-        # Sigmoid * 50 gives 0-50 point range ($0-$100 for MNQ)
-        stop_points = torch.sigmoid(self.stop_head(h_last)) * 50.0
-        tp_points = torch.sigmoid(self.tp_head(h_last)) * 50.0
-        
-        return logits, stop_points, tp_points
+        return {
+            'action_logits': action_logits,
+            'position_size': position_size,
+            'use_stop': use_stop,
+            'stop_distance': stop_distance,
+            'use_target': use_target,
+            'target_distance': target_distance,
+            'exit_confidence': exit_confidence,
+            'overall_confidence': overall_confidence
+        }

@@ -3,192 +3,176 @@
 from datetime import datetime
 from typing import Dict, Any
 import time
-
-# Black box RL components
-from rl_agent import RLTradingAgent
+import logging
+from rl_agent import BlackBoxRLAgent
 from market_env import MarketEnv
 
-class TradeManagerAI:
+log = logging.getLogger(__name__)
+
+class BlackBoxTradeManager:
     """
-    Pure black box trade manager that delegates ALL decisions to RL agent
-    with intelligent immune system safeguards
+    PURE black box trade manager - AI makes ALL decisions
     """
 
     def __init__(self, intelligence_engine, tcp_bridge):
-        # Existing dependency injection
         self.intel = intelligence_engine
         self.tcp_bridge = tcp_bridge
+        
+        # Pure black box components
+        self.env = MarketEnv()
+        self.black_box_agent = BlackBoxRLAgent()
+        
+        # State tracking
+        self.last_obs = self.env.get_obs()
+        self.last_decision = {}
+        self.current_position = {'in_position': False, 'entry_price': 0, 'entry_time': None}
+        
+        log.info("BLACK BOX Trade Manager initialized - AI controls EVERYTHING")
 
-        # Pure black box RL components
-        self.env = MarketEnv()           # Clean environment, no indicators
-        self.agent = RLTradingAgent()    # Self-learning agent
-
-        # Runtime tracking
-        self._last_obs = self.env.get_obs()
-        self._last_action = 0
-        self._last_action_details = {}
-
-    # ------------------------------------------------------------------
-    # MAIN DECISION LOOP ------------------------------------------------
-    # ------------------------------------------------------------------
     def on_new_bar(self, msg: Dict[str, Any]):
         """
-        Pure black box decision making - no indicators, pure RL
+        PURE BLACK BOX - AI makes all decisions
         """
-        price = msg["price_1m"][-1]
+        price = msg["price_1m"][-1] if msg.get("price_1m") else 4000.0
+        
+        # Update environment
         obs = self.env.get_obs()
+        self.env.step(price, 0)  # Update with current price
         
-        # Get pure RL decision (no indicators involved)
-        action, stop_points, tp_points = self.agent.act(obs)
+        # AI makes COMPLETE decision
+        decision = self.black_box_agent.make_decision(
+            obs, 
+            price, 
+            self.current_position['in_position']
+        )
         
-        # Store details for learning feedback
-        self._last_action_details = {
-            'action': action,
-            'stop_points': stop_points,
-            'tp_points': tp_points,
-            'price': price,
-            'timestamp': time.time()
-        }
+        self.last_decision = decision
+        self.last_obs = obs
         
-        # Update environment state
-        self.env.step(price, action)
-        self._last_obs = obs
-        self._last_action = action
+        # Execute AI's decision
+        self._execute_black_box_decision(decision, price)
+    
+    def _execute_black_box_decision(self, decision: Dict, current_price: float):
+        """Execute the AI's complete decision"""
         
-        # Send signal if RL agent wants to trade
-        if action != MarketEnv.FLAT:
-            action_code = 1 if action == MarketEnv.LONG else 2
+        action = decision['action']
+        confidence = decision['overall_confidence']
+        
+        # Exit current position if AI says so
+        if decision['should_exit'] and self.current_position['in_position']:
+            self.tcp_bridge.send_signal(0, confidence, "AI_exit")
+            log.info(f"BLACK BOX: AI decided to exit (confidence: {confidence:.3f})")
+            self._complete_trade("AI_exit", current_price)
+            return
+        
+        # Enter new position if AI says so
+        if action != 0 and not self.current_position['in_position']:
             
-            # Confidence based on risk management usage
-            confidence = 0.6
-            if stop_points > 0.5:
-                confidence += 0.2  # Bonus for using stops
-            if tp_points > 0.5:
-                confidence += 0.2  # Bonus for using targets
+            # Prepare signal with AI's complete decision
+            action_code = 1 if action == 1 else 2
             
-            # Quality description for logging
-            quality = f"rl_{'long' if action_code==1 else 'short'}"
-            if stop_points > 0.5 and tp_points > 0.5:
-                quality += "_bracket"
-            elif stop_points > 0.5:
-                quality += "_stop"
-            elif tp_points > 0.5:
-                quality += "_target"
-            else:
+            # AI-determined stop/target levels (in points for MNQ)
+            stop_points = 0.0
+            tp_points = 0.0
+            
+            quality = f"AI_{'long' if action==1 else 'short'}"
+            
+            if decision['use_stop'] and decision['stop_price']:
+                stop_points = abs(current_price - decision['stop_price'])
+                quality += f"_stop{decision['stop_distance_pct']:.1f}pct"
+            
+            if decision['use_target'] and decision['target_price']:
+                tp_points = abs(decision['target_price'] - current_price)
+                quality += f"_target{decision['target_distance_pct']:.1f}pct"
+            
+            if not decision['use_stop'] and not decision['use_target']:
                 quality += "_naked"
             
-            # Send to NinjaTrader
+            # Send AI's complete decision to NinjaTrader
             self.tcp_bridge.send_signal(action_code, confidence, quality, stop_points, tp_points)
             
-            print(f"BLACK BOX RL SIGNAL: {quality}")
-            print(f"  Stop: ${stop_points:.2f}, Target: ${tp_points:.2f}, Price: ${price:.2f}")
-
-    # ------------------------------------------------------------------
-    # LEARNING FEEDBACK ------------------------------------------------
-    # ------------------------------------------------------------------
-    def record_trade_outcome(self, exit_price: float, pnl: float, 
-                           exit_reason: str = "unknown", done: bool = True):
-        """
-        Pure black box learning from trade outcomes
-        """
-        next_obs = self.env.get_obs()
+            # Track position
+            self.current_position = {
+                'in_position': True,
+                'entry_price': current_price,
+                'entry_time': datetime.now(),
+                'action': action,
+                'stop_price': decision['stop_price'],
+                'target_price': decision['target_price']
+            }
+            
+            log.info(f"BLACK BOX TRADE: {quality}")
+            log.info(f"  AI Decision: Size={decision['position_size']:.2f}, Conf={confidence:.3f}")
+            log.info(f"  Stop: ${decision['stop_price']:.2f} ({decision['stop_distance_pct']:.1f}%)")
+            log.info(f"  Target: ${decision['target_price']:.2f} ({decision['target_distance_pct']:.1f}%)")
+    
+    def record_trade_outcome(self, exit_price: float, pnl: float, exit_reason: str = "unknown"):
+        """Feed outcome back to black box for learning"""
         
-        # Base reward from raw P&L (no indicator normalization)
-        base_reward = pnl / 100.0  # Normalize by $100 for MNQ scaling
+        if not self.last_decision:
+            return
         
-        # Extract last action details for learning
-        stop_points = self._last_action_details.get('stop_points', 0.0)
-        tp_points = self._last_action_details.get('tp_points', 0.0)
-        used_stop = stop_points > 0.5
-        used_target = tp_points > 0.5
+        # Calculate comprehensive reward for the AI
+        base_reward = pnl / 50.0  # Normalize for MNQ
         
-        # REWARD ENGINEERING - teach optimal stop/target usage
+        # Reward AI for good risk management decisions
         bonus_reward = 0.0
         
-        if exit_reason == "stop_hit":
-            if pnl < 0:
-                # Good stop loss - prevented bigger disaster
-                bonus_reward = +0.5 if used_stop else -0.3
-                print(f"RL LEARN: Stop saved ${abs(pnl):.2f} loss → reward +0.5")
-            else:
-                # Stop too tight - cut a winner
-                bonus_reward = -0.4 if used_stop else 0.0
-                print(f"RL LEARN: Stop cut ${pnl:.2f} winner → penalty -0.4")
-                
-        elif exit_reason == "target_hit":
-            if pnl > 0:
-                # Good target - locked in profit
-                bonus_reward = +0.4 if used_target else -0.2
-                print(f"RL LEARN: Target locked ${pnl:.2f} profit → bonus +0.4")
-            else:
-                # Shouldn't happen but penalize if it does
-                bonus_reward = -0.2
-                
-        elif exit_reason == "intelligence_exit":
-            # Manual exit by intelligence system
-            if not used_stop and pnl < -20.0:
-                # Lost >$20 without stop - bad risk management
-                bonus_reward = -0.6
-                print(f"RL LEARN: Lost ${abs(pnl):.2f} without stop → big penalty -0.6")
-            elif not used_target and pnl > 50.0:
-                # Made >$50 but no target - could have locked profits earlier
-                bonus_reward = -0.3
-                print(f"RL LEARN: Made ${pnl:.2f} but no target → penalty -0.3")
-            elif used_stop and used_target:
-                # Good risk management + intelligence exit
-                bonus_reward = +0.2
-                print(f"RL LEARN: Good risk mgmt + smart exit → bonus +0.2")
-            else:
-                # Neutral manual exit
-                bonus_reward = 0.0
-                
-        elif exit_reason == "session_close":
-            # Time-based exit
-            if used_stop or used_target:
-                bonus_reward = +0.1  # Reward risk management
-            else:
-                bonus_reward = -0.1 if abs(pnl) > 10.0 else 0.0
+        # Reward using stops when they save money
+        if exit_reason == "stop_hit" and pnl > -30:  # Small loss
+            if self.last_decision.get('use_stop', False):
+                bonus_reward += 0.5  # Reward AI for using stops
+                log.info("BLACK BOX LEARNING: +0.5 for using protective stop")
         
-        # Calculate total reward
+        # Reward using targets when they lock profits
+        if exit_reason == "target_hit" and pnl > 0:
+            if self.last_decision.get('use_target', False):
+                bonus_reward += 0.3  # Reward AI for using targets
+                log.info("BLACK BOX LEARNING: +0.3 for using profit target")
+        
+        # Penalize not using stops on big losses
+        if pnl < -50 and not self.last_decision.get('use_stop', False):
+            bonus_reward -= 0.8  # Teach AI to use stops
+            log.info("BLACK BOX LEARNING: -0.8 for not using stop on big loss")
+        
+        # Penalize not using targets on big wins that reverse
+        if exit_reason == "AI_exit" and pnl > 100 and not self.last_decision.get('use_target', False):
+            bonus_reward -= 0.4  # Teach AI to lock profits
+            log.info("BLACK BOX LEARNING: -0.4 for not taking profits")
+        
         total_reward = base_reward + bonus_reward
         
-        # Feed back to RL agent for learning
-        self.agent.store(self._last_obs, self._last_action, total_reward, next_obs, done)
+        # Store experience for learning
+        next_obs = self.env.get_obs()
+        self.black_box_agent.store_experience(
+            self.last_obs,
+            self.last_decision,
+            total_reward,
+            next_obs,
+            True  # Trade completed
+        )
         
-        # Logging for monitoring
-        print(f"RL REWARD BREAKDOWN:")
-        print(f"  P&L: ${pnl:.2f} → Base Reward: {base_reward:.3f}")
-        print(f"  Bonus: {bonus_reward:.3f} → Total: {total_reward:.3f}")
-        print(f"  Exit: {exit_reason}, Stop: ${stop_points:.2f}, Target: ${tp_points:.2f}")
+        log.info(f"BLACK BOX LEARNING: P&L=${pnl:.2f} -> Reward={total_reward:.3f}")
+        log.info(f"  Base: {base_reward:.3f}, Bonus: {bonus_reward:.3f}")
         
-        # Update for next iteration
-        self._last_obs = next_obs
-
-    # ------------------------------------------------------------------
-    # IMMUNE SYSTEM SAFEGUARDS (LEGACY SAFETY NET) ---------------------
-    # ------------------------------------------------------------------
-    def should_exit_now(self, live_prices, live_volumes, entry_time):
-        """
-        Intelligence-based safety net - overrides RL in dangerous situations
-        Keeps the black box from nuking itself while learning
-        """
-        now = datetime.now()
-        duration = (now - entry_time).total_seconds() / 60
-
-        # Get intelligence assessment
-        current_result = self.intel.process_market_data(live_prices, live_volumes, now)
-        signal = current_result['signal_strength']
-        confidence = current_result['confidence']
-        is_dangerous = current_result.get('is_dangerous_pattern', False)
-
-        # Emergency exits
-        if is_dangerous:
-            return True, "immune_system_danger"
-        if confidence < 0.3 and duration > 3:
-            return True, f"low_confidence_{duration:.1f}m"
-        if abs(signal) < 0.1 and duration > 5:
-            return True, f"neutral_signal_{duration:.1f}m"
-        if duration > 20:
-            return True, "max_duration_20m"
-
-        return False, "continue_holding"
+        self.last_obs = next_obs
+    
+    def _complete_trade(self, reason: str, exit_price: float):
+        """Complete trade and calculate outcome"""
+        if not self.current_position['in_position']:
+            return
+        
+        entry_price = self.current_position['entry_price']
+        action = self.current_position['action']
+        
+        # Calculate P&L
+        if action == 1:  # Long
+            pnl = (exit_price - entry_price) * 2.0  # $2 per point for MNQ
+        else:  # Short
+            pnl = (entry_price - exit_price) * 2.0
+        
+        # Feed back to AI for learning
+        self.record_trade_outcome(exit_price, pnl, reason)
+        
+        # Reset position
+        self.current_position = {'in_position': False, 'entry_price': 0, 'entry_time': None}
