@@ -169,94 +169,39 @@ class TradingSystem:
         log.info("ALL SUBSYSTEMS ACTIVE with PERMANENT MEMORY")
     
     def process_raw_market_data(self, data: Dict):
-        """Fixed processing with ENFORCED consensus validation"""
+        """Simplified processing - let black box AI handle everything"""
         try:
-            # Extract raw data
-            price_15m = data.get("price_15m", [])
-            volume_15m = data.get("volume_15m", [])
-            price_5m = data.get("price_5m", [])
-            volume_5m = data.get("volume_5m", [])
+            # Extract data
             price_1m = data.get("price_1m", [])
             volume_1m = data.get("volume_1m", [])
             
-            print(f"=== RAW DATA + ALL SUBSYSTEMS ===")
-            print(f"15m: {len(price_15m)}, 5m: {len(price_5m)}, 1m: {len(price_1m)} bars")
-            
-            # Bootstrap with permanent memory
-            if not self.bootstrap_complete and len(price_5m) >= 100:
-                self.bootstrap_intelligence_from_history(
-                    price_15m, volume_15m, price_5m, volume_5m, price_1m, volume_1m
-                )
-            
-            # Choose data for processing
-            if len(price_1m) >= 50:
-                intel_prices = price_1m[-200:] if len(price_1m) >= 200 else price_1m
-                intel_volumes = volume_1m[-200:] if len(volume_1m) >= 200 else volume_1m
-                timeframe = "1m"
-            elif len(price_5m) >= 20:
-                intel_prices = price_5m[-100:] if len(price_5m) >= 100 else price_5m
-                intel_volumes = volume_5m[-100:] if len(volume_5m) >= 100 else volume_5m
-                timeframe = "5m"
-            else:
-                print("Insufficient data for processing")
+            if not price_1m:
                 return
-
-            # FIX 1: Force DNA sequencing to be active 
-            current_dna = self.intelligence_engine.dna_system.create_dna_sequence(
-                intel_prices, intel_volumes
-            )
             
-            if current_dna:
-                print(f"DNA SEQUENCE: {current_dna[:20]}... (length: {len(current_dna)})")
-                # Save to permanent memory immediately
-                self.intelligence_engine.dna_system.update_pattern_outcome(current_dna, 0.0)
-                self.stats['memory_saves'] += 1
-
-            # Store current price for trade completion
-            if intel_prices:
-                self.current_price = intel_prices[-1]
-
-            # RL agent processing
-            if price_1m:
-                self.trade_manager.on_new_bar(data)
-            
-            # FULL INTELLIGENCE with all subsystems
-            intelligence_result = self.intelligence_engine.process_market_data(
-                intel_prices, intel_volumes, datetime.now()
-            )
-            
-            # FIX 2: ENFORCE consensus validation
-            consensus_result = self.enforce_subsystem_consensus(intelligence_result)
-            
-            # Send signal only if consensus achieved
-            if consensus_result['send_signal']:
-                self.tcp_bridge.send_signal(
-                    consensus_result['action'], 
-                    consensus_result['confidence'], 
-                    consensus_result['quality']
+            # Bootstrap intelligence if needed (keep existing logic)
+            if not self.bootstrap_complete and len(price_1m) >= 100:
+                self.bootstrap_intelligence_from_history(
+                    data.get("price_15m", []), data.get("volume_15m", []),
+                    data.get("price_5m", []), data.get("volume_5m", []),
+                    price_1m, volume_1m
                 )
-                log.info(f"CONSENSUS SIGNAL: {consensus_result['reasoning']}")
-                self.stats['consensus_signals'] += 1
-
-                # Track entry for exits
-                if consensus_result['action'] in [1, 2]:
-                    self.in_trade = True
-                    self.entry_time = datetime.now()
-                    self.entry_prices = intel_prices.copy()
-                    self.entry_volumes = intel_volumes.copy()
-            else:
-                print(f"NO CONSENSUS: {consensus_result['reasoning']}")
+            
+            # Store current price for trade completion
+            if price_1m:
+                self.current_price = price_1m[-1]
+            
+            # BLACK BOX AI handles everything using your subsystems as tools
+            self.trade_manager.on_new_bar(data)
+            
+            # Optional: Print subsystem usage report periodically
+            if self.signal_count % 100 == 0 and self.signal_count > 0:
+                report = self.trade_manager.get_performance_report()
+                print(report)
             
             self.signal_count += 1
-            self.stats['total_signals'] += 1
-            
-            # Update subsystem status
-            self._update_subsystem_status(intelligence_result)
-            
-            print("=== PROCESSING COMPLETE ===\n")
             
         except Exception as e:
-            print(f"ERROR: {e}")
+            log.error(f"Black box processing error: {e}")
             import traceback
             traceback.print_exc()
     
@@ -379,33 +324,15 @@ class TradingSystem:
         self.entry_volumes = []
     
     def on_trade_completed(self, completion_data):
-        """FIX 1: Save trade outcomes to permanent memory"""
+        """Handle trade completion from NinjaTrader"""
         try:
             exit_price = completion_data.get('exit_price', 0)
             exit_reason = completion_data.get('exit_reason', 'unknown')
-            duration_minutes = completion_data.get('duration_minutes', 0)
             
-            # Calculate outcome
-            if exit_reason in ['intelligence_exit', 'signal_reversal']:
-                outcome = 0.005  # Positive for intelligence exits
-            elif exit_reason == 'session_close':
-                outcome = 0.001  # Neutral
-            else:
-                outcome = -0.005  # Negative for other
+            # Complete the trade in trade manager
+            self.trade_manager._complete_trade(exit_reason, exit_price)
             
-            # Feed back to intelligence AND permanent memory
-            self.intelligence_engine.record_trade_outcome(
-                datetime.now(), 
-                outcome,
-                exit_price, 
-                exit_price
-            )
-            
-            # FIX 1: Force save to permanent memory
-            self.stats['memory_saves'] += 1
-            
-            log.info(f"PERMANENT MEMORY: Trade outcome saved - {exit_reason} -> {outcome}")
-            self._complete_trade(exit_reason)
+            log.info(f"Trade completed: {exit_reason} at ${exit_price:.2f}")
             
         except Exception as e:
             log.error(f"Trade completion error: {e}")

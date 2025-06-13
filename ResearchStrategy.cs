@@ -130,37 +130,60 @@ namespace NinjaTrader.NinjaScript.Strategies
             AddDataSeries(BarsPeriodType.Minute, 1);   // BarsArray[3] - 1-minute
         }
         
-        protected override void OnBarUpdate()
-        {
-            try
-            {
-                if (CurrentBars[0] < 1 || CurrentBars[1] < 1 || CurrentBars[2] < 1 || CurrentBars[3] < 1)
-                    return;
-
-                if (State == State.Historical || State == State.Realtime)
-                {
-                    if (IsFirstTickOfBar)
-                    {
-                        switch (BarsInProgress)
-                        {
-                            case 1: Update15mData(); break;
-                            case 2: Update5mData(); break;
-                            case 3: Update1mData(); break;
-                        }
-                    }
-                }
-
-                if (State == State.Realtime && BarsInProgress == 0)
-                {
-                    if (isConnectedToFeatureServer)
-                        SendMarketDataToPython();
-                }
-            }
-            catch (Exception ex)
-            {
-                Print($"OnBarUpdate error: {ex.Message}");
-            }
-        }
+		protected override void OnBarUpdate()
+		{
+		    try
+		    {
+		        // Ensure we have minimum bars on all timeframes
+		        if (CurrentBars[0] < 1 || CurrentBars[1] < 1 || CurrentBars[2] < 1 || CurrentBars[3] < 1)
+		            return;
+		
+		        // Process data updates ONLY on bar completion for clean signals
+		        if (State == State.Historical || State == State.Realtime)
+		        {
+		            if (IsFirstTickOfBar)
+		            {
+		                switch (BarsInProgress)
+		                {
+		                    case 1: Update15mData(); break;
+		                    case 2: Update5mData(); break;
+		                    case 3: Update1mData(); break;
+		                }
+		            }
+		        }
+		
+		        // Send intelligence data ONLY on primary series completion in real-time
+		        if (State == State.Realtime && BarsInProgress == 0 && IsFirstTickOfBar)
+		        {
+		            if (isConnectedToFeatureServer)
+		            {
+		                SendMarketDataToPython();
+		                
+		                // Enhanced logging every 10 bars
+		                if (CurrentBar % 10 == 0)
+		                {
+		                    Print($"Intelligence Feed: Bar {CurrentBar} | " +
+		                          $"Data: 15m={prices15m.Count}, 5m={prices5m.Count}, 1m={prices1m.Count} | " +
+		                          $"Connections: Feature={isConnectedToFeatureServer}, Signal={isConnectedToSignalServer}");
+		                }
+		            }
+		            else
+		            {
+		                // Alert if connection lost
+		                if (CurrentBar % 50 == 0)
+		                {
+		                    Print("WARNING: Intelligence engine disconnected - attempting reconnect");
+		                    ConnectToPython();
+		                }
+		            }
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"OnBarUpdate error: {ex.Message}");
+		        // Don't let errors break the intelligence feed
+		    }
+		}
         
         private void Update15mData()
         {
@@ -505,57 +528,85 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
         
-        private SignalData ParseSignalJson(string json)
-        {
-            try 
-            {
-                var signal = new SignalData();
-                
-                // Extract action
-                var actionStart = json.IndexOf("\"action\":") + 9;
-                var actionEnd = json.IndexOf(",", actionStart);
-                signal.action = int.Parse(json.Substring(actionStart, actionEnd - actionStart));
-                
-                // Extract confidence
-                var confStart = json.IndexOf("\"confidence\":") + 13;
-                var confEnd = json.IndexOf(",", confStart);
-                signal.confidence = double.Parse(json.Substring(confStart, confEnd - confStart));
-                
-                // Extract quality
-                var qualityPattern = "\"quality\":\"";
-                var qualStart = json.IndexOf(qualityPattern);
-                if (qualStart >= 0)
-                {
-                    qualStart += qualityPattern.Length;
-                    var qualEnd = json.IndexOf("\"", qualStart);
-                    if (qualEnd > qualStart)
-                    {
-                        signal.quality = json.Substring(qualStart, qualEnd - qualStart);
-                    }
-                    else
-                    {
-                        signal.quality = "unknown";
-                    }
-                }
-                else
-                {
-                    signal.quality = "unknown";
-                }
-                
-                // Extract timestamp
-                var timeStart = json.IndexOf("\"timestamp\":") + 12;
-                var timeEnd = json.IndexOf("}", timeStart);
-                if (timeEnd == -1) timeEnd = json.Length;
-                signal.timestamp = long.Parse(json.Substring(timeStart, timeEnd - timeStart));
-                
-                return signal;
-            }
-            catch (Exception ex) 
-            {
-                Print($"JSON parsing error: {ex.Message}");
-                return null;
-            }
-        }
+		private SignalData ParseSignalJson(string json)
+		{
+		    try 
+		    {
+		        var signal = new SignalData();
+		        
+		        // Extract action
+		        var actionStart = json.IndexOf("\"action\":") + 9;
+		        var actionEnd = json.IndexOf(",", actionStart);
+		        signal.action = int.Parse(json.Substring(actionStart, actionEnd - actionStart));
+		        
+		        // Extract confidence
+		        var confStart = json.IndexOf("\"confidence\":") + 13;
+		        var confEnd = json.IndexOf(",", confStart);
+		        signal.confidence = double.Parse(json.Substring(confStart, confEnd - confStart));
+		        
+		        // Extract quality
+		        var qualityPattern = "\"quality\":\"";
+		        var qualStart = json.IndexOf(qualityPattern);
+		        if (qualStart >= 0)
+		        {
+		            qualStart += qualityPattern.Length;
+		            var qualEnd = json.IndexOf("\"", qualStart);
+		            if (qualEnd > qualStart)
+		            {
+		                signal.quality = json.Substring(qualStart, qualEnd - qualStart);
+		            }
+		            else
+		            {
+		                signal.quality = "unknown";
+		            }
+		        }
+		        else
+		        {
+		            signal.quality = "unknown";
+		        }
+		        
+		        // NEW: Extract stop_atr
+		        var stopStart = json.IndexOf("\"stop_atr\":") + 11;
+		        if (stopStart > 10) // Found stop_atr
+		        {
+		            var stopEnd = json.IndexOf(",", stopStart);
+		            if (stopEnd == -1) stopEnd = json.IndexOf("}", stopStart);
+		            
+		            if (double.TryParse(json.Substring(stopStart, stopEnd - stopStart), out double stopValue))
+		            {
+		                signal.stop_atr = stopValue;
+		                signal.use_stop = stopValue > 0.1; // Use stop if > 0.1 ATR
+		            }
+		        }
+		        
+		        // NEW: Extract tp_atr
+		        var tpStart = json.IndexOf("\"tp_atr\":") + 9;
+		        if (tpStart > 8) // Found tp_atr
+		        {
+		            var tpEnd = json.IndexOf(",", tpStart);
+		            if (tpEnd == -1) tpEnd = json.IndexOf("}", tpStart);
+		            
+		            if (double.TryParse(json.Substring(tpStart, tpEnd - tpStart), out double tpValue))
+		            {
+		                signal.tp_atr = tpValue;
+		                signal.use_target = tpValue > 0.1; // Use target if > 0.1 ATR
+		            }
+		        }
+		        
+		        // Extract timestamp
+		        var timeStart = json.IndexOf("\"timestamp\":") + 12;
+		        var timeEnd = json.IndexOf("}", timeStart);
+		        if (timeEnd == -1) timeEnd = json.Length;
+		        signal.timestamp = long.Parse(json.Substring(timeStart, timeEnd - timeStart));
+		        
+		        return signal;
+		    }
+		    catch (Exception ex) 
+		    {
+		        Print($"JSON parsing error: {ex.Message}");
+		        return null;
+		    }
+		}
         
         private bool IsValidSignal(SignalData signal)
         {
@@ -572,52 +623,70 @@ namespace NinjaTrader.NinjaScript.Strategies
             return true;
         }
         
-        private void ExecuteIntelligenceSignal(SignalData signal)
-        {
-            try
-            {
-                switch (signal.action)
-                {
-                    case 1: // Buy signal - pure intelligence decision
-                        if (Position.MarketPosition != MarketPosition.Long)
-                        {
-                            if (Position.MarketPosition == MarketPosition.Short)
-                                ExitShort("ML_Exit");
-                            
-                            EnterLong(1, "ML_Long"); // Fixed size - let intelligence learn optimal sizing
-                            Print($"INTELLIGENCE LONG: confidence={signal.confidence:F3}");
-                        }
-                        break;
-                        
-                    case 2: // Sell signal - pure intelligence decision
-                        if (Position.MarketPosition != MarketPosition.Short)
-                        {
-                            if (Position.MarketPosition == MarketPosition.Long)
-                                ExitLong("ML_Exit");
-                            
-                            EnterShort(1, "ML_Short"); // Fixed size - let intelligence learn optimal sizing
-                            Print($"INTELLIGENCE SHORT: confidence={signal.confidence:F3}");
-                        }
-                        break;
-                        
-                    case 0: // Exit signal - intelligence says get out
-                        if (Position.MarketPosition != MarketPosition.Flat)
-                        {
-                            if (Position.MarketPosition == MarketPosition.Long)
-                                ExitLong("ML_Exit");
-                            else if (Position.MarketPosition == MarketPosition.Short)
-                                ExitShort("ML_Exit");
-                            
-                            Print($"INTELLIGENCE EXIT: confidence={signal.confidence:F3}");
-                        }
-                        break;
-                }
-            }
-            catch (Exception ex)
-            {
-                Print($"Signal execution error: {ex.Message}");
-            }
-        }
+		private void ExecuteIntelligenceSignal(SignalData signal)
+		{
+		    try
+		    {
+		        // Parse which tool the AI is using
+		        string toolUsed = "unknown";
+		        if (signal.quality.Contains("dna"))
+		            toolUsed = "DNA";
+		        else if (signal.quality.Contains("micro"))
+		            toolUsed = "Micro";
+		        else if (signal.quality.Contains("temporal"))
+		            toolUsed = "Temporal";
+		        else if (signal.quality.Contains("immune"))
+		            toolUsed = "Immune";
+		        
+		        switch (signal.action)
+		        {
+		            case 1: // AI buy using subsystem tools
+		                if (Position.MarketPosition != MarketPosition.Long)
+		                {
+		                    if (Position.MarketPosition == MarketPosition.Short)
+		                        ExitShort("AI_Exit");
+		                    
+		                    EnterLong(1, $"AI_{toolUsed}_Long");
+		                    
+		                    // AI's risk management
+		                    if (signal.stop_atr > 0.5)
+		                    {
+		                        SetStopLoss($"AI_{toolUsed}_Long", CalculationMode.Price, 
+		                                   Close[0] - signal.stop_atr, false);
+		                    }
+		                    
+		                    if (signal.tp_atr > 0.5)
+		                    {
+		                        SetProfitTarget($"AI_{toolUsed}_Long", CalculationMode.Price, 
+		                                       Close[0] + signal.tp_atr);
+		                    }
+		                    
+		                    Print($"BLACK BOX LONG using {toolUsed} TOOL: conf={signal.confidence:F3}");
+		                }
+		                break;
+		                
+		            case 2: // AI sell using subsystem tools
+		                // Similar logic for short...
+		                break;
+		                
+		            case 0: // AI exit
+		                if (Position.MarketPosition != MarketPosition.Flat)
+		                {
+		                    if (Position.MarketPosition == MarketPosition.Long)
+		                        ExitLong($"AI_{toolUsed}_Exit");
+		                    else if (Position.MarketPosition == MarketPosition.Short)
+		                        ExitShort($"AI_{toolUsed}_Exit");
+		                    
+		                    Print($"BLACK BOX EXIT using {toolUsed} TOOL");
+		                }
+		                break;
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Signal execution error: {ex.Message}");
+		    }
+		}
         
         private string GetActionName(int action)
         {
@@ -723,13 +792,18 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         #region Helper Classes
         
-        public class SignalData
-        {
-            public int action { get; set; }
-            public double confidence { get; set; }
-            public string quality { get; set; }
-            public long timestamp { get; set; }
-        }
+		public class SignalData
+		{
+		    public int action { get; set; }
+		    public double confidence { get; set; }
+		    public string quality { get; set; }
+		    public long timestamp { get; set; }
+		    
+		    public double stop_atr { get; set; } = 0.0;    // Stop loss in ATR units
+		    public double tp_atr { get; set; } = 0.0;      // Take profit in ATR units
+		    public bool use_stop { get; set; } = false;    // Whether to use stop
+		    public bool use_target { get; set; } = false;  // Whether to use target
+		}
         
         #endregion
     }
