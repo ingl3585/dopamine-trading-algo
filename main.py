@@ -1,11 +1,12 @@
-# main.py - SIMPLE VERSION
+# main.py
+
 import sys
 import os
 
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from core.trading_system import TradingSystem
+from trading_system import TradingSystem
 
 def main():
     """Simple main entry point"""

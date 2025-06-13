@@ -1,8 +1,4 @@
 # advanced_market_intelligence.py
-"""
-Advanced Market Intelligence Engine for MNQ Futures Trading
-Multi-layer AI system with permanent memory and continuous learning
-"""
 
 import numpy as np
 import pandas as pd

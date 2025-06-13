@@ -1,4 +1,4 @@
-# communication/tcp_bridge.py
+# tcp_bridge.py
 
 import socket
 import struct
