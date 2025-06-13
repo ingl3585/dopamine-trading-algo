@@ -10,7 +10,7 @@ from datetime import datetime
 from config import ResearchConfig
 from tcp_bridge import TCPBridge
 from advanced_market_intelligence import AdvancedMarketIntelligence
-from trade_manager_ai import TradeManagerAI  # Uses the modified version
+from trade_manager_ai import BlackBoxTradeManagerWithSubsystems
 
 log = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ class TradingSystem:
         self.tcp_bridge.on_trade_completion = self.on_trade_completed
 
         # MODIFIED: Trade manager with black box AI that learns tool usage
-        self.trade_manager = TradeManagerAI(
+        self.trade_manager = BlackBoxTradeManagerWithSubsystems(
             self.intelligence_engine,
             self.tcp_bridge
         )
