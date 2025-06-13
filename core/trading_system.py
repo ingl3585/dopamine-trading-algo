@@ -306,7 +306,7 @@ class TradingSystem:
         return {0: "HOLD", 1: "BUY", 2: "SELL"}.get(action, "UNKNOWN")
     
     def _train_on_historical_data(self, data):
-        """Train using research-aligned feature-based signals - WITH TQDM PROGRESS"""
+        """Train using research-aligned feature-based signals - CLEAN PROGRESS"""
         price_15m = data.get("price_15m", [])
         volume_15m = data.get("volume_15m", [])
         price_5m = data.get("price_5m", [])
@@ -322,9 +322,9 @@ class TradingSystem:
         
         log.info(f"Processing historical data for training...")
         
-        # Create progress bar
+        # Create progress bar for data processing only
         progress_range = range(min_samples, max_length - 5)
-        pbar = tqdm(progress_range, desc="Training", unit="samples", 
+        pbar = tqdm(progress_range, desc="Processing", unit="samples", 
                     bar_format="{desc}: {percentage:3.0f}%|{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]")
         
         # Process historical data for training
@@ -353,9 +353,9 @@ class TradingSystem:
                 self.model.signal_history.append(signal)
                 training_samples += 1
                 
-                # Update progress bar with current stats
+                # Update progress bar postfix occasionally
                 if training_samples % 1000 == 0:
-                    pbar.set_postfix({"Samples": training_samples})
+                    pbar.set_postfix({"Valid": training_samples})
         
         pbar.close()
         
@@ -365,17 +365,10 @@ class TradingSystem:
         log.info(f"Enhanced training completed: {training_samples} samples")
         log.info(f"Signal distribution: {signal_dist}")
         
-        # Train if we have enough samples
+        # Train models with simple logging (no progress bar)
         if training_samples >= self.config.MIN_TRAINING_SAMPLES:
             log.info("Training machine learning models...")
-            # Add progress for model training too
-            with tqdm(total=2, desc="ML Training", unit="model") as model_pbar:
-                model_pbar.set_description("Training Logistic Regression")
-                self.model.train()
-                model_pbar.update(1)
-                model_pbar.set_description("Training Complete")
-                model_pbar.update(1)
-            
+            self.model.train()
             log.info("Enhanced model training completed with 1-minute features")
         else:
             log.warning(f"Insufficient training samples: {training_samples}/{self.config.MIN_TRAINING_SAMPLES}")
