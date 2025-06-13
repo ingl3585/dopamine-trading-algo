@@ -754,13 +754,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 		                }
 		                else if (AllowScaleIn && signal.confidence > 0.75 && Position.Quantity < MaxPositionPieces)
 		                {
-		                    // Simple scale in - only if moving in our favor
-		                    if (Close[0] > Position.AveragePrice * 1.002) // 0.2% favorable
-		                    {
-		                        int scaleSize = Math.Max(1, positionSize / 2);
-		                        EnterLong(scaleSize, "ML_Long_Scale");
-		                        Print($"SCALE IN LONG: size={scaleSize}");
-		                    }
+	                        int scaleSize = Math.Max(1, positionSize / 2);
+	                        EnterLong(scaleSize, "ML_Long_Scale");
+	                        Print($"SCALE IN LONG: size={scaleSize}");
 		                }
 		                break;
 		                
@@ -776,13 +772,9 @@ namespace NinjaTrader.NinjaScript.Strategies
 		                }
 		                else if (AllowScaleIn && signal.confidence > 0.75 && Position.Quantity < MaxPositionPieces)
 		                {
-		                    // Simple scale in - only if moving in our favor
-		                    if (Close[0] < Position.AveragePrice * 0.998) // 0.2% favorable
-		                    {
-		                        int scaleSize = Math.Max(1, positionSize / 2);
-		                        EnterShort(scaleSize, "ML_Short_Scale");
-		                        Print($"SCALE IN SHORT: size={scaleSize}");
-		                    }
+	                        int scaleSize = Math.Max(1, positionSize / 2);
+	                        EnterShort(scaleSize, "ML_Short_Scale");
+	                        Print($"SCALE IN SHORT: size={scaleSize}");
 		                }
 		                break;
 		                
