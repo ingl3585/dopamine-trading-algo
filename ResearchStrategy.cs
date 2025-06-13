@@ -254,44 +254,59 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
-		        // Validate we have enough data on all timeframes before processing
-		        if (CurrentBars[0] < 1 || 
-		            (BarsArray.Length > 1 && CurrentBars[1] < 1) || 
-		            (BarsArray.Length > 2 && CurrentBars[2] < 1) ||
-		            (BarsArray.Length > 3 && CurrentBars[3] < 1))
+		        if (CurrentBars[0] < 1 || CurrentBars[1] < 1 || CurrentBars[2] < 1 || CurrentBars[3] < 1)
+		            return;
+		
+		        if (State == State.Historical || State == State.Realtime)
 		        {
-		            return; // Wait until all timeframes have data
-		        }
-		        
-		        if (State == State.Historical)
-		        {
-		            // Collect data from all timeframes during historical processing
-		            UpdateMarketData();
-		        }
-		        else if (State == State.Realtime)
-		        {
-		            // Only send to Python on primary timeframe updates in real-time
-		            // This ensures all secondary timeframes have updated their latest values
-		            if (BarsInProgress == 0)
+		            if (IsFirstTickOfBar)
 		            {
-		                UpdateMarketData();
-						
-						if (ShowIndicators)
+		                switch (BarsInProgress)
 		                {
-		                    UpdateChartIndicators();
-		                }
-		                
-		                if (isConnectedToFeatureServer)
-		                {
-		                    SendMarketDataToPython();
+		                    case 1: Update15mData(); break;
+		                    case 2: Update5mData(); break;
+		                    case 3: Update1mData(); break;
 		                }
 		            }
+		        }
+		
+		        if (State == State.Realtime && BarsInProgress == 0)
+		        {
+		            if (ShowIndicators)
+		                UpdateChartIndicators();
+		
+		            if (isConnectedToFeatureServer)
+		                SendMarketDataToPython();
 		        }
 		    }
 		    catch (Exception ex)
 		    {
 		        Print($"OnBarUpdate error: {ex.Message}");
 		    }
+		}
+		
+		private void Update15mData()
+		{
+		    prices15m.Add(Closes[1][0]);
+		    volumes15m.Add(Volumes[1][0]);
+		    TrimList(prices15m, 415);
+		    TrimList(volumes15m, 415);
+		}
+		
+		private void Update5mData()
+		{
+		    prices5m.Add(Closes[2][0]);
+		    volumes5m.Add(Volumes[2][0]);
+		    TrimList(prices5m, 1248);
+		    TrimList(volumes5m, 1248);
+		}
+		
+		private void Update1mData()
+		{
+		    prices1m.Add(Closes[3][0]);
+		    volumes1m.Add(Volumes[3][0]);
+		    TrimList(prices1m, 6247);
+		    TrimList(volumes1m, 6247);
 		}
         
 		protected override void OnExecutionUpdate(Execution execution, string executionId, 
@@ -589,69 +604,11 @@ namespace NinjaTrader.NinjaScript.Strategies
         #endregion
         
         #region Data Management
-        
-		private void UpdateMarketData()
+		
+		private void TrimList(List<double> list, int maxCount)
 		{
-		    try
-		    {
-		        // Update 15-minute data
-		        if (BarsArray.Length > 1 && CurrentBars[1] >= 0)
-		        {
-		            double price15m = Closes[1][0];
-		            double volume15m = Volumes[1][0];
-		            
-		            prices15m.Add(price15m);
-		            volumes15m.Add(volume15m);
-		            
-		            if (prices15m.Count > 415)
-		            {
-		                prices15m.RemoveAt(0);
-		                volumes15m.RemoveAt(0);
-		            }
-		        }
-		        
-		        // Update 5-minute data
-		        if (BarsArray.Length > 2 && CurrentBars[2] >= 0)
-		        {
-		            double price5m = Closes[2][0];
-		            double volume5m = Volumes[2][0];
-		            
-		            prices5m.Add(price5m);
-		            volumes5m.Add(volume5m);
-		            
-		            if (prices5m.Count > 1248)
-		            {
-		                prices5m.RemoveAt(0);
-		                volumes5m.RemoveAt(0);
-		            }
-		        }
-		        
-		        // Add 1-minute data collection
-		        if (BarsArray.Length > 3 && CurrentBars[3] >= 0)
-		        {
-		            double price1m = Closes[3][0];
-		            double volume1m = Volumes[3][0];
-		            
-		            prices1m.Add(price1m);
-		            volumes1m.Add(volume1m);
-		            
-		            if (prices1m.Count > 6247)
-		            {
-		                prices1m.RemoveAt(0);
-		                volumes1m.RemoveAt(0);
-		            }
-		        }
-		        
-		        if (CurrentBar % 100 == 0 && State == State.Realtime)
-		        {
-		            // Include 1m data in debug output
-		            Print($"Data: 15m={prices15m.Count}, 5m={prices5m.Count}, 1m={prices1m.Count} bars");
-		        }
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Data update error: {ex.Message}");
-		    }
+		    if (list.Count > maxCount)
+		        list.RemoveAt(0);
 		}
         
         #endregion
