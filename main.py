@@ -56,9 +56,9 @@ def setup_graceful_shutdown(trading_system):
                 print(f"📊 Final report saved: {report_file}")
             
             # Save AI model
-            if hasattr(trading_system.trade_manager, 'black_box_ai'):
+            if hasattr(trading_system.trade_manager, 'agent'):
                 model_path = f"models/final_ai_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pt"
-                trading_system.trade_manager.black_box_ai.save_model(model_path)
+                trading_system.trade_manager.agent.save_model(model_path)
                 print(f"🧠 AI model saved: {model_path}")
             
         except Exception as e:

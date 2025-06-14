@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, Any
 import logging
 import numpy as np
-from black_box_subsystem_ai import BlackBoxSubsystemAI
+from rl_agent import StrategicToolLearningAgent
 from market_env import MarketEnv
 
 log = logging.getLogger(__name__)
@@ -22,7 +22,10 @@ class BlackBoxTradeManagerWithSubsystems:
         self.tcp_bridge = tcp_bridge
         
         # Black box AI that learns to use your subsystems
-        self.black_box_ai = BlackBoxSubsystemAI(intelligence_engine)
+        self.agent = StrategicToolLearningAgent(
+            market_obs_size=15,
+            subsystem_features_size=16
+        )
         
         # Environment for state tracking
         self.env = MarketEnv()
@@ -56,12 +59,12 @@ class BlackBoxTradeManagerWithSubsystems:
             self.env.step(price, 0)
             
             # AI makes complete decision using your subsystems as tools
-            decision = self.black_box_ai.make_complete_decision(
+            decision = self.agent.select_action_and_strategy(
                 market_obs=market_obs,
-                prices=prices,
-                volumes=volumes,
+                subsystem_features=self.extract_subsystem_features(
+                    self.intel.process_market_data(prices, volumes, datetime.now())
+                ),
                 current_price=price,
-                timestamp=datetime.now(),
                 in_position=self.current_position['in_position']
             )
             
@@ -190,12 +193,12 @@ class BlackBoxTradeManagerWithSubsystems:
             next_market_obs = self.env.get_obs()
             next_subsystem_features = self.last_subsystem_features  # Would get fresh in real implementation
             
-            self.black_box_ai.store_experience(
-                self.last_decision,
-                total_reward,
-                next_market_obs,
-                next_subsystem_features,
-                True  # Trade completed
+            self.agent.store_experience(
+                state_data=self.last_decision,
+                reward=total_reward,
+                next_market_obs=next_market_obs,
+                next_subsystem_features=next_subsystem_features,
+                done=True
             )
             
             log.info(f"BLACK BOX LEARNING: P&L=${pnl:.2f} -> Reward={total_reward:.3f}")
@@ -233,6 +236,40 @@ class BlackBoxTradeManagerWithSubsystems:
             'action': 0
         }
 
+    def extract_subsystem_features(self, intelligence_result):
+        """Extract features from existing subsystems"""
+        features = []
+        
+        # DNA system features
+        dna_signal = intelligence_result['subsystem_signals'].get('dna', 0.0)
+        dna_confidence = intelligence_result['subsystem_scores'].get('dna', 0.0)
+        dna_patterns_found = intelligence_result.get('similar_patterns_count', 0) / 10.0
+        dna_sequence_quality = min(intelligence_result.get('dna_sequence_length', 0) / 20.0, 1.0)
+        features.extend([dna_signal, dna_confidence, dna_patterns_found, dna_sequence_quality])
+        
+        # Micro pattern features
+        micro_signal = intelligence_result['subsystem_signals'].get('micro', 0.0)
+        micro_confidence = intelligence_result['subsystem_scores'].get('micro', 0.0)
+        micro_pattern_strength = abs(micro_signal) * micro_confidence
+        micro_pattern_reliability = 1.0 if intelligence_result.get('micro_pattern_id') else 0.0
+        features.extend([micro_signal, micro_confidence, micro_pattern_strength, micro_pattern_reliability])
+        
+        # Temporal features
+        temporal_signal = intelligence_result['subsystem_signals'].get('temporal', 0.0)
+        temporal_confidence = intelligence_result['subsystem_scores'].get('temporal', 0.0)
+        temporal_timing_quality = temporal_confidence
+        temporal_session_relevance = 1.0 if abs(temporal_signal) > 0.1 else 0.0
+        features.extend([temporal_signal, temporal_confidence, temporal_timing_quality, temporal_session_relevance])
+        
+        # Immune system features
+        immune_signal = intelligence_result['subsystem_signals'].get('immune', 0.0)
+        immune_confidence = intelligence_result['subsystem_scores'].get('immune', 0.0)
+        danger_detected = 1.0 if intelligence_result.get('is_dangerous_pattern') else 0.0
+        beneficial_detected = 1.0 if intelligence_result.get('is_beneficial_pattern') else 0.0
+        features.extend([immune_signal, immune_confidence, danger_detected, beneficial_detected])
+        
+        return np.array(features, dtype=np.float32)
+
     def get_performance_report(self) -> str:
         """Get comprehensive performance report"""
-        return self.black_box_ai.get_subsystem_usage_report()
+        return self.agent.get_tool_performance_report()
