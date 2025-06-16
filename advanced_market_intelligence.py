@@ -721,23 +721,37 @@ class AdvancedMarketIntelligence:
         # 1. DNA Sequencing Analysis (FIX: Make this ACTIVE and prominent)
         current_dna = self.dna_system.create_dna_sequence(prices, volumes)
         print(f"DNA ACTIVE: Generated sequence {current_dna[:30]}..." if len(current_dna) > 30 else f"DNA: {current_dna}")
-        
+
+        # ADD THIS DEBUG BLOCK:
+        print(f"DEBUG: Total patterns in memory: {len(self.dna_system.dna_patterns)}")
+        if len(self.dna_system.dna_patterns) > 0:
+            first_pattern = list(self.dna_system.dna_patterns.keys())[0]
+            print(f"DEBUG: First pattern example: {first_pattern}")
+            similarity = self.dna_system.calculate_sequence_similarity(current_dna, first_pattern)
+            print(f"DEBUG: Similarity to first pattern: {similarity:.3f}")
+
         if current_dna and len(current_dna) >= 10:  # Need minimum sequence length
-            similar_patterns = self.dna_system.find_similar_patterns(current_dna, similarity_threshold=0.6)
+            similar_patterns = self.dna_system.find_similar_patterns(current_dna, similarity_threshold=0.3)
+            print(f"DEBUG: Found {len(similar_patterns)} similar patterns with 0.3 threshold")
             
             if similar_patterns:
-                # Weight by confidence and recency
+                # FIXED: Don't require high pattern confidence for initial matching
                 weighted_success = 0.0
                 total_weight = 0.0
                 
                 for pattern in similar_patterns[:5]:  # Top 5 similar patterns
-                    weight = pattern.confidence * min(pattern.occurrences / 10, 1.0)
-                    weighted_success += (pattern.success_rate - 0.5) * weight  # Center around 0
+                    # FIXED: Use base weight even for new patterns
+                    base_weight = 0.2  # Minimum weight for any pattern
+                    pattern_weight = max(base_weight, pattern.confidence)
+                    weight = pattern_weight * min(pattern.occurrences / 10, 1.0)
+                    
+                    weighted_success += (pattern.success_rate - 0.5) * weight
                     total_weight += weight
                 
                 if total_weight > 0:
                     dna_signal = weighted_success / total_weight
-                    dna_confidence = min(total_weight / 3, 1.0)  # Max confidence with 3+ weighted patterns
+                    # FIXED: Base confidence on number of similar patterns found
+                    dna_confidence = min(len(similar_patterns) / 10, 1.0)  # 10+ patterns = max confidence
                     
                     print(f"DNA MATCH: {len(similar_patterns)} patterns, signal: {dna_signal:.3f}, conf: {dna_confidence:.3f}")
                 else:

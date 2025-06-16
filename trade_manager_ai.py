@@ -133,7 +133,7 @@ class BlackBoxTradeManagerWithSubsystems:
             log.info(f"BLACK BOX TRADE using {tool_name.upper()} tool:")
             log.info(f"  Direction: {direction}")
             log.info(f"  Confidence: {confidence:.3f}")
-            log.info(f"  Position Size: {decision['position_size']:.2f}")
+            log.info(f"  Position Size: {decision.get('position_size', 1.0):.2f}")
             if decision['use_stop']:
                 log.info(f"  Stop: ${decision['stop_price']:.2f} ({decision['stop_distance_pct']:.1f}%)")
             if decision['use_target']:
