@@ -1,6 +1,7 @@
 # main.py - Enhanced with Advanced Position Management
 
 import logging
+import os
 import signal
 import sys
 import time
@@ -91,25 +92,10 @@ def print_system_status(trading_system):
         print(f"   Best Trade: ${stats['best_trade']:.2f}")
         print(f"   Worst Trade: ${stats['worst_trade']:.2f}")
         
-        # Learning progression
-        trades = stats['total_trades']
-        thresholds = trading_system.trade_manager.learning_thresholds
-        
-        print(f"🎓 AI Learning Progress:")
-        active_features = []
-        next_unlock = None
-        
-        for feature, threshold in thresholds.items():
-            if trades >= threshold:
-                active_features.append(feature.replace('_', ' ').title())
-            elif next_unlock is None:
-                next_unlock = (feature.replace('_', ' ').title(), threshold - trades)
-        
-        if active_features:
-            print(f"   Active: {', '.join(active_features)}")
-        
-        if next_unlock:
-            print(f"   Next: {next_unlock[0]} in {next_unlock[1]} trades")
+        # AI Learning Status (no artificial thresholds - AI learns everything from scratch)
+        print(f"🎓 AI Learning Status:")
+        print(f"   All Features Active: Entry/Exit, Scaling, Partial Exits, Risk Management")
+        print(f"   Learning Mode: Pure discovery - no training wheels")
         
         # Position AI status
         if trading_system.trade_manager.position_ai.current_position:
@@ -185,6 +171,12 @@ def main():
         print_startup_banner()
         
         print("🚀 Initializing Enhanced Black Box AI Trading System...")
+        
+        # Ensure all required directories exist
+        required_dirs = ['patterns', 'data', 'models', 'logs', 'reports', 'experience']
+        for directory in required_dirs:
+            os.makedirs(directory, exist_ok=True)
+        print(f"✅ Created/verified directories: {', '.join(required_dirs)}")
         
         # Initialize trading system
         global trading_system

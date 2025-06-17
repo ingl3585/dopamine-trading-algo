@@ -71,10 +71,10 @@ class StrategicToolLearningAgent:
         self.step_count = 0
         self.learning_started = False
         
-        # Exploration parameters
+        # Exploration parameters - FIXED: Slower decay for more tool exploration
         self.epsilon = 1.0
-        self.epsilon_decay = 0.9995
-        self.epsilon_min = 0.1
+        self.epsilon_decay = 0.999  # Slower decay
+        self.epsilon_min = 0.3      # Higher minimum for continued exploration
         
         # Performance metrics
         self.recent_rewards = deque(maxlen=100)
@@ -145,11 +145,18 @@ class StrategicToolLearningAgent:
                 else:  # Short
                     target_price = current_price * (1 - target_distance)
             
-            # Determine primary and secondary tools
+            # Determine primary and secondary tools - FIXED: Add exploration to tool selection
             tool_names = ['dna', 'micro', 'temporal', 'immune']
-            tool_ranking = sorted(enumerate(tool_trust), key=lambda x: x[1], reverse=True)
-            primary_tool = tool_names[tool_ranking[0][0]]
-            secondary_tool = tool_names[tool_ranking[1][0]] if len(tool_ranking) > 1 else None
+            
+            # Add exploration to tool selection even during exploitation
+            if random.random() < 0.2:  # 20% chance to explore different tools
+                primary_tool = random.choice(tool_names)
+                tool_ranking = sorted(enumerate(tool_trust), key=lambda x: x[1], reverse=True)
+                secondary_tool = tool_names[tool_ranking[0][0]] if tool_names[tool_ranking[0][0]] != primary_tool else tool_names[tool_ranking[1][0]]
+            else:
+                tool_ranking = sorted(enumerate(tool_trust), key=lambda x: x[1], reverse=True)
+                primary_tool = tool_names[tool_ranking[0][0]]
+                secondary_tool = tool_names[tool_ranking[1][0]] if len(tool_ranking) > 1 else None
             
             # Market regime interpretation
             regime_names = ['trending', 'volatile', 'sideways', 'reversal']
@@ -262,7 +269,7 @@ class StrategicToolLearningAgent:
         """Start background learning thread"""
         def learning_loop():
             while True:
-                if len(self.experience_buffer) < 500:
+                if len(self.experience_buffer) < 50:  # FIXED: Start learning much earlier
                     time.sleep(1)
                     continue
                 

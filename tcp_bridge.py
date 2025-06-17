@@ -47,15 +47,27 @@ class TCPBridge:
         
         # Accept connections when start() is called
         try:
+            # Set socket timeout to avoid hanging indefinitely
+            self._feat_srv.settimeout(30.0)  # 30 second timeout
+            self._sig_srv.settimeout(30.0)
+            
             self.fsock, feat_addr = self._feat_srv.accept()
             log.info(f"Feature connection established from {feat_addr}")
             
             self.ssock, sig_addr = self._sig_srv.accept()
             log.info(f"Signal connection established from {sig_addr}")
             
+            # Remove timeout once connected
+            self.fsock.settimeout(None)
+            self.ssock.settimeout(None)
+            
             self.connected = True
             log.info("NinjaTrader connected successfully - AI learning active")
             
+        except socket.timeout:
+            log.error("Connection timeout - NinjaTrader not responding")
+            self.connected = False
+            raise ConnectionError("NinjaTrader connection timeout")
         except Exception as e:
             log.error(f"Connection establishment failed: {e}")
             self.connected = False
