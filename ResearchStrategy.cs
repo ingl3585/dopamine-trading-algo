@@ -36,7 +36,9 @@ namespace NinjaTrader.NinjaScript.Strategies
         private DateTime lastConnectionAttempt;
         private DateTime lastTradeEntry;
         private int tradeIdCounter = 0;
-        private string currentTradeId = "";
+		private Dictionary<string, double> positionSizes = new Dictionary<string, double>();
+		private string currentTradeId = "";
+		private double basePositionSize = 1.0;
         
         // Connection status
         private bool isConnectedToFeatureServer;
@@ -505,28 +507,94 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         #region Signal Processing
         
-        private void ProcessSignal(string signalJson)
-        {
-            try
-            {
-                var signal = ParseSignalJson(signalJson);
-                if (signal == null) return;
-                
-                if (!IsValidSignal(signal)) return;
-                
-                signalCount++;
-                
-                Print($"Intelligence Signal #{signalCount}: Action={GetActionName(signal.action)}, " +
-                      $"Confidence={signal.confidence:F3}, Quality={signal.quality}");
-                
-                // Pure execution - no overrides, no hardcoded rules
-                ExecuteIntelligenceSignal(signal);
-            }
-            catch (Exception ex)
-            {
-                Print($"Signal processing error: {ex.Message}");
-            }
-        }
+		private void ProcessSignal(string signalJson)
+		{
+		    var signal = ParseSignalJson(signalJson);
+		    if (signal == null) return;
+		    
+		    string quality = signal.quality ?? "unknown";
+		    
+		    // Check for scaling signals
+		    if (quality.Contains("scale_"))
+		    {
+		        HandleScalingSignal(signal, quality);
+		        return;
+		    }
+		    
+		    // Check for exit signals
+		    if (quality.Contains("exit_"))
+		    {
+		        HandleExitSignal(signal, quality);
+		        return;
+		    }
+		    
+		    // Regular entry signals
+		    ExecuteIntelligenceSignal(signal);
+		}
+		
+		private void HandleScalingSignal(SignalData signal, string quality)
+		{
+		    if (Position.MarketPosition == MarketPosition.Flat) return;
+		    
+		    double scaleAmount = 0.0;
+		    if (quality.Contains("scale_25%"))
+		        scaleAmount = 0.25;
+		    else if (quality.Contains("scale_50%"))
+		        scaleAmount = 0.5;
+		    
+		    if (scaleAmount > 0)
+		    {
+		        int scaleSize = (int)(basePositionSize * scaleAmount);
+		        
+		        if (Position.MarketPosition == MarketPosition.Long)
+		        {
+		            EnterLong(scaleSize, "AI_Scale_Long");
+		        }
+		        else if (Position.MarketPosition == MarketPosition.Short)
+		        {
+		            EnterShort(scaleSize, "AI_Scale_Short");
+		        }
+		        
+		        Print($"SCALING: Added {scaleSize} contracts ({scaleAmount:P0})");
+		    }
+		}
+		
+		private void HandleExitSignal(SignalData signal, string quality)
+		{
+		    if (Position.MarketPosition == MarketPosition.Flat) return;
+		    
+		    double exitAmount = 0.0;
+		    if (quality.Contains("exit_25%"))
+		        exitAmount = 0.25;
+		    else if (quality.Contains("exit_50%"))
+		        exitAmount = 0.5;
+		    else if (quality.Contains("exit_100%") || quality.Contains("exit_full"))
+		        exitAmount = 1.0;
+		    
+		    if (exitAmount > 0)
+		    {
+		        if (exitAmount >= 1.0)
+		        {
+		            // Full exit
+		            if (Position.MarketPosition == MarketPosition.Long)
+		                ExitLong("AI_Exit_Full");
+		            else
+		                ExitShort("AI_Exit_Full");
+		        }
+		        else
+		        {
+		            // Partial exit
+		            int exitSize = (int)(Math.Abs(Position.Quantity) * exitAmount);
+		            
+		            if (Position.MarketPosition == MarketPosition.Long)
+		                ExitLong(exitSize, "AI_Exit_Partial");
+		            else
+		                ExitShort(exitSize, "AI_Exit_Partial");
+		        }
+		        
+		        Print($"AI EXIT: {exitAmount:P0} of position");
+		    }
+		}
         
 		private SignalData ParseSignalJson(string json)
 		{
@@ -565,31 +633,57 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            signal.quality = "unknown";
 		        }
 		        
-		        // NEW: Extract stop_atr
-		        var stopStart = json.IndexOf("\"stop_atr\":") + 11;
-		        if (stopStart > 10) // Found stop_atr
+		        // Extract use_stop boolean
+		        var useStopStart = json.IndexOf("\"use_stop\":") + 11;
+		        if (useStopStart > 10)
 		        {
-		            var stopEnd = json.IndexOf(",", stopStart);
-		            if (stopEnd == -1) stopEnd = json.IndexOf("}", stopStart);
+		            var useStopEnd = json.IndexOf(",", useStopStart);
+		            if (useStopEnd == -1) useStopEnd = json.IndexOf("}", useStopStart);
 		            
-		            if (double.TryParse(json.Substring(stopStart, stopEnd - stopStart), out double stopValue))
+		            string useStopStr = json.Substring(useStopStart, useStopEnd - useStopStart).Trim();
+		            signal.use_stop = useStopStr.ToLower() == "true";
+		        }
+		        
+		        // Extract stop_price (only if use_stop is true)
+		        if (signal.use_stop)
+		        {
+		            var stopStart = json.IndexOf("\"stop_price\":") + 13;
+		            if (stopStart > 12)
 		            {
-		                signal.stop_atr = stopValue;
-		                signal.use_stop = stopValue > 0.1; // Use stop if > 0.1 ATR
+		                var stopEnd = json.IndexOf(",", stopStart);
+		                if (stopEnd == -1) stopEnd = json.IndexOf("}", stopStart);
+		                
+		                if (double.TryParse(json.Substring(stopStart, stopEnd - stopStart), out double stopValue))
+		                {
+		                    signal.stop_price = stopValue;
+		                }
 		            }
 		        }
 		        
-		        // NEW: Extract tp_atr
-		        var tpStart = json.IndexOf("\"tp_atr\":") + 9;
-		        if (tpStart > 8) // Found tp_atr
+		        // Extract use_target boolean
+		        var useTargetStart = json.IndexOf("\"use_target\":") + 13;
+		        if (useTargetStart > 12)
 		        {
-		            var tpEnd = json.IndexOf(",", tpStart);
-		            if (tpEnd == -1) tpEnd = json.IndexOf("}", tpStart);
+		            var useTargetEnd = json.IndexOf(",", useTargetStart);
+		            if (useTargetEnd == -1) useTargetEnd = json.IndexOf("}", useTargetStart);
 		            
-		            if (double.TryParse(json.Substring(tpStart, tpEnd - tpStart), out double tpValue))
+		            string useTargetStr = json.Substring(useTargetStart, useTargetEnd - useTargetStart).Trim();
+		            signal.use_target = useTargetStr.ToLower() == "true";
+		        }
+		        
+		        // Extract target_price (only if use_target is true)
+		        if (signal.use_target)
+		        {
+		            var targetStart = json.IndexOf("\"target_price\":") + 15;
+		            if (targetStart > 14)
 		            {
-		                signal.tp_atr = tpValue;
-		                signal.use_target = tpValue > 0.1; // Use target if > 0.1 ATR
+		                var targetEnd = json.IndexOf(",", targetStart);
+		                if (targetEnd == -1) targetEnd = json.IndexOf("}", targetStart);
+		                
+		                if (double.TryParse(json.Substring(targetStart, targetEnd - targetStart), out double targetValue))
+		                {
+		                    signal.target_price = targetValue;
+		                }
 		            }
 		        }
 		        
@@ -627,6 +721,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 		{
 		    try
 		    {
+		        if (!IsValidSignal(signal)) return;
+		        
+		        signalCount++;
+		        
 		        // Parse which tool the AI is using
 		        string toolUsed = "unknown";
 		        if (signal.quality.Contains("dna"))
@@ -646,27 +744,70 @@ namespace NinjaTrader.NinjaScript.Strategies
 		                    if (Position.MarketPosition == MarketPosition.Short)
 		                        ExitShort("AI_Exit");
 		                    
-		                    EnterLong(1, $"AI_{toolUsed}_Long");
+		                    string longOrderName = $"AI_{toolUsed}_Long";
+		                    EnterLong(1, longOrderName);
 		                    
-		                    // AI's risk management
-		                    if (signal.stop_atr > 0.5)
+		                    // AI's LEARNED risk management - only if AI wants to use it
+		                    if (signal.use_stop && signal.stop_price > 0)
 		                    {
-		                        SetStopLoss($"AI_{toolUsed}_Long", CalculationMode.Price, 
-		                                   Close[0] - signal.stop_atr, false);
+		                        SetStopLoss(longOrderName, CalculationMode.Price, signal.stop_price, false);
+		                        Print($"  AI Stop Loss: ${signal.stop_price:F2}");
+		                    }
+		                    else
+		                    {
+		                        Print("  AI chose NO stop loss");
 		                    }
 		                    
-		                    if (signal.tp_atr > 0.5)
+		                    if (signal.use_target && signal.target_price > 0)
 		                    {
-		                        SetProfitTarget($"AI_{toolUsed}_Long", CalculationMode.Price, 
-		                                       Close[0] + signal.tp_atr);
+		                        SetProfitTarget(longOrderName, CalculationMode.Price, signal.target_price);
+		                        Print($"  AI Take Profit: ${signal.target_price:F2}");
+		                    }
+		                    else
+		                    {
+		                        Print("  AI chose NO take profit target");
 		                    }
 		                    
+		                    Print($"Intelligence Signal #{signalCount}: Action={GetActionName(signal.action)}, " +
+		                          $"Confidence={signal.confidence:F3}, Quality={signal.quality ?? "unknown"}");
 		                    Print($"BLACK BOX LONG using {toolUsed} TOOL: conf={signal.confidence:F3}");
 		                }
 		                break;
 		                
 		            case 2: // AI sell using subsystem tools
-		                // Similar logic for short...
+		                if (Position.MarketPosition != MarketPosition.Short)
+		                {
+		                    if (Position.MarketPosition == MarketPosition.Long)
+		                        ExitLong("AI_Exit");
+		                    
+		                    string shortOrderName = $"AI_{toolUsed}_Short";
+		                    EnterShort(1, shortOrderName);
+		                    
+		                    // AI's LEARNED risk management - only if AI wants to use it
+		                    if (signal.use_stop && signal.stop_price > 0)
+		                    {
+		                        SetStopLoss(shortOrderName, CalculationMode.Price, signal.stop_price, false);
+		                        Print($"  AI Stop Loss: ${signal.stop_price:F2}");
+		                    }
+		                    else
+		                    {
+		                        Print("  AI chose NO stop loss");
+		                    }
+		                    
+		                    if (signal.use_target && signal.target_price > 0)
+		                    {
+		                        SetProfitTarget(shortOrderName, CalculationMode.Price, signal.target_price);
+		                        Print($"  AI Take Profit: ${signal.target_price:F2}");
+		                    }
+		                    else
+		                    {
+		                        Print("  AI chose NO take profit target");
+		                    }
+		                    
+		                    Print($"Intelligence Signal #{signalCount}: Action={GetActionName(signal.action)}, " +
+		                          $"Confidence={signal.confidence:F3}, Quality={signal.quality ?? "unknown"}");
+		                    Print($"BLACK BOX SHORT using {toolUsed} TOOL: conf={signal.confidence:F3}");
+		                }
 		                break;
 		                
 		            case 0: // AI exit
@@ -677,6 +818,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		                    else if (Position.MarketPosition == MarketPosition.Short)
 		                        ExitShort($"AI_{toolUsed}_Exit");
 		                    
+		                    Print($"Intelligence Signal #{signalCount}: Action={GetActionName(signal.action)}, " +
+		                          $"Confidence={signal.confidence:F3}, Quality={signal.quality ?? "unknown"}");
 		                    Print($"BLACK BOX EXIT using {toolUsed} TOOL");
 		                }
 		                break;
@@ -799,10 +942,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    public string quality { get; set; }
 		    public long timestamp { get; set; }
 		    
-		    public double stop_atr { get; set; } = 0.0;    // Stop loss in ATR units
-		    public double tp_atr { get; set; } = 0.0;      // Take profit in ATR units
-		    public bool use_stop { get; set; } = false;    // Whether to use stop
-		    public bool use_target { get; set; } = false;  // Whether to use target
+		    // AI sends actual prices it wants, not ATR units
+		    public double stop_price { get; set; } = 0.0;      // Actual stop loss price
+		    public double target_price { get; set; } = 0.0;    // Actual take profit price
+		    public bool use_stop { get; set; } = false;        // Whether AI wants to use stop
+		    public bool use_target { get; set; } = false;      // Whether AI wants to use target
 		}
         
         #endregion

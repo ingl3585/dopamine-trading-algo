@@ -156,7 +156,7 @@ class StrategicToolLearningAgent:
             market_regime_name = regime_names[np.argmax(market_regime)]
             
             # Should exit current position?
-            should_exit = in_position and (exit_confidence > 0.7)
+            should_exit = in_position and (exit_confidence > 0.3)
             
             # Generate reasoning
             reasoning = self._generate_reasoning(primary_tool, secondary_tool, market_regime_name, 
@@ -206,9 +206,9 @@ class StrategicToolLearningAgent:
         reasoning_parts.append(f"Market regime: {regime}")
         
         # Confidence interpretation
-        if confidence > 0.8:
+        if confidence > 0.5:
             reasoning_parts.append("High confidence decision")
-        elif confidence > 0.6:
+        elif confidence > 0.3:
             reasoning_parts.append("Moderate confidence")
         else:
             reasoning_parts.append("Low confidence - cautious approach")
