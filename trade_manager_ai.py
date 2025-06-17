@@ -328,7 +328,7 @@ class WisdomEnhancedConfidenceLearner:
         
         return base_tip
 
-class BlackBoxTradeManagerWithSubsystems:
+class StrategicRLTradeManager:
     """
     Enhanced trade manager with black box AI and wisdom-enhanced confidence learning
     """
