@@ -86,7 +86,7 @@ class TemporalPattern:
 class PermanentMemoryDB:
     """SQLite-based permanent memory system"""
     
-    def __init__(self, db_path: str = "market_intelligence.db"):
+    def __init__(self, db_path: str = "data/market_intelligence.db"):
         self.db_path = db_path
         self.init_database()
     
@@ -691,7 +691,7 @@ class MetaLearningDirector:
 class AdvancedMarketIntelligence:
     """Main Market Intelligence Engine"""
     
-    def __init__(self, db_path: str = "market_intelligence.db"):
+    def __init__(self, db_path: str = "data/market_intelligence.db"):
         self.memory_db = PermanentMemoryDB(db_path)
         
         # Initialize subsystems

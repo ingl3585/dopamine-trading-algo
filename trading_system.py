@@ -27,13 +27,13 @@ class PureBlackBoxTradingSystem:
     - Complete self-optimization through experience
     """
 
-    def __init__(self, meta_db_path: str = "meta_parameters.db"):
+    def __init__(self, meta_db_path: str = "data/meta_parameters.db"):
         # Enhanced logging for meta-learning
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             handlers=[
-                logging.FileHandler('pure_blackbox.log'),
+                logging.FileHandler('logs/pure_blackbox.log'),
                 logging.StreamHandler()
             ]
         )

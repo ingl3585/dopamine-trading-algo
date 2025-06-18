@@ -14,7 +14,7 @@ class AdaptiveConfig:
     NO STATIC VALUES - everything learned from trading outcomes
     """
     
-    def __init__(self, db_path: str = "meta_parameters.db"):
+    def __init__(self, db_path: str = "data/meta_parameters.db"):
         # Initialize meta-learner
         self.meta_learner = PureMetaLearner(db_path)
         
@@ -239,7 +239,7 @@ No hardcoded thresholds - everything learned from trading outcomes.
         return self.meta_learner
 
 # Factory function for creating adaptive config
-def create_adaptive_config(db_path: str = "meta_parameters.db") -> AdaptiveConfig:
+def create_adaptive_config(db_path: str = "data/meta_parameters.db") -> AdaptiveConfig:
     """Create adaptive configuration system"""
     config = AdaptiveConfig(db_path)
     

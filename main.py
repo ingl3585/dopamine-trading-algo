@@ -191,12 +191,12 @@ def run_system_diagnostics():
         # Test database connections
         print("5. Testing Persistent Memory...")
         import os
-        if os.path.exists("meta_parameters.db"):
+        if os.path.exists("data/meta_parameters.db"):
             print("   ✅ Meta-parameter database found - will resume learning")
         else:
             print("   📝 Fresh start - will create new learning database")
         
-        if os.path.exists("market_intelligence.db"):
+        if os.path.exists("data/market_intelligence.db"):
             print("   ✅ Intelligence database found - patterns preserved")
         else:
             print("   📝 Fresh intelligence - will discover new patterns")
