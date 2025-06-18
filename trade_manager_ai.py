@@ -235,7 +235,7 @@ class PureBlackBoxSignalGenerator:
             }
         }
         
-        log.info("PURE BLACK BOX Signal Generator initialized")
+        log.info("Signal generator initialized")
         log.info("NO position tracking - pure signal generation only")
 
     def on_new_bar(self, msg: Dict[str, Any]):
@@ -334,11 +334,11 @@ class PureBlackBoxSignalGenerator:
         if decision.get('use_target'):
             self.signal_stats['adaptive_features_used']['dynamic_targets'] += 1
         
-        log.info(f"🎯 CLEAN SIGNAL #{self.signal_counter}: {tool_name.upper()} {['EXIT', 'BUY', 'SELL'][action]}")
-        log.info(f"   Confidence: {confidence:.3f}")
-        log.info(f"   AI Position Size: {ai_position_size:.2f}")
-        log.info(f"   AI Stop: ${decision.get('stop_price', 0):.2f}" if decision.get('use_stop') else "   No AI Stop")
-        log.info(f"   AI Target: ${decision.get('target_price', 0):.2f}" if decision.get('use_target') else "   No AI Target")
+        log.info(f"Signal #{self.signal_counter}: {tool_name.upper()} {['EXIT', 'BUY', 'SELL'][action]}")
+        log.info(f"Confidence: {confidence:.3f}")
+        log.info(f"AI Position Size: {ai_position_size:.2f}")
+        log.info(f"AI Stop: ${decision.get('stop_price', 0):.2f}" if decision.get('use_stop') else "   No AI Stop")
+        log.info(f"AI Target: ${decision.get('target_price', 0):.2f}" if decision.get('use_target') else "   No AI Target")
         
         # Clean up old pending signals
         self._cleanup_old_pending_signals()
@@ -420,11 +420,11 @@ class PureBlackBoxSignalGenerator:
             
             self.signal_stats['total_pnl_from_signals'] += final_pnl
             
-            log.info(f"🎓 SIGNAL OUTCOME LEARNED:")
-            log.info(f"   P&L: ${final_pnl:.2f}")
-            log.info(f"   Tool: {trade_outcome['primary_tool'].upper()}")
-            log.info(f"   Exit: {exit_reason}")
-            log.info(f"   Duration: {duration_minutes}min")
+            log.info(f"Signal Outcome Learned:")
+            log.info(f"P&L: ${final_pnl:.2f}")
+            log.info(f"Tool: {trade_outcome['primary_tool'].upper()}")
+            log.info(f"Exit: {exit_reason}")
+            log.info(f"Duration: {duration_minutes}min")
             
             # Mark as processed
             matching_signal['outcome_received'] = True

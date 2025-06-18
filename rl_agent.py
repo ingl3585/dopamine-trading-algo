@@ -294,10 +294,6 @@ class PureBlackBoxStrategicAgent:
         
         # Background learning
         self._start_adaptive_learning()
-        
-        log.info("PURE BLACK BOX AGENT: All parameters will self-optimize")
-        log.info("Network architecture will evolve based on performance")
-        log.info("Reward structure will discover what actually drives success")
     
     def _update_optimizers(self):
         """Update optimizers with current meta-learned learning rates"""
@@ -711,12 +707,7 @@ def create_pure_blackbox_agent(market_obs_size: int = 15, subsystem_features_siz
     """Create pure black box agent with meta-learning"""
     
     agent = PureBlackBoxStrategicAgent(market_obs_size, subsystem_features_size)
-    
-    log.info("PURE BLACK BOX AGENT CREATED")
-    log.info("All parameters will adapt through experience")
-    log.info("Network will evolve its own architecture")
-    log.info("Reward structure will discover success patterns")
-    
+
     return agent
 
 # Usage test
