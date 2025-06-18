@@ -172,13 +172,13 @@ def run_system_diagnostics():
         
         # Test adaptive config
         print("2. Testing Adaptive Configuration...")
-        from adaptive_config import create_adaptive_config
+        from config import create_adaptive_config
         config = create_adaptive_config()
         print(f"   ✅ Adaptive config ready - position size: {config.PRODUCTION_PHASE_SIZE:.3f}")
         
         # Test pure black box agent
         print("3. Testing Pure Black Box Agent...")
-        from pure_blackbox_rl_agent import create_pure_blackbox_agent
+        from rl_agent import create_pure_blackbox_agent
         agent = create_pure_blackbox_agent()
         print(f"   ✅ Agent ready - network rebuilds supported")
         
