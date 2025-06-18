@@ -107,7 +107,7 @@ class PureMetaLearner:
     No hardcoded values - everything learned from experience
     """
     
-    def __init__(self, db_path: str = "meta_parameters.db"):
+    def __init__(self, db_path: str = "data/meta_parameters.db"):
         self.db = MetaParameterDatabase(db_path)
         
         # Load existing parameters or initialize defaults
