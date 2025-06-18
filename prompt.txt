@@ -1,0 +1,51 @@
+Can you help me build a fully autonomous, self-evolving black-box trading algorithm specifically for MNQ futures? The architecture should be centered around a reinforcement learning (RL) agent that dynamically adapts to market conditions without any hardcoded logic, thresholds, or fixed decision rules.
+
+The agent must learn to manage:
+
+Trade entries and exits (buy, sell, hold decisions)
+
+Position sizing based on account/margin data
+
+Whether to apply stop losses and/or take profit targets — or avoid them entirely
+
+The use and weighting of various subsystems ("tools") like DNA sequencing, micro-patterns, temporal cycles, and immune memory to interpret the market
+
+Each subsystem should act as an independent signal generator, and the RL agent should evaluate and assign adaptive weights to these tools in real-time depending on their observed performance in the current environment. These weights, as well as every other parameter (e.g. risk thresholds, confidence gates, learning rates), should be meta-learned from experience.
+
+Python will handle:
+
+All AI/ML/RL components, including meta-learning, adaptive reward shaping, and self-evolving neural architectures
+
+Subsystem orchestration and learning progress tracking
+
+Real-time decision generation, learning from execution outcomes
+
+NinjaTrader will handle:
+
+Execution of trades and order management
+
+Real-time market data feeds across multiple timeframes (15m, 5m, 1m)
+
+Account and margin data collection
+
+Trade outcome reporting back to the Python system
+
+Communication between Python and NinjaTrader must occur over TCP using two channels: one for feature/memory transfer and one for signals. The system already includes the ResearchStrategy NinjaScript for this, and a TCPBridge in Python for signal and data transport, including position size control.
+
+This system must:
+
+Continuously learn and evolve through actual trade outcomes
+
+Maintain no static thresholds for trading or risk management
+
+Use a self-evolving neural network architecture (e.g. attention + LSTM) that rebuilds itself if performance drops
+
+Manage all reward design through an adaptive reward engine that discovers what success looks like (P&L, drawdown, hold time, tool effectiveness, etc.)
+
+Log only what’s necessary — avoid log spam
+
+Be able to start fresh or resume from a saved meta-parameter and model state
+
+Support fully autonomous operation after startup — no manual intervention required
+
+This should be a true black-box system. It should start with minimal assumptions, bootstrap pattern memory from neutral sequences, and grow more sophisticated entirely through experience.
