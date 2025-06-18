@@ -83,7 +83,7 @@ class PureBlackBoxTradingSystem:
         # Background meta-learning monitor
         self._start_meta_learning_monitor()
 
-        log.info("Pure Black Box Trading System initialized")
+        log.info("Trading system initialized")
         
         # Display initial adaptive configuration
         self._log_initial_adaptive_state()
@@ -103,7 +103,7 @@ class PureBlackBoxTradingSystem:
 
             # Log adaptive signal details
             if stop_price > 0 or target_price > 0:
-                log.info(f"Adaptive Signal: AI chose stop=${stop_price:.2f}, target=${target_price:.2f}")
+                log.info(f"Adaptive signal: AI chose stop=${stop_price:.2f}, target=${target_price:.2f}")
 
             return original_send_signal(action, confidence, quality, stop_price, target_price, position_size)
 
@@ -171,7 +171,7 @@ class PureBlackBoxTradingSystem:
         
         # Setup graceful shutdown
         def signal_handler(signum, frame):
-            log.info("Shutdown signal received - saving all adaptive learning...")
+            log.info("Shutdown signal received - saving all adaptive learning")
             self.shutdown_and_save()
             sys.exit(0)
         
@@ -181,7 +181,7 @@ class PureBlackBoxTradingSystem:
         try:
             self.tcp_bridge.start()
             
-            log.info("Pure Black Box AI Trading System started")
+            log.info("Trading system started")
             log.info("Press Ctrl+C to stop and save learned knowledge")
             
             # Main run loop - pure black box operation
@@ -331,9 +331,9 @@ class PureBlackBoxTradingSystem:
                 self.learning_milestones.append(milestone_key)
                 self.adaptive_stats['learning_efficiency_improvements'] += 1
                 
-                log.info(f"Adaption Milestone Achieved: {description}")
-                log.info(f"Total Parameter Updates: {updates}")
-                log.info(f"Network Architecture Changes: {self.trade_manager.agent.network_rebuilds}")
+                log.info(f"Adaption milestone achieved: {description}")
+                log.info(f"Total parameter updates: {updates}")
+                log.info(f"Network architecture changes: {self.trade_manager.agent.network_rebuilds}")
                 
                 # Force save at milestones
                 self._save_all_learning_progress()
@@ -356,22 +356,22 @@ class PureBlackBoxTradingSystem:
     def _log_adaptation_progress(self):
         """Log detailed adaptation progress"""
         
-        log.info("Adaption Progress Report:")
-        log.info(f"System Uptime: {datetime.now() - self.system_start_time}")
-        log.info(f"Market Updates: {self.adaptive_stats['total_market_updates']}")
-        log.info(f"Meta-Parameter Updates: {self.meta_learner.total_updates}")
-        log.info(f"Network Rebuilds: {self.trade_manager.agent.network_rebuilds}")
-        log.info(f"Learning Efficiency: {self.meta_learner.get_learning_efficiency():.3f}")
+        log.info("Adaption progress report:")
+        log.info(f"System uptime: {datetime.now() - self.system_start_time}")
+        log.info(f"Market updates: {self.adaptive_stats['total_market_updates']}")
+        log.info(f"Meta parameter updates: {self.meta_learner.total_updates}")
+        log.info(f"Network rebuilds: {self.trade_manager.agent.network_rebuilds}")
+        log.info(f"Learning efficiency: {self.meta_learner.get_learning_efficiency():.3f}")
         
         # Current adaptive state
         current_phase = self.trade_manager.safety_manager.current_phase
-        log.info(f"Current Learning Phase: {current_phase}")
+        log.info(f"Current learning phase: {current_phase}")
         
         # Adaptation effectiveness
         total_trades = self.trade_manager.trade_stats['total_trades']
         if total_trades > 0:
             win_rate = self.trade_manager.trade_stats['winning_trades'] / total_trades
-            log.info(f"Win Rate: {win_rate:.1%} (from pure learning)")
+            log.info(f"Win rate: {win_rate:.1%}")
     
     def _save_all_learning_progress(self):
         """Save all forms of learning progress"""
@@ -391,7 +391,7 @@ class PureBlackBoxTradingSystem:
             knowledge_file = f"data/adaptive_blackbox_knowledge_{timestamp}.json"
             self.intelligence_engine.export_knowledge_base(knowledge_file)
             
-            log.info(f"AUTO-SAVE: All adaptive learning progress saved")
+            log.info(f"All adaptive learning progress saved")
             log.debug(f"Knowledge exported to {knowledge_file}")
             
         except Exception as e:
@@ -407,7 +407,7 @@ class PureBlackBoxTradingSystem:
             # Feed to adaptive trade manager
             self.trade_manager._complete_adaptive_trade(exit_reason, exit_price)
             
-            log.info(f"Adaption Completion: {exit_reason} at ${exit_price:.2f}")
+            log.info(f"Adaption completion: {exit_reason} at ${exit_price:.2f}")
             log.info("AI learning from this outcome for future parameter adaptation")
             
             self.adaptive_stats['successful_adaptations'] += 1
@@ -418,7 +418,7 @@ class PureBlackBoxTradingSystem:
     
     def shutdown_and_save(self):
         """Comprehensive shutdown with complete learning preservation"""
-        log.info("Shutdown: Preserving all adaptive learning...")
+        log.info("Shutdown: Preserving all adaptive learning")
         
         shutdown_start = datetime.now()
         
@@ -430,7 +430,7 @@ class PureBlackBoxTradingSystem:
         
         # Force save all learning - CRITICAL
         try:
-            log.info("Saving all adaptive parameters and learning progress...")
+            log.info("Saving all adaptive parameters and learning progress")
             
             # Save meta-learning parameters
             self.meta_learner.force_save()
@@ -447,7 +447,7 @@ class PureBlackBoxTradingSystem:
             final_knowledge_file = f"patterns/final_adaptive_state_{timestamp}.json"
             self.intelligence_engine.export_knowledge_base(final_knowledge_file)
             
-            log.info(f"Save Complete: All learning preserved")
+            log.info(f"Save complete: All learning preserved")
             log.info(f"Final knowledge state: {final_knowledge_file}")
             
         except Exception as e:
@@ -464,42 +464,42 @@ class PureBlackBoxTradingSystem:
         session_duration = datetime.now() - self.system_start_time
         shutdown_duration = datetime.now() - shutdown_start
         
-        log.info(f"Session Statistics:")
+        log.info(f"Session statistics:")
         log.info(f"Duration: {session_duration}")
-        log.info(f"Market Updates: {self.adaptive_stats['total_market_updates']}")
-        log.info(f"Parameter Updates: {self.meta_learner.total_updates}")
-        log.info(f"Network Rebuilds: {self.trade_manager.agent.network_rebuilds}")
+        log.info(f"Market updates: {self.adaptive_stats['total_market_updates']}")
+        log.info(f"Parameter updates: {self.meta_learner.total_updates}")
+        log.info(f"Network rebuilds: {self.trade_manager.agent.network_rebuilds}")
         
         # Trading performance
         trades = self.trade_manager.trade_stats['total_trades']
         if trades > 0:
             win_rate = self.trade_manager.trade_stats['winning_trades'] / trades
             total_pnl = self.trade_manager.trade_stats['total_pnl']
-            log.info(f"Total Trades: {trades}")
-            log.info(f"Win Rate: {win_rate:.1%}")
+            log.info(f"Total trades: {trades}")
+            log.info(f"Win rate: {win_rate:.1%}")
             log.info(f"Total P&L: ${total_pnl:.2f}")
         
         # Meta-learning achievements
         log.info(f"Achievements:")
-        log.info(f"Successful Adaptations: {self.adaptive_stats['successful_adaptations']}")
-        log.info(f"Failed Adaptations: {self.adaptive_stats['failed_adaptations']}")
-        log.info(f"Learning Milestones: {len(self.learning_milestones)}")
+        log.info(f"Successful adaptations: {self.adaptive_stats['successful_adaptations']}")
+        log.info(f"Failed adaptations: {self.adaptive_stats['failed_adaptations']}")
+        log.info(f"Learning milestones: {len(self.learning_milestones)}")
         
         # Current adaptive state
         risk_params = self.meta_learner.get_risk_parameters()
         confidence_thresholds = self.meta_learner.get_confidence_thresholds()
         
-        log.info(f"Final Adaptive Parameters:")
-        log.info(f"Position Size: {risk_params['position_size_base']:.3f}")
-        log.info(f"Entry Threshold: {confidence_thresholds['entry']:.3f}")
-        log.info(f"Daily Loss Limit: {risk_params['max_daily_loss_pct']:.1%}")
-        log.info(f"Learning Phase: {self.trade_manager.safety_manager.current_phase}")
+        log.info(f"Final adaptive parameters:")
+        log.info(f"Position size: {risk_params['position_size_base']:.3f}")
+        log.info(f"Entry threshold: {confidence_thresholds['entry']:.3f}")
+        log.info(f"Daily loss limit: {risk_params['max_daily_loss_pct']:.1%}")
+        log.info(f"Learning phase: {self.trade_manager.safety_manager.current_phase}")
         
         # Tool discovery
         tool_stats = self.trade_manager.trade_stats['tool_discoveries']
         total_experiments = sum(tool_stats.values())
         if total_experiments > 0:
-            log.info(f"Tool Discovery Results:")
+            log.info(f"Tool discovery results:")
             for tool, count in tool_stats.items():
                 if count > 0:
                     pct = (count / total_experiments) * 100
@@ -507,20 +507,17 @@ class PureBlackBoxTradingSystem:
         
         # Intelligence patterns discovered
         dna_patterns = len(self.intelligence_engine.dna_system.dna_patterns)
-        log.info(f"Pattern Discoveries:")
-        log.info(f"DNA Sequences: {dna_patterns}")
-        log.info(f"Micro Patterns: {len(self.intelligence_engine.micro_system.patterns)}")
+        log.info(f"Pattern discoveries:")
+        log.info(f"DNA sequences: {dna_patterns}")
+        log.info(f"Micro patterns: {len(self.intelligence_engine.micro_system.patterns)}")
 
-        log.info(f"Shutdown Time: {shutdown_duration}")
-        log.info(f"All Learning Preserved: YES")
+        log.info(f"Shutdown time: {shutdown_duration}")
 
 # Factory function for easy initialization
 def create_pure_blackbox_system(meta_db_path: str = "data/meta_parameters.db") -> PureBlackBoxTradingSystem:
     """Create a complete pure black box trading system"""
     
     system = PureBlackBoxTradingSystem(meta_db_path)
-    
-    log.info("Pure black box system created")
     
     return system
 

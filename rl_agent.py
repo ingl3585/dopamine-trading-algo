@@ -102,8 +102,7 @@ class SelfEvolvingPolicyNetwork(torch.nn.Module):
         # Value estimation for learning
         self.value_head = self._create_adaptive_head(decision_input_size, 1, "value")
         
-        log.info(f"NETWORK EVOLUTION: Built architecture with {self.hidden_size} hidden, "
-               f"{self.lstm_layers} LSTM layers, {arch['attention_layers']} attention heads")
+        log.info(f"Built architecture with {self.hidden_size} hidden, {self.lstm_layers} LSTM layers, {arch['attention_layers']} attention heads")
     
     def _create_adaptive_head(self, input_size: int, output_size: int, head_type: str):
         """Create decision head with adaptive complexity"""
@@ -202,7 +201,7 @@ class SelfEvolvingPolicyNetwork(torch.nn.Module):
             performance_decline = older_perf - recent_perf
             
             if performance_decline > self.rebuild_threshold:
-                log.info(f"ARCHITECTURE EVOLUTION: Performance declined by {performance_decline:.3f}")
+                log.info(f"Performance declined by {performance_decline:.3f}")
                 log.info(f"Recent: {recent_perf:.3f}, Older: {older_perf:.3f}")
                 
                 # Update architecture parameters to trigger rebuild
@@ -223,7 +222,7 @@ class SelfEvolvingPolicyNetwork(torch.nn.Module):
                 old_hidden = self.hidden_size
                 self._build_network()
                 
-                log.info(f"NETWORK EVOLVED: {evolution_direction} architecture")
+                log.info(f"Network evolved: {evolution_direction} architecture")
                 log.info(f"Hidden size: {old_hidden} → {self.hidden_size}")
                 log.info(f"Complexity: {current_complexity:.2f} → {new_complexity:.2f}")
                 
@@ -583,7 +582,7 @@ class PureBlackBoxStrategicAgent:
         
         thread = threading.Thread(target=adaptive_learning_loop, daemon=True, name="AdaptiveLearning")
         thread.start()
-        log.info("ADAPTIVE LEARNING: Background thread started")
+        log.info("Adaptive learning background thread started")
     
     def _adaptive_learning_step(self):
         """Adaptive learning step with meta-learned parameters"""
@@ -622,7 +621,7 @@ class PureBlackBoxStrategicAgent:
         # Log progress occasionally
         if self.step_count % 100 == 0:
             avg_reward = torch.mean(rewards).item()
-            log.info(f"ADAPTIVE LEARNING: Step {self.step_count}, Avg reward: {avg_reward:.3f}, "
+            log.info(f"Adaptive learning: Step {self.step_count}, Avg reward: {avg_reward:.3f}, "
                    f"Epsilon: {self.epsilon:.3f}, Network rebuilds: {self.network_rebuilds}")
     
     def get_pure_blackbox_status(self) -> str:
@@ -700,7 +699,7 @@ Reward structure discovering what actually drives success!
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         torch.save(checkpoint, f"models/pure_blackbox_agent_{timestamp}.pt")
         
-        log.info("PURE BLACK BOX: All learning progress saved")
+        log.info("All learning progress saved")
 
 # Factory function for creating pure black box agent
 def create_pure_blackbox_agent(market_obs_size: int = 15, subsystem_features_size: int = 16) -> PureBlackBoxStrategicAgent:

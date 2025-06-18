@@ -42,7 +42,7 @@ class TCPBridge:
         self._sig_srv.bind((self.TCP_HOST, self.SIGNAL_PORT))
         self._sig_srv.listen(1)
 
-        log.info(f"Enhanced TCP Bridge initialized on {self.TCP_HOST}:{self.FEATURE_PORT} (features) and {self.TCP_HOST}:{self.SIGNAL_PORT} (signals)")
+        log.info(f"TCP bridge initialized on {self.TCP_HOST}:{self.FEATURE_PORT} (features) and {self.TCP_HOST}:{self.SIGNAL_PORT} (signals)")
         log.info("AI will determine optimal position sizing through learning")
 
     def start(self):
@@ -66,7 +66,7 @@ class TCPBridge:
             self.ssock.settimeout(None)
             
             self.connected = True
-            log.info("NinjaTrader connected successfully - AI position sizing active")
+            log.info("NinjaTrader connected successfully")
             
         except socket.timeout:
             log.error("Connection timeout - NinjaTrader not responding")
@@ -80,11 +80,11 @@ class TCPBridge:
         # Start reader thread after connections established
         self.running = True
         threading.Thread(target=self._reader, daemon=True, name="TCPReader").start()
-        log.info("Enhanced TCP reader thread started")
+        log.info("TCP reader thread started")
 
     def _reader(self):
         """Enhanced reader for market data and trade completions from NinjaTrader"""
-        log.info("Enhanced TCP receive loop started - monitoring AI learning...")
+        log.info("TCP receive loop started - monitoring AI learning...")
         
         while self.running:
             try:
@@ -137,7 +137,7 @@ class TCPBridge:
                 self.connected = False
                 break
         
-        log.info("Enhanced TCP receive loop stopped")
+        log.info("TCP receive loop stopped")
 
     def send_signal(self, action: int, confidence: float, quality: str,
                    stop_price: float = 0.0, target_price: float = 0.0, 
@@ -265,8 +265,8 @@ class TCPBridge:
             self.ssock.sendall(header + data)
             
             self.signals_sent += 1
-            log.info(f"AI Position Management #{self.signals_sent}: {action_type} (conf: {confidence:.3f}, amount: {amount:.2f})")
-            log.info(f"AI Reasoning: {reasoning}")
+            log.info(f"AI position management #{self.signals_sent}: {action_type} (conf: {confidence:.3f}, amount: {amount:.2f})")
+            log.info(f"AI reasoning: {reasoning}")
             
             return True
             
@@ -294,7 +294,7 @@ class TCPBridge:
 
     def stop(self):
         """Enhanced stop with cleanup reporting"""
-        log.info("Stopping Enhanced TCP Bridge...")
+        log.info("Stopping TCP bridge...")
         
         # Send any final signals if needed
         if self.connected and self.signals_sent > 0:
@@ -317,10 +317,10 @@ class TCPBridge:
             except Exception as e:
                 log.warning(f"Error closing {name} socket: {e}")
         
-        log.info(f"Enhanced TCP Bridge stopped - {connections_closed} connections closed")
+        log.info(f"TCP bridge stopped - {connections_closed} connections closed")
         
         if self.signals_sent > 0:
-            log.info(f"Session Summary: {self.signals_sent} AI signals sent with adaptive position sizing")
+            log.info(f"Session summary: {self.signals_sent} AI signals sent with adaptive position sizing")
             log.info("AI learning data preserved for next session")
 
     # Utility methods for AI learning

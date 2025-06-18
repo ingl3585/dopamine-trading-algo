@@ -620,7 +620,7 @@ class MetaLearningDirector:
     
     def update_weights(self, subsystem_signals: Dict[str, float], outcome: float):
         """Update subsystem weights based on learned signal effectiveness"""
-        log.info(f"[MetaLearning] Updating weights with outcome: {outcome:.5f}")
+        log.info(f"Updating weights with outcome: {outcome:.5f}")
 
         # Calculate total signal energy to scale learning naturally
         signal_magnitude = sum(abs(s) for s in subsystem_signals.values()) or 1.0
@@ -648,8 +648,7 @@ class MetaLearningDirector:
             for system in self.subsystem_weights:
                 self.subsystem_weights[system] /= total_weight
 
-        log.info("[MetaLearning] Subsystem weights updated: " +
-                ", ".join(f"{k.upper()}={v:.3f}" for k, v in self.subsystem_weights.items()))
+        log.info("Subsystem weights updated: " + ", ".join(f"{k.upper()}={v:.3f}" for k, v in self.subsystem_weights.items()))
     
     def record_disagreement(self, signals: Dict[str, float], scores: Dict[str, float]):
         """Record patterns when subsystems disagree"""
@@ -703,7 +702,6 @@ class AdvancedMarketIntelligence:
         self.signal_history = deque(maxlen=1000)
         self.trade_outcomes = deque(maxlen=500)
         
-        log.info("Advanced Market Intelligence Engine initialized")
         log.info(f"Loaded {len(self.dna_system.dna_patterns)} DNA patterns from memory")
     
     def process_market_data(self, prices: List[float], volumes: List[float], 

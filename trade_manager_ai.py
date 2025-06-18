@@ -39,8 +39,6 @@ class AdaptiveSafetyManager:
             'development': [], 
             'production': []
         }
-        
-        log.info("ADAPTIVE SAFETY: All limits will adapt based on actual loss experience")
     
     def can_generate_signal(self) -> bool:
         """Adaptive signal generation permission - NO position checks"""
@@ -92,7 +90,7 @@ class AdaptiveSafetyManager:
             max_signals_today = int(base_max_signals * performance_factor * frequency_multiplier)
             
             if self.signals_today >= max_signals_today:
-                log.info(f"ADAPTIVE SIGNAL LIMIT: {self.signals_today} >= {max_signals_today}")
+                log.info(f"Adaptive signal limit: {self.signals_today} >= {max_signals_today}")
                 return False
         
         return True
@@ -145,18 +143,18 @@ class AdaptiveSafetyManager:
         if self.current_phase == 'exploration':
             if readiness_score > 0.4 and avg_pnl > 5:
                 self.current_phase = 'development'
-                log.info(f"ADAPTIVE PROGRESSION: Advanced to development phase (readiness: {readiness_score:.2f})")
+                log.info(f"Adaptive progression: Advanced to development phase (readiness: {readiness_score:.2f})")
                 self.meta_learner.update_parameter('position_size_base', 0.2)
         
         elif self.current_phase == 'development':
             if readiness_score > 0.6 and avg_pnl > 10 and win_rate > 0.5:
                 self.current_phase = 'production'
-                log.info(f"ADAPTIVE PROGRESSION: Advanced to production phase (readiness: {readiness_score:.2f})")
+                log.info(f"Adaptive progression: Advanced to production phase (readiness: {readiness_score:.2f})")
                 self.meta_learner.update_parameter('position_size_base', 0.3)
             
             elif readiness_score < 0.2 and avg_pnl < -10:
                 self.current_phase = 'exploration'
-                log.warning(f"ADAPTIVE REGRESSION: Dropped to exploration phase (readiness: {readiness_score:.2f})")
+                log.warning(f"Adaptive regression: Dropped to exploration phase (readiness: {readiness_score:.2f})")
                 self.meta_learner.update_parameter('position_size_base', -0.3)
         
         elif self.current_phase == 'production':
@@ -236,7 +234,6 @@ class PureBlackBoxSignalGenerator:
         }
         
         log.info("Signal generator initialized")
-        log.info("NO position tracking - pure signal generation only")
 
     def on_new_bar(self, msg: Dict[str, Any]):
         """Pure black box signal generation with complete adaptation"""
@@ -336,9 +333,9 @@ class PureBlackBoxSignalGenerator:
         
         log.info(f"Signal #{self.signal_counter}: {tool_name.upper()} {['EXIT', 'BUY', 'SELL'][action]}")
         log.info(f"Confidence: {confidence:.3f}")
-        log.info(f"AI Position Size: {ai_position_size:.2f}")
-        log.info(f"AI Stop: ${decision.get('stop_price', 0):.2f}" if decision.get('use_stop') else "   No AI Stop")
-        log.info(f"AI Target: ${decision.get('target_price', 0):.2f}" if decision.get('use_target') else "   No AI Target")
+        log.info(f"AI position size: {ai_position_size:.2f}")
+        log.info(f"AI stop: ${decision.get('stop_price', 0):.2f}" if decision.get('use_stop') else "   No AI Stop")
+        log.info(f"AI target: ${decision.get('target_price', 0):.2f}" if decision.get('use_target') else "   No AI Target")
         
         # Clean up old pending signals
         self._cleanup_old_pending_signals()
@@ -420,7 +417,7 @@ class PureBlackBoxSignalGenerator:
             
             self.signal_stats['total_pnl_from_signals'] += final_pnl
             
-            log.info(f"Signal Outcome Learned:")
+            log.info(f"Signal outcome learned:")
             log.info(f"P&L: ${final_pnl:.2f}")
             log.info(f"Tool: {trade_outcome['primary_tool'].upper()}")
             log.info(f"Exit: {exit_reason}")
@@ -528,17 +525,13 @@ All execution and risk management handled by NinjaTrader!
     def force_save_all_adaptive_learning(self):
         """Force save all adaptive learning"""
         self.agent.force_save_all_learning()
-        log.info("PURE SIGNAL GENERATOR: All meta-learning progress saved")
+        log.info("All progress saved")
 
 # Factory function
 def create_pure_blackbox_trade_manager(intelligence_engine, tcp_bridge, config):
     """Create pure black box signal generator"""
     
     manager = PureBlackBoxSignalGenerator(intelligence_engine, tcp_bridge, config)
-    
-    log.info("PURE BLACK BOX SIGNAL GENERATOR CREATED")
-    log.info("NO position tracking - clean signal generation only")
-    log.info("All position management delegated to NinjaTrader")
     
     return manager
 

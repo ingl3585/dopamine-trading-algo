@@ -180,7 +180,6 @@ class PureMetaLearner:
         # Background saving
         self._start_background_saver()
         
-        log.info("PURE META-LEARNER: Initialized with zero hardcoded knowledge")
         log.info(f"Managing {len(self.parameters)} adaptive parameters")
         self._log_parameter_summary()
     
@@ -257,7 +256,7 @@ class PureMetaLearner:
                     
                     # Log significant changes
                     if abs(correlation) > 0.2 and abs(old_value - self.parameters[name]) > old_value * 0.01:
-                        log.info(f"META-LEARNING: {name} {old_value:.6f} → {self.parameters[name]:.6f} "
+                        log.info(f"Meta learning: {name} {old_value:.6f} → {self.parameters[name]:.6f} "
                                f"(grad: {correlation:.4f}, outcome: {outcome:.4f})")
                         
             except Exception as e:
@@ -352,14 +351,14 @@ class PureMetaLearner:
                 change_pct = abs(recent_update['new_value'] - recent_update['old_value']) / recent_update['old_value']
                 
                 if change_pct > 0.1:  # 10% change triggers rebuild
-                    log.info(f"ARCHITECTURE REBUILD: {param} changed by {change_pct:.1%}")
+                    log.info(f"Arch rebuild: {param} changed by {change_pct:.1%}")
                     return True
         
         return False
     
     def _log_parameter_summary(self):
         """Log current parameter state"""
-        log.info("Current Meta-Parameters:")
+        log.info("Current meta parameters:")
         
         # Group parameters by category
         categories = {
@@ -407,12 +406,12 @@ class PureMetaLearner:
                 
                 self.db.save_meta_parameter(name, value, gradient, outcome_values, bounds)
         
-        log.debug(f"META-LEARNER: Saved {len(self.parameters)} parameters to database")
+        log.debug(f"Saved {len(self.parameters)} parameters to database")
     
     def force_save(self):
         """Force immediate save of all parameters"""
         self._save_all_parameters()
-        log.info("META-LEARNER: Forced save completed")
+        log.info("Forced save completed")
     
     def get_adaptation_report(self) -> str:
         """Generate detailed adaptation report"""
@@ -641,7 +640,7 @@ class AdaptiveRewardLearner:
                             
                             # Log significant changes
                             if abs(correlation) > 0.3 and abs(weight_update) > 0.01:
-                                log.info(f"REWARD LEARNING: {component_name} weight "
+                                log.info(f"Reward learning: {component_name} weight "
                                        f"{old_weight:.3f} → {self.reward_components[component_name]['weight']:.3f} "
                                        f"(correlation: {correlation:.3f})")
                     

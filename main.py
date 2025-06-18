@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 
 def handle_shutdown(signum, frame):
     """Clean shutdown handler"""
-    log.info("Shutdown signal received - preserving learning state")
+    log.info("Shutdown signal received")
     if 'trading_system' in globals():
         try:
             trading_system.meta_learner.force_save()
@@ -84,8 +84,8 @@ if __name__ == "__main__":
         sys.exit(0)
 
     if run_system_diagnostics():
-        log.info("Starting Pure Black Box AI System...")
+        log.info("Starting AI system")
         main()
     else:
-        print("Startup aborted due to failed diagnostics.")
+        print("Startup aborted due to failed diagnostics")
         sys.exit(1)
