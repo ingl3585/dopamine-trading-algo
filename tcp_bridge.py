@@ -1,4 +1,4 @@
-# tcp_bridge.py - UPDATED: Added position_size parameter support
+# FIXED tcp_bridge.py - Enhanced correlation and account data handling
 
 import socket
 import struct
@@ -11,7 +11,7 @@ from typing import Callable, Optional, Dict
 log = logging.getLogger(__name__)
 
 class TCPBridge:
-    """Enhanced TCP communication bridge with NinjaTrader - AI position sizing support"""
+    """FIXED: Enhanced TCP communication bridge with better learning correlation"""
     
     def __init__(self, config):
         self.config = config
@@ -27,11 +27,12 @@ class TCPBridge:
         self.on_market_data: Optional[Callable] = None
         self.on_trade_completion: Optional[Callable] = None
         
-        # Signal tracking for learning
+        # FIXED: Enhanced signal tracking for better correlation
         self.signals_sent = 0
         self.last_signal_time = 0
+        self.sent_signals_log = []  # Track sent signals for correlation
         
-        # Initialize sockets but don't accept yet
+        # Initialize sockets
         self._feat_srv = socket.socket()
         self._feat_srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._feat_srv.bind((self.TCP_HOST, self.FEATURE_PORT))
@@ -43,16 +44,15 @@ class TCPBridge:
         self._sig_srv.listen(1)
 
         log.info(f"TCP bridge initialized on {self.TCP_HOST}:{self.FEATURE_PORT} (features) and {self.TCP_HOST}:{self.SIGNAL_PORT} (signals)")
-        log.info("AI will determine optimal position sizing through learning")
+        log.info("Enhanced learning correlation system active")
 
     def start(self):
         """Start TCP server and wait for connections"""
         log.info("Waiting for NinjaTrader connection...")
         
-        # Accept connections when start() is called
         try:
             # Set socket timeout to avoid hanging indefinitely
-            self._feat_srv.settimeout(30.0)  # 30 second timeout
+            self._feat_srv.settimeout(30.0)
             self._sig_srv.settimeout(30.0)
             
             self.fsock, feat_addr = self._feat_srv.accept()
@@ -66,7 +66,7 @@ class TCPBridge:
             self.ssock.settimeout(None)
             
             self.connected = True
-            log.info("NinjaTrader connected successfully")
+            log.info("NinjaTrader connected successfully - learning correlation active")
             
         except socket.timeout:
             log.error("Connection timeout - NinjaTrader not responding")
@@ -80,7 +80,7 @@ class TCPBridge:
         # Start reader thread after connections established
         self.running = True
         threading.Thread(target=self._reader, daemon=True, name="TCPReader").start()
-        log.info("TCP reader thread started")
+        log.info("TCP reader thread started with enhanced correlation")
 
     def _reader(self):
         """Enhanced reader for market data and trade completions from NinjaTrader"""
@@ -113,16 +113,21 @@ class TCPBridge:
                     
                     # Handle different message types
                     if message.get('type') == 'trade_completion':
-                        # Trade completion for AI learning
+                        # ENHANCED: Include signal timestamp for proper learning correlation
                         if self.on_trade_completion:
+                            # Add signal correlation timestamp if missing
+                            if 'signal_timestamp' not in message and self.last_signal_time > 0:
+                                message['signal_timestamp'] = self.last_signal_time
+                            
                             self.on_trade_completion(message)
-                            log.info(f"Trade completion received: {message.get('trade_id', 'unknown')} - "
-                                   f"P&L: ${message.get('final_pnl', 0):.2f}, "
-                                   f"Size: {message.get('position_size', 0):.2f}")
+                            log.info(f"Trade completion learned: {message.get('trade_id', 'unknown')} - "
+                                f"P&L: ${message.get('final_pnl', 0):.2f}")
                     
                     elif "price_15m" in message:
-                        # Regular market data
+                        # Regular market data - enhanced with signal correlation
                         if self.on_market_data:
+                            # Add timing info for signal correlation
+                            message['receive_timestamp'] = time.time()
                             self.on_market_data(message)
                     
                     else:
@@ -143,15 +148,7 @@ class TCPBridge:
                 stop_price: float = 0.0, target_price: float = 0.0, 
                 position_size: float = 1.0, meta_learner=None):
         """
-        Send AI trading signal with AI-calculated position size and risk management
-        
-        Args:
-            action: 0=exit, 1=buy, 2=sell
-            confidence: AI confidence 0.0-1.0
-            quality: AI decision description
-            stop_price: Actual stop loss price (0.0 = AI chose no stop)
-            target_price: Actual take profit price (0.0 = AI chose no target)
-            position_size: AI-calculated position size
+        FIXED: Enhanced signal sending with better correlation tracking
         """
         
         if not self.connected:
@@ -163,10 +160,12 @@ class TCPBridge:
             use_stop = stop_price > 0.0
             use_target = target_price > 0.0
             
-            # Convert to .NET Ticks (100-nanosecond intervals since 0001-01-01)
+            # Convert to .NET Ticks with high precision
             unix_timestamp = time.time()
+            self.last_signal_time = unix_timestamp  # FIXED: Store for correlation
             net_ticks = int((unix_timestamp * 10000000) + 621355968000000000)
             
+            # Get adaptive timeout from meta-learner
             adaptive_timeout = 30.0  # Default
             if meta_learner:
                 adaptive_timeout = meta_learner.get_parameter('signal_timeout_seconds')
@@ -176,12 +175,17 @@ class TCPBridge:
                 "confidence": float(confidence),
                 "quality": str(quality),
                 "position_size": float(position_size),
-                "use_stop": stop_price > 0.0,
+                "use_stop": use_stop,
                 "stop_price": float(stop_price),
-                "use_target": target_price > 0.0,
+                "use_target": use_target,
                 "target_price": float(target_price),
-                "adaptive_timeout": float(adaptive_timeout),  # NEW
-                "timestamp": int(net_ticks)
+                "adaptive_timeout": float(adaptive_timeout),
+                "timestamp": int(net_ticks),
+                
+                # FIXED: Enhanced correlation data
+                "signal_id": f"tcp_signal_{self.signals_sent + 1}",
+                "send_timestamp": unix_timestamp,
+                "correlation_key": f"{action}_{confidence:.3f}_{position_size:.1f}"
             }
             
             # Send signal
@@ -189,14 +193,30 @@ class TCPBridge:
             header = struct.pack('<I', len(data))
             self.ssock.sendall(header + data)
             
+            # FIXED: Enhanced signal tracking for correlation
+            self.signals_sent += 1
+            signal_log_entry = {
+                'signal_id': signal['signal_id'],
+                'action': action,
+                'confidence': confidence,
+                'quality': quality,
+                'position_size': position_size,
+                'timestamp': unix_timestamp,
+                'net_ticks': net_ticks,
+                'correlation_key': signal['correlation_key']
+            }
+            
+            self.sent_signals_log.append(signal_log_entry)
+            
+            # Keep only recent signals for correlation (last 100)
+            if len(self.sent_signals_log) > 100:
+                self.sent_signals_log = self.sent_signals_log[-100:]
+            
             # Enhanced logging
             action_name = ['EXIT', 'BUY', 'SELL'][action]
-            self.signals_sent += 1
-            self.last_signal_time = time.time()
+            log.info(f"Enhanced AI Signal #{self.signals_sent}: {action_name} (conf: {confidence:.3f}, size: {position_size:.2f})")
             
-            log.info(f"AI Signal #{self.signals_sent}: {action_name} (conf: {confidence:.3f}, size: {position_size:.2f})")
-            
-            # Log AI's risk management decisions
+            # Log AI's risk management decisions with correlation ID
             risk_decisions = []
             if use_stop:
                 risk_decisions.append(f"Stop: ${stop_price:.2f}")
@@ -208,11 +228,11 @@ class TCPBridge:
             else:
                 risk_decisions.append("No target (AI choice)")
             
-            log.info(f"AI Decisions: Size: {position_size:.2f} | {' | '.join(risk_decisions)}")
+            log.info(f"AI Decisions [ID: {signal['signal_id']}]: Size: {position_size:.2f} | {' | '.join(risk_decisions)}")
             
-            # Track AI learning progression
+            # Track learning progression with enhanced correlation
             if self.signals_sent % 10 == 0:
-                log.info(f"AI Learning Progress: {self.signals_sent} signals sent with AI position sizing")
+                log.info(f"AI Learning Progress: {self.signals_sent} signals sent with enhanced correlation tracking")
             
             return True
             
@@ -224,13 +244,7 @@ class TCPBridge:
     def send_position_management_signal(self, action_type: str, confidence: float, 
                                       amount: float, reasoning: str):
         """
-        Send advanced position management signals (scaling, partial exits)
-        
-        Args:
-            action_type: "scale_25%", "scale_50%", "exit_25%", "exit_50%", "exit_100%"
-            confidence: AI confidence in this decision
-            amount: Size multiplier or exit percentage
-            reasoning: AI's reasoning for this action
+        FIXED: Enhanced position management signals with correlation
         """
         
         if not self.connected:
@@ -240,6 +254,7 @@ class TCPBridge:
         try:
             # Convert to .NET Ticks
             unix_timestamp = time.time()
+            self.last_signal_time = unix_timestamp
             net_ticks = int((unix_timestamp * 10000000) + 621355968000000000)
             
             # Determine action code for position management
@@ -256,12 +271,17 @@ class TCPBridge:
                 "action": action,
                 "confidence": float(confidence),
                 "quality": quality,
-                "position_size": float(amount),  # Amount for scaling/partial exit
-                "use_stop": False,      # Position management doesn't set new stops
+                "position_size": float(amount),
+                "use_stop": False,
                 "stop_price": 0.0,
-                "use_target": False,    # Position management doesn't set new targets
+                "use_target": False,
                 "target_price": 0.0,
-                "timestamp": int(net_ticks)
+                "timestamp": int(net_ticks),
+                
+                # Enhanced correlation data
+                "signal_id": f"tcp_mgmt_{self.signals_sent + 1}",
+                "send_timestamp": unix_timestamp,
+                "management_type": action_type
             }
             
             # Send signal
@@ -270,7 +290,7 @@ class TCPBridge:
             self.ssock.sendall(header + data)
             
             self.signals_sent += 1
-            log.info(f"AI position management #{self.signals_sent}: {action_type} (conf: {confidence:.3f}, amount: {amount:.2f})")
+            log.info(f"Enhanced AI position management #{self.signals_sent}: {action_type} (conf: {confidence:.3f}, amount: {amount:.2f})")
             log.info(f"AI reasoning: {reasoning}")
             
             return True
@@ -280,30 +300,47 @@ class TCPBridge:
             return False
 
     def get_connection_status(self) -> Dict[str, any]:
-        """Get detailed connection status for monitoring"""
+        """FIXED: Enhanced connection status with correlation info"""
         return {
             "connected": self.connected,
             "running": self.running,
             "signals_sent": self.signals_sent,
             "last_signal_ago_seconds": time.time() - self.last_signal_time if self.last_signal_time > 0 else -1,
             "feature_port": self.FEATURE_PORT,
-            "signal_port": self.SIGNAL_PORT
+            "signal_port": self.SIGNAL_PORT,
+            "correlation_signals_tracked": len(self.sent_signals_log),
+            "last_correlation_timestamp": self.last_signal_time
+        }
+
+    def get_correlation_data(self, time_window_seconds: int = 300) -> Dict:
+        """FIXED: Get correlation data for learning"""
+        cutoff_time = time.time() - time_window_seconds
+        recent_signals = [s for s in self.sent_signals_log if s['timestamp'] >= cutoff_time]
+        
+        return {
+            'recent_signals_count': len(recent_signals),
+            'time_window': time_window_seconds,
+            'signals_in_window': recent_signals,
+            'total_signals_sent': self.signals_sent
         }
 
     def emergency_close_signal(self):
-        """Send emergency close signal"""
+        """FIXED: Enhanced emergency close signal with correlation"""
         if self.connected:
-            log.warning("Sending EMERGENCY CLOSE signal")
+            log.warning("Sending EMERGENCY CLOSE signal with correlation")
             self.send_signal(0, 0.99, "EMERGENCY_CLOSE", position_size=0.0)
             time.sleep(0.5)  # Give time for signal to process
 
     def stop(self):
-        """Enhanced stop with cleanup reporting"""
-        log.info("Stopping TCP bridge...")
+        """FIXED: Enhanced stop with learning correlation summary"""
+        log.info("Stopping TCP bridge with enhanced correlation data...")
+        
+        shutdown_start = time.time()
         
         # Send any final signals if needed
         if self.connected and self.signals_sent > 0:
-            log.info(f"AI sent {self.signals_sent} total signals with position sizing during this session")
+            log.info(f"AI sent {self.signals_sent} total signals with enhanced correlation during this session")
+            log.info(f"Correlation tracking: {len(self.sent_signals_log)} signals logged for learning")
         
         self.running = False
         self.connected = False
@@ -322,23 +359,32 @@ class TCPBridge:
             except Exception as e:
                 log.warning(f"Error closing {name} socket: {e}")
         
-        log.info(f"TCP bridge stopped - {connections_closed} connections closed")
+        shutdown_duration = time.time() - shutdown_start
+        
+        log.info(f"Enhanced TCP bridge stopped - {connections_closed} connections closed")
+        log.info(f"Shutdown time: {shutdown_duration:.2f}s")
         
         if self.signals_sent > 0:
-            log.info(f"Session summary: {self.signals_sent} AI signals sent with adaptive position sizing")
-            log.info("AI learning data preserved for next session")
+            log.info(f"Session summary: {self.signals_sent} AI signals sent with enhanced correlation")
+            log.info("Enhanced learning correlation data preserved for next session")
 
-    # Utility methods for AI learning
+    # FIXED: Enhanced utility methods for learning
     def get_signal_rate(self) -> float:
         """Get signals per hour rate"""
-        if self.last_signal_time == 0:
+        if not self.sent_signals_log:
             return 0.0
         
-        session_hours = (time.time() - self.last_signal_time) / 3600
-        return self.signals_sent / max(session_hours, 0.1)
+        if len(self.sent_signals_log) < 2:
+            return 0.0
+        
+        oldest_signal = self.sent_signals_log[0]['timestamp']
+        newest_signal = self.sent_signals_log[-1]['timestamp']
+        
+        session_hours = (newest_signal - oldest_signal) / 3600
+        return len(self.sent_signals_log) / max(session_hours, 0.1)
 
     def is_healthy(self) -> bool:
-        """Check if connection is healthy"""
+        """Check if connection is healthy with enhanced monitoring"""
         return self.connected and self.running
 
     def reconnect(self) -> bool:
@@ -347,11 +393,12 @@ class TCPBridge:
             return True
         
         try:
-            log.info("Attempting TCP reconnection...")
+            log.info("Attempting TCP reconnection with enhanced correlation...")
             self.stop()
             time.sleep(2)
             self.start()
+            log.info(f"Reconnection successful - correlation tracking resumed")
             return self.connected
         except Exception as e:
-            log.error(f"Reconnection failed: {e}")
+            log.error(f"Enhanced reconnection failed: {e}")
             return False

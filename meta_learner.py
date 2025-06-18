@@ -113,15 +113,15 @@ class PureMetaLearner:
         # Load existing parameters or initialize defaults
         saved_params = self.db.load_meta_parameters()
         
-        # Core parameters that MUST be learned (no defaults)
+        # COMPLETE parameter definitions - ALL PARAMETERS ADAPTIVE
         self.parameter_definitions = {
             # Risk Management
             'max_daily_loss_pct': {'initial': 0.02, 'bounds': (0.005, 0.20), 'lr': 1e-5},
             'max_consecutive_losses': {'initial': 5.0, 'bounds': (2.0, 15.0), 'lr': 1e-4},
-            'position_size_base': {'initial': 0.5, 'bounds': (0.1, 2.0), 'lr': 1e-4},
+            'position_size_base': {'initial': 1.0, 'bounds': (0.1, 5.0), 'lr': 1e-4},
             'stop_loss_max_pct': {'initial': 0.02, 'bounds': (0.005, 0.08), 'lr': 1e-5},
             'take_profit_max_pct': {'initial': 0.04, 'bounds': (0.01, 0.15), 'lr': 1e-5},
-            'risk_per_trade_pct': {'initial': 0.02, 'bounds': (0.005, 0.1), 'lr': 1e-5},  # NEW
+            'risk_per_trade_pct': {'initial': 0.02, 'bounds': (0.005, 0.1), 'lr': 1e-5},
             
             # Learning Rates
             'policy_learning_rate': {'initial': 1e-4, 'bounds': (1e-6, 1e-2), 'lr': 1e-6},
@@ -137,8 +137,8 @@ class PureMetaLearner:
             'epsilon_decay_rate': {'initial': 0.9995, 'bounds': (0.99, 0.9999), 'lr': 1e-6},
             'epsilon_min': {'initial': 0.15, 'bounds': (0.05, 0.5), 'lr': 1e-4},
             'exploration_bonus': {'initial': 0.1, 'bounds': (0.0, 1.0), 'lr': 1e-4},
-            'tool_exploration_rate': {'initial': 0.2, 'bounds': (0.05, 0.5), 'lr': 1e-4},  # NEW
-            'exit_exploration_rate': {'initial': 0.1, 'bounds': (0.02, 0.3), 'lr': 1e-4},  # NEW
+            'tool_exploration_rate': {'initial': 0.2, 'bounds': (0.05, 0.5), 'lr': 1e-4},
+            'exit_exploration_rate': {'initial': 0.1, 'bounds': (0.02, 0.3), 'lr': 1e-4},
             
             # Network Architecture
             'hidden_layer_multiplier': {'initial': 1.0, 'bounds': (0.5, 3.0), 'lr': 1e-4},
@@ -149,17 +149,24 @@ class PureMetaLearner:
             # Memory Management - NOW ADAPTIVE
             'experience_buffer_size': {'initial': 10000, 'bounds': (1000, 100000), 'lr': 1e-3},
             'batch_size_multiplier': {'initial': 1.0, 'bounds': (0.5, 4.0), 'lr': 1e-4},
-            'experience_buffer_multiplier': {'initial': 1.0, 'bounds': (0.5, 3.0), 'lr': 1e-4},  # NEW
-            'pattern_memory_multiplier': {'initial': 1.0, 'bounds': (0.5, 5.0), 'lr': 1e-4},  # NEW
+            'experience_buffer_multiplier': {'initial': 1.0, 'bounds': (0.5, 3.0), 'lr': 1e-4},
+            'pattern_memory_multiplier': {'initial': 1.0, 'bounds': (0.5, 5.0), 'lr': 1e-4}, # ADDED FIX
             
             # Communication & Timing - NOW ADAPTIVE
-            'signal_timeout_seconds': {'initial': 30.0, 'bounds': (10.0, 120.0), 'lr': 1e-3},  # NEW
-            'dna_similarity_threshold': {'initial': 0.7, 'bounds': (0.3, 0.9), 'lr': 1e-4},  # NEW
+            'signal_timeout_seconds': {'initial': 30.0, 'bounds': (10.0, 120.0), 'lr': 1e-3},
+            'dna_similarity_threshold': {'initial': 0.7, 'bounds': (0.3, 0.9), 'lr': 1e-4}, # ADDED FIX
             
             # Advanced Features
             'scaling_frequency': {'initial': 0.3, 'bounds': (0.1, 0.8), 'lr': 1e-4},
             'partial_exit_frequency': {'initial': 0.2, 'bounds': (0.05, 0.6), 'lr': 1e-4},
             'hold_time_preference': {'initial': 0.5, 'bounds': (0.1, 2.0), 'lr': 1e-4},
+            'trade_frequency_multiplier': {'initial': 1.0, 'bounds': (0.2, 3.0), 'lr': 1e-4}, # ADDED FIX
+            
+            # Pattern Learning - NEW PARAMETERS
+            'pattern_confidence_decay': {'initial': 0.99, 'bounds': (0.95, 0.999), 'lr': 1e-5},
+            'pattern_learning_rate': {'initial': 0.1, 'bounds': (0.01, 0.5), 'lr': 1e-4},
+            'immune_sensitivity': {'initial': 0.5, 'bounds': (0.1, 1.0), 'lr': 1e-4},
+            'temporal_weight': {'initial': 1.0, 'bounds': (0.1, 3.0), 'lr': 1e-4},
         }
         
         # Initialize parameters
@@ -191,11 +198,14 @@ class PureMetaLearner:
         
         log.info(f"Managing {len(self.parameters)} adaptive parameters")
         self._log_parameter_summary()
-    
+
     def get_parameter(self, name: str) -> float:
         """Get current value of meta-learned parameter"""
+        if name not in self.parameters:
+            log.warning(f"Unknown parameter: {name}, using default 0.5")
+            return 0.5
         return self.parameters.get(name, 0.5)
-    
+
     def update_parameter(self, name: str, outcome: float, context: Dict = None):
         """Update parameter based on outcome using gradient estimation"""
         
@@ -270,7 +280,13 @@ class PureMetaLearner:
                         
             except Exception as e:
                 log.warning(f"Gradient calculation error for {name}: {e}")
-    
+
+    def get_learning_efficiency(self) -> float:
+        """Get current learning efficiency"""
+        if len(self.learning_efficiency_history) > 0:
+            return float(np.mean(list(self.learning_efficiency_history)[-10:]))
+        return 0.0
+
     def batch_update_parameters(self, outcomes_dict: Dict[str, float], learning_efficiency: float):
         """Update multiple parameters from a single trade outcome"""
         
@@ -298,13 +314,7 @@ class PureMetaLearner:
                 for name in self.parameter_definitions:
                     if 'learning_rate' in name:
                         self.update_parameter(name, -0.1)  # Reduce learning rates
-    
-    def get_learning_efficiency(self) -> float:
-        """Get current learning efficiency"""
-        if len(self.learning_efficiency_history) > 0:
-            return float(np.mean(list(self.learning_efficiency_history)[-10:]))
-        return 0.0
-    
+
     def get_network_architecture(self) -> Dict[str, int]:
         """Get current optimal network architecture"""
         base_hidden = 64
@@ -316,7 +326,7 @@ class PureMetaLearner:
             'attention_layers': max(1, int(self.get_parameter('attention_weight'))),
             'dropout_rate': self.get_parameter('dropout_rate'),
         }
-    
+
     def get_risk_parameters(self) -> Dict[str, float]:
         """Get current risk management parameters"""
         return {
@@ -325,8 +335,9 @@ class PureMetaLearner:
             'position_size_base': self.get_parameter('position_size_base'),
             'stop_loss_max_pct': self.get_parameter('stop_loss_max_pct'),
             'take_profit_max_pct': self.get_parameter('take_profit_max_pct'),
+            'risk_per_trade_pct': self.get_parameter('risk_per_trade_pct'),
         }
-    
+
     def get_learning_parameters(self) -> Dict[str, float]:
         """Get current learning parameters"""
         return {
@@ -338,7 +349,7 @@ class PureMetaLearner:
             'batch_size': max(16, int(32 * self.get_parameter('batch_size_multiplier'))),
             'buffer_size': int(self.get_parameter('experience_buffer_size')),
         }
-    
+
     def get_confidence_thresholds(self) -> Dict[str, float]:
         """Get current confidence thresholds"""
         return {
@@ -346,7 +357,7 @@ class PureMetaLearner:
             'exit': self.get_parameter('exit_confidence_threshold'),
             'scaling': self.get_parameter('scaling_confidence_threshold'),
         }
-    
+
     def should_rebuild_network(self) -> bool:
         """Determine if network architecture should be rebuilt"""
         
@@ -364,7 +375,7 @@ class PureMetaLearner:
                     return True
         
         return False
-    
+
     def _log_parameter_summary(self):
         """Log current parameter state"""
         log.info("Current meta parameters:")
@@ -383,7 +394,7 @@ class PureMetaLearner:
                     value = self.parameters[name]
                     gradient = self.parameter_gradients[name]
                     log.info(f"    {name}: {value:.6f} (grad: {gradient:.4f})")
-    
+
     def _start_background_saver(self):
         """Start background thread to save parameters"""
         def save_loop():
@@ -401,7 +412,7 @@ class PureMetaLearner:
         thread = threading.Thread(target=save_loop, daemon=True, name="MetaParameterSaver")
         thread.start()
         log.info("Background meta-parameter saver started")
-    
+
     def _save_all_parameters(self):
         """Save all parameters to database"""
         for name, value in self.parameters.items():
@@ -416,12 +427,12 @@ class PureMetaLearner:
                 self.db.save_meta_parameter(name, value, gradient, outcome_values, bounds)
         
         log.debug(f"Saved {len(self.parameters)} parameters to database")
-    
+
     def force_save(self):
         """Force immediate save of all parameters"""
         self._save_all_parameters()
         log.info("Forced save completed")
-    
+
     def get_adaptation_report(self) -> str:
         """Generate detailed adaptation report"""
         
@@ -438,14 +449,14 @@ RISK MANAGEMENT (Self-Optimized):
         
         risk_params = self.get_risk_parameters()
         for name, value in risk_params.items():
-            gradient = self.parameter_gradients.get(name.replace('_pct', '_pct').replace('max_', 'max_'), 0.0)
+            gradient = self.parameter_gradients.get(name, 0.0)
             updates = len(self.parameter_update_history.get(name, []))
             report += f"  {name}: {value:.6f} (gradient: {gradient:.4f}, updates: {updates})\n"
         
         report += f"\nLEARNING PARAMETERS (Self-Adapted):\n"
         learning_params = self.get_learning_parameters()
         for name, value in learning_params.items():
-            original_name = name + '_learning_rate' if name.endswith('_lr') else name
+            original_name = name.replace('_lr', '_learning_rate') if name.endswith('_lr') else name
             gradient = self.parameter_gradients.get(original_name, 0.0)
             report += f"  {name}: {value:.6f} (gradient: {gradient:.4f})\n"
         

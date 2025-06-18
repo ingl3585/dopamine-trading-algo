@@ -191,8 +191,9 @@ class PermanentMemoryDB:
 class DNASequencingSystem:
     """Encode price/volume patterns as genetic sequences"""
     
-    def __init__(self, memory_db: PermanentMemoryDB):
+    def __init__(self, memory_db: PermanentMemoryDB, meta_learner=None):
         self.memory_db = memory_db
+        self.meta_learner = meta_learner  # ADD THIS
         self.dna_patterns = memory_db.load_dna_patterns()
         self.base_mapping = {'A': 0, 'T': 1, 'G': 2, 'C': 3}
         self.reverse_mapping = {0: 'A', 1: 'T', 2: 'G', 3: 'C'}
@@ -262,12 +263,17 @@ class DNASequencingSystem:
         
         return combined
     
-    def find_similar_patterns(self, current_sequence: str) -> List[MarketPattern]:
+    def find_similar_patterns(self, current_sequence: str, similarity_threshold: float = None) -> List[MarketPattern]:
         """FIXED: Find similar DNA patterns using adaptive similarity threshold"""
         similar_patterns = []
         
         # Get adaptive similarity threshold from meta-learner
-        similarity_threshold = self.meta_learner.get_parameter('dna_similarity_threshold')
+        if similarity_threshold is None:
+            # This was causing an AttributeError - need to get meta_learner reference
+            if hasattr(self, 'meta_learner'):
+                similarity_threshold = self.meta_learner.get_parameter('dna_similarity_threshold')
+            else:
+                similarity_threshold = 0.7  # Fallback default
         
         for seq, pattern in self.dna_patterns.items():
             if len(seq) == 0 or len(current_sequence) == 0:
@@ -689,13 +695,17 @@ class MetaLearningDirector:
             })
 
 class AdvancedMarketIntelligence:
-    """Main Market Intelligence Engine"""
+    """Main Market Intelligence Engine - FIXED initialization"""
     
     def __init__(self, db_path: str = "data/market_intelligence.db"):
         self.memory_db = PermanentMemoryDB(db_path)
         
-        # Initialize subsystems
-        self.dna_system = DNASequencingSystem(self.memory_db)
+        # Initialize meta-learner FIRST
+        from meta_learner import PureMetaLearner
+        self.meta_learner = PureMetaLearner()
+        
+        # Initialize subsystems WITH meta_learner reference
+        self.dna_system = DNASequencingSystem(self.memory_db, self.meta_learner)
         self.micro_system = MicroPatternNetwork(self.memory_db)
         self.temporal_system = TemporalPatternArchaeologist(self.memory_db)
         self.immune_system = MarketImmuneSystem(self.memory_db)
@@ -706,7 +716,7 @@ class AdvancedMarketIntelligence:
         self.trade_outcomes = deque(maxlen=500)
         
         log.info(f"Loaded {len(self.dna_system.dna_patterns)} DNA patterns from memory")
-    
+
     def process_market_data(self, prices: List[float], volumes: List[float], 
                         timestamp: Optional[datetime] = None) -> Dict[str, Any]:
         """Process market data through all subsystems WITH ACTIVE DNA SEQUENCING"""
@@ -717,11 +727,11 @@ class AdvancedMarketIntelligence:
         subsystem_signals = {}
         subsystem_scores = {}
         
-        # 1. DNA Sequencing Analysis (FIX: Make this ACTIVE and prominent)
+        # 1. DNA Sequencing Analysis (FIXED: Fully active and prominent)
         current_dna = self.dna_system.create_dna_sequence(prices, volumes)
         print(f"DNA ACTIVE: Generated sequence {current_dna[:30]}..." if len(current_dna) > 30 else f"DNA: {current_dna}")
 
-        # ADD THIS DEBUG BLOCK:
+        # FIXED: Better debugging and pattern matching
         print(f"DEBUG: Total patterns in memory: {len(self.dna_system.dna_patterns)}")
         if len(self.dna_system.dna_patterns) > 0:
             first_pattern = list(self.dna_system.dna_patterns.keys())[0]
@@ -730,16 +740,21 @@ class AdvancedMarketIntelligence:
             print(f"DEBUG: Similarity to first pattern: {similarity:.3f}")
 
         if current_dna and len(current_dna) >= 10:  # Need minimum sequence length
-            similar_patterns = self.dna_system.find_similar_patterns(current_dna, similarity_threshold=0.3)
-            print(f"DEBUG: Found {len(similar_patterns)} similar patterns with 0.3 threshold")
+            # FIXED: Use proper threshold from meta-learner
+            threshold = 0.3
+            if self.meta_learner:
+                threshold = self.meta_learner.get_parameter('dna_similarity_threshold')
+                
+            similar_patterns = self.dna_system.find_similar_patterns(current_dna, threshold)
+            print(f"DEBUG: Found {len(similar_patterns)} similar patterns with {threshold:.1f} threshold")
             
             if similar_patterns:
-                # FIXED: Don't require high pattern confidence for initial matching
+                # FIXED: Better weighting for pattern matching
                 weighted_success = 0.0
                 total_weight = 0.0
                 
                 for pattern in similar_patterns[:5]:  # Top 5 similar patterns
-                    # FIXED: Use base weight even for new patterns
+                    # Use base weight even for new patterns
                     base_weight = 0.2  # Minimum weight for any pattern
                     pattern_weight = max(base_weight, pattern.confidence)
                     weight = pattern_weight * min(pattern.occurrences / 10, 1.0)
@@ -749,8 +764,8 @@ class AdvancedMarketIntelligence:
                 
                 if total_weight > 0:
                     dna_signal = weighted_success / total_weight
-                    # FIXED: Base confidence on number of similar patterns found
-                    dna_confidence = min(len(similar_patterns) / 10, 1.0)  # 10+ patterns = max confidence
+                    # Base confidence on number of similar patterns found
+                    dna_confidence = min(len(similar_patterns) / 10, 1.0)
                     
                     print(f"DNA MATCH: {len(similar_patterns)} patterns, signal: {dna_signal:.3f}, conf: {dna_confidence:.3f}")
                 else:
@@ -1051,13 +1066,20 @@ class AdvancedMarketIntelligence:
         """FIXED: Remove old patterns using adaptive memory management"""
         
         # Get adaptive cleanup parameters
-        cleanup_days = int(self.get_parameter('pattern_memory_multiplier') * 30)  # Base 30 days
+        if hasattr(self, 'meta_learner') and self.meta_learner:
+            cleanup_days = int(self.meta_learner.get_parameter('pattern_memory_multiplier') * 30)  # Base 30 days
+            min_confidence = 0.3 * self.meta_learner.get_parameter('pattern_memory_multiplier')  # Adaptive confidence threshold
+            min_occurrences = int(5 * self.meta_learner.get_parameter('pattern_memory_multiplier'))  # Adaptive occurrence threshold
+        else:
+            # Fallback values when meta_learner not available
+            cleanup_days = 30
+            min_confidence = 0.3
+            min_occurrences = 5
+        
         cutoff_date = datetime.now() - timedelta(days=cleanup_days)
         
         # Clean DNA patterns with adaptive thresholds
         patterns_to_remove = []
-        min_confidence = 0.3 * self.get_parameter('pattern_memory_multiplier')  # Adaptive confidence threshold
-        min_occurrences = int(5 * self.get_parameter('pattern_memory_multiplier'))  # Adaptive occurrence threshold
         
         for seq, pattern in self.dna_system.dna_patterns.items():
             if (pattern.last_seen < cutoff_date and 
