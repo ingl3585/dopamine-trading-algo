@@ -6,6 +6,7 @@ import logging
 import numpy as np
 from rl_agent import PureBlackBoxStrategicAgent
 from market_env import MarketEnv
+from collections import deque
 from meta_learner import PureMetaLearner, AdaptiveRewardLearner
 
 log = logging.getLogger(__name__)
@@ -15,15 +16,15 @@ class AdaptiveSafetyManager:
     PURE adaptive safety - no hardcoded limits, everything learned from losses
     """
     
-    def __init__(self, meta_learner: PureMetaLearner):
+    def __init__(self, meta_learner, config):
         self.meta_learner = meta_learner
+        self.config = config  # NOW ACTUALLY USING CONFIG!
         
-        # Adaptive phase progression (no hardcoded thresholds)
-        self.learning_phases = {
-            'exploration': {'confidence_requirement': 0.0, 'success_requirement': 0.0},
-            'development': {'confidence_requirement': 0.4, 'success_requirement': 0.3},
-            'production': {'confidence_requirement': 0.6, 'success_requirement': 0.5}
-        }
+        # Add trade frequency as a meta-learned parameter
+        if 'trade_frequency_multiplier' not in meta_learner.parameters:
+            meta_learner.parameters['trade_frequency_multiplier'] = 1.0
+            meta_learner.parameter_gradients['trade_frequency_multiplier'] = 0.0
+            meta_learner.parameter_outcomes['trade_frequency_multiplier'] = deque(maxlen=200)
         
         self.current_phase = 'exploration'
         
@@ -35,9 +36,14 @@ class AdaptiveSafetyManager:
         
         # Adaptive learning from losses
         self.loss_history = []
-        self.phase_performance_history = {phase: [] for phase in self.learning_phases.keys()}
+        self.phase_performance_history = {
+            'exploration': [],
+            'development': [], 
+            'production': []
+        }
         
         log.info("ADAPTIVE SAFETY: All limits will adapt based on actual loss experience")
+        log.info("Trade limits will use adaptive config parameters")
     
     def can_trade(self) -> bool:
         """Adaptive trading permission based on learned risk parameters"""
@@ -50,46 +56,98 @@ class AdaptiveSafetyManager:
                 daily_performance = self.daily_pnl / max(1, self.trades_today)
                 self.meta_learner.update_parameter('max_daily_loss_pct', daily_performance / 100.0)
                 
-                if self.daily_pnl < 0:
-                    self.meta_learner.update_parameter('max_consecutive_losses', -0.1)
+                # Learn trade frequency from daily results
+                if self.daily_pnl > 0:
+                    self.meta_learner.update_parameter('trade_frequency_multiplier', 0.05)  # More trades if profitable
                 else:
-                    self.meta_learner.update_parameter('max_consecutive_losses', 0.1)
+                    self.meta_learner.update_parameter('trade_frequency_multiplier', -0.02)  # Fewer if losing
             
             self.daily_pnl = 0.0
             self.trades_today = 0
             self.last_date = current_date
         
-        # Get adaptive limits
+        # Get adaptive limits from meta-learner
         risk_params = self.meta_learner.get_risk_parameters()
-        max_daily_loss = risk_params['max_daily_loss_pct'] * 10000  # Assuming $10k account
+        
+        # OPTION 1: Keep basic safety limits (recommended)
+        max_daily_loss = risk_params['max_daily_loss_pct'] * 10000  # Still need some safety
         max_consecutive = risk_params['max_consecutive_losses']
         
-        # Check adaptive limits
+        # Check critical safety limits
         if self.daily_pnl <= -max_daily_loss:
             log.warning(f"ADAPTIVE SAFETY: Daily loss limit hit (${self.daily_pnl:.2f} vs ${-max_daily_loss:.2f})")
-            
-            # Learn from hitting limit
-            self.meta_learner.update_parameter('max_daily_loss_pct', -0.5)  # Increase caution
+            self.meta_learner.update_parameter('max_daily_loss_pct', -0.5)  # Learn to be more cautious
             return False
         
         if self.consecutive_losses >= max_consecutive:
             log.warning(f"ADAPTIVE SAFETY: Consecutive loss limit hit ({self.consecutive_losses} vs {max_consecutive})")
-            
-            # Learn from hitting limit
             self.meta_learner.update_parameter('max_consecutive_losses', -0.3)
             return False
         
-        # Adaptive daily trade limits based on performance
-        performance_factor = max(0.5, 1.0 + (self.daily_pnl / 100.0))  # Better performance = more trades allowed
-        base_trades = {'exploration': 5, 'development': 12, 'production': 20}[self.current_phase]
-        max_trades_today = int(base_trades * performance_factor)
+        # OPTION 2: Use config trade limits (FIXED - was hardcoded before)
+        if hasattr(self.config, 'MAX_DAILY_TRADES_EXPLORATION'):
+            # Use the adaptive config limits
+            phase_limits = {
+                'exploration': self.config.MAX_DAILY_TRADES_EXPLORATION,
+                'development': self.config.MAX_DAILY_TRADES_DEVELOPMENT, 
+                'production': self.config.MAX_DAILY_TRADES_PRODUCTION
+            }
+            base_max_trades = phase_limits[self.current_phase]
+            
+            # Apply performance and frequency multipliers
+            performance_factor = max(0.5, 1.0 + (self.daily_pnl / 100.0))
+            frequency_multiplier = self.meta_learner.get_parameter('trade_frequency_multiplier')
+            
+            max_trades_today = int(base_max_trades * performance_factor * frequency_multiplier)
+            
+            if self.trades_today >= max_trades_today:
+                log.info(f"ADAPTIVE TRADE LIMIT: {self.trades_today} >= {max_trades_today}")
+                log.info(f"  (Base: {base_max_trades}, Performance: {performance_factor:.2f}, Frequency: {frequency_multiplier:.2f})")
+                return False
         
-        if self.trades_today >= max_trades_today:
-            log.info(f"ADAPTIVE SAFETY: Daily trade limit hit ({self.trades_today} vs {max_trades_today})")
-            return False
+        # OPTION 3: No trade limits at all (uncomment this and comment out OPTION 2 above)
+        # log.debug(f"UNLIMITED LEARNING: Trade #{self.trades_today + 1} allowed")
         
         return True
     
+    def record_trade(self, pnl: float):
+        """Record trade and adapt frequency based on outcome"""
+        self.daily_pnl += pnl
+        self.trades_today += 1
+        self.loss_history.append(pnl)
+        
+        # Keep recent history
+        if len(self.loss_history) > 50:
+            self.loss_history = self.loss_history[-30:]
+        
+        # Update consecutive losses
+        if pnl < 0:
+            self.consecutive_losses += 1
+        else:
+            self.consecutive_losses = 0
+        
+        # Learn optimal trade frequency from outcomes
+        if len(self.loss_history) >= 5:
+            recent_performance = np.mean(self.loss_history[-5:])
+            
+            if recent_performance > 10:  # Good recent performance
+                frequency_signal = 0.05  # Allow more frequent trading
+            elif recent_performance < -20:  # Poor recent performance  
+                frequency_signal = -0.1  # Reduce trading frequency
+            else:
+                frequency_signal = 0.01 if pnl > 0 else -0.02
+            
+            self.meta_learner.update_parameter('trade_frequency_multiplier', frequency_signal)
+        
+        # Adaptive phase progression
+        self._adapt_learning_phase()
+        
+        # Learn from significant outcomes
+        if abs(pnl) > 20:  # Significant trade
+            normalized_outcome = np.tanh(pnl / 50.0)
+            self.meta_learner.update_parameter('position_size_base', normalized_outcome)
+    
+    # Rest of the methods stay the same...
     def get_position_size(self) -> float:
         """Adaptive position sizing based on current performance and phase"""
         
@@ -111,30 +169,6 @@ class AdaptiveSafetyManager:
         
         final_size = base_size * phase_multiplier * performance_multiplier * loss_adjustment
         return max(0.1, min(2.0, final_size))  # Clamp to reasonable bounds
-    
-    def record_trade(self, pnl: float):
-        """Record trade and adapt safety parameters"""
-        self.daily_pnl += pnl
-        self.trades_today += 1
-        self.loss_history.append(pnl)
-        
-        # Keep recent history
-        if len(self.loss_history) > 50:
-            self.loss_history = self.loss_history[-30:]
-        
-        # Update consecutive losses
-        if pnl < 0:
-            self.consecutive_losses += 1
-        else:
-            self.consecutive_losses = 0
-        
-        # Adaptive phase progression
-        self._adapt_learning_phase()
-        
-        # Learn from significant outcomes
-        if abs(pnl) > 20:  # Significant trade
-            normalized_outcome = np.tanh(pnl / 50.0)
-            self.meta_learner.update_parameter('position_size_base', normalized_outcome)
     
     def _adapt_learning_phase(self):
         """Adapt learning phase based on actual performance, not hardcoded rules"""
@@ -195,6 +229,7 @@ Daily Limits (Adaptive):
   Daily P&L: ${self.daily_pnl:.2f} / ${-risk_params['max_daily_loss_pct'] * 10000:.0f} limit
   Trades Today: {self.trades_today}
   Consecutive Losses: {self.consecutive_losses} / {risk_params['max_consecutive_losses']:.0f} limit
+  Trade Frequency Multiplier: {self.meta_learner.get_parameter('trade_frequency_multiplier'):.2f}
   
 Position Sizing (Learned):
   Current Size: {self.get_position_size():.3f}
@@ -220,9 +255,10 @@ class PureBlackBoxTradeManager:
     Everything adapts through meta-learning
     """
 
-    def __init__(self, intelligence_engine, tcp_bridge):
+    def __init__(self, intelligence_engine, tcp_bridge, config):
         self.intel = intelligence_engine
         self.tcp_bridge = tcp_bridge
+        self.config = config
         
         # Pure black box agent with meta-learning
         self.agent = PureBlackBoxStrategicAgent(
@@ -235,7 +271,7 @@ class PureBlackBoxTradeManager:
         self.reward_learner = self.agent.reward_learner
         
         # Adaptive safety manager
-        self.safety_manager = AdaptiveSafetyManager(self.meta_learner)
+        self.safety_manager = AdaptiveSafetyManager(self.meta_learner, self.config)
         
         # Environment for state tracking
         self.env = MarketEnv()
@@ -668,10 +704,10 @@ No hardcoded thresholds - complete adaptation through meta-learning!
         log.info("PURE ADAPTIVE: All meta-learning progress saved")
 
 # Factory function
-def create_pure_blackbox_trade_manager(intelligence_engine, tcp_bridge):
+def create_pure_blackbox_trade_manager(intelligence_engine, tcp_bridge, config):
     """Create pure black box trade manager"""
     
-    manager = PureBlackBoxTradeManager(intelligence_engine, tcp_bridge)
+    manager = PureBlackBoxTradeManager(intelligence_engine, tcp_bridge, config)
     
     log.info("PURE BLACK BOX TRADE MANAGER CREATED")
     log.info("All parameters will adapt through meta-learning")

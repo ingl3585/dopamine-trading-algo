@@ -66,7 +66,7 @@ class AdaptiveConfig:
     def MAX_DAILY_TRADES_EXPLORATION(self) -> int:
         """Adaptive daily trade limits"""
         base_frequency = self.meta_learner.get_parameter('scaling_frequency')
-        return max(2, int(10 * base_frequency))
+        return max(10, int(20 * base_frequency))
     
     @property
     def MAX_DAILY_TRADES_DEVELOPMENT(self) -> int:

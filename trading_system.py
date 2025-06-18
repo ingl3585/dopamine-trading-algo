@@ -57,7 +57,8 @@ class PureBlackBoxTradingSystem:
         # PURE BLACK BOX trade manager with complete adaptation
         self.trade_manager = create_pure_blackbox_trade_manager(
             self.intelligence_engine,
-            self.tcp_bridge
+            self.tcp_bridge,
+            self.config
         )
 
         # Meta-learning state
