@@ -1,4 +1,4 @@
-# pure_blackbox_trade_manager.py - REPLACES trade_manager_ai.py with full meta-learning
+# trade_manager_ai.py - REFACTORED: Pure signal generation, position management to NinjaTrader
 
 from datetime import datetime
 from typing import Dict, Any
@@ -12,13 +12,11 @@ from meta_learner import PureMetaLearner, AdaptiveRewardLearner
 log = logging.getLogger(__name__)
 
 class AdaptiveSafetyManager:
-    """
-    PURE adaptive safety - no hardcoded limits, everything learned from losses
-    """
+    """PURE adaptive safety - no hardcoded limits, everything learned from losses"""
     
     def __init__(self, meta_learner, config):
         self.meta_learner = meta_learner
-        self.config = config  # NOW ACTUALLY USING CONFIG!
+        self.config = config
         
         # Add trade frequency as a meta-learned parameter
         if 'trade_frequency_multiplier' not in meta_learner.parameters:
@@ -28,10 +26,10 @@ class AdaptiveSafetyManager:
         
         self.current_phase = 'exploration'
         
-        # Dynamic tracking
+        # Dynamic tracking - NO POSITION TRACKING HERE
         self.daily_pnl = 0.0
         self.consecutive_losses = 0
-        self.trades_today = 0
+        self.signals_today = 0  # Changed from trades_today
         self.last_date = datetime.now().date()
         
         # Adaptive learning from losses
@@ -43,216 +41,144 @@ class AdaptiveSafetyManager:
         }
         
         log.info("ADAPTIVE SAFETY: All limits will adapt based on actual loss experience")
-        log.info("Trade limits will use adaptive config parameters")
     
-    def can_trade(self) -> bool:
-        """Adaptive trading permission based on learned risk parameters"""
+    def can_generate_signal(self) -> bool:
+        """Adaptive signal generation permission - NO position checks"""
         
         # Reset daily counters
         current_date = datetime.now().date()
         if current_date != self.last_date:
-            # Learn from yesterday's performance before reset
-            if self.trades_today > 0:
-                daily_performance = self.daily_pnl / max(1, self.trades_today)
+            if self.signals_today > 0:
+                daily_performance = self.daily_pnl / max(1, self.signals_today)
                 self.meta_learner.update_parameter('max_daily_loss_pct', daily_performance / 100.0)
                 
-                # Learn trade frequency from daily results
                 if self.daily_pnl > 0:
-                    self.meta_learner.update_parameter('trade_frequency_multiplier', 0.05)  # More trades if profitable
+                    self.meta_learner.update_parameter('trade_frequency_multiplier', 0.05)
                 else:
-                    self.meta_learner.update_parameter('trade_frequency_multiplier', -0.02)  # Fewer if losing
+                    self.meta_learner.update_parameter('trade_frequency_multiplier', -0.02)
             
             self.daily_pnl = 0.0
-            self.trades_today = 0
+            self.signals_today = 0
             self.last_date = current_date
         
         # Get adaptive limits from meta-learner
         risk_params = self.meta_learner.get_risk_parameters()
         
-        # OPTION 1: Keep basic safety limits (recommended)
-        max_daily_loss = risk_params['max_daily_loss_pct'] * 10000  # Still need some safety
+        max_daily_loss = risk_params['max_daily_loss_pct'] * 10000
         max_consecutive = risk_params['max_consecutive_losses']
         
-        # Check critical safety limits
         if self.daily_pnl <= -max_daily_loss:
-            log.warning(f"ADAPTIVE SAFETY: Daily loss limit hit (${self.daily_pnl:.2f} vs ${-max_daily_loss:.2f})")
-            self.meta_learner.update_parameter('max_daily_loss_pct', -0.5)  # Learn to be more cautious
+            log.warning(f"ADAPTIVE SAFETY: Daily loss limit hit (${self.daily_pnl:.2f})")
+            self.meta_learner.update_parameter('max_daily_loss_pct', -0.5)
             return False
         
         if self.consecutive_losses >= max_consecutive:
-            log.warning(f"ADAPTIVE SAFETY: Consecutive loss limit hit ({self.consecutive_losses} vs {max_consecutive})")
+            log.warning(f"ADAPTIVE SAFETY: Consecutive loss limit hit ({self.consecutive_losses})")
             self.meta_learner.update_parameter('max_consecutive_losses', -0.3)
             return False
         
-        # OPTION 2: Use config trade limits (FIXED - was hardcoded before)
+        # Use config signal limits
         if hasattr(self.config, 'MAX_DAILY_TRADES_EXPLORATION'):
-            # Use the adaptive config limits
             phase_limits = {
                 'exploration': self.config.MAX_DAILY_TRADES_EXPLORATION,
                 'development': self.config.MAX_DAILY_TRADES_DEVELOPMENT, 
                 'production': self.config.MAX_DAILY_TRADES_PRODUCTION
             }
-            base_max_trades = phase_limits[self.current_phase]
+            base_max_signals = phase_limits[self.current_phase]
             
-            # Apply performance and frequency multipliers
             performance_factor = max(0.5, 1.0 + (self.daily_pnl / 100.0))
             frequency_multiplier = self.meta_learner.get_parameter('trade_frequency_multiplier')
             
-            max_trades_today = int(base_max_trades * performance_factor * frequency_multiplier)
+            max_signals_today = int(base_max_signals * performance_factor * frequency_multiplier)
             
-            if self.trades_today >= max_trades_today:
-                log.info(f"ADAPTIVE TRADE LIMIT: {self.trades_today} >= {max_trades_today}")
-                log.info(f"  (Base: {base_max_trades}, Performance: {performance_factor:.2f}, Frequency: {frequency_multiplier:.2f})")
+            if self.signals_today >= max_signals_today:
+                log.info(f"ADAPTIVE SIGNAL LIMIT: {self.signals_today} >= {max_signals_today}")
                 return False
-        
-        # OPTION 3: No trade limits at all (uncomment this and comment out OPTION 2 above)
-        # log.debug(f"UNLIMITED LEARNING: Trade #{self.trades_today + 1} allowed")
         
         return True
     
-    def record_trade(self, pnl: float):
-        """Record trade and adapt frequency based on outcome"""
+    def record_signal_outcome(self, pnl: float):
+        """Record signal outcome and adapt"""
         self.daily_pnl += pnl
-        self.trades_today += 1
+        self.signals_today += 1
         self.loss_history.append(pnl)
         
-        # Keep recent history
         if len(self.loss_history) > 50:
             self.loss_history = self.loss_history[-30:]
         
-        # Update consecutive losses
         if pnl < 0:
             self.consecutive_losses += 1
         else:
             self.consecutive_losses = 0
         
-        # Learn optimal trade frequency from outcomes
         if len(self.loss_history) >= 5:
             recent_performance = np.mean(self.loss_history[-5:])
             
-            if recent_performance > 10:  # Good recent performance
-                frequency_signal = 0.05  # Allow more frequent trading
-            elif recent_performance < -20:  # Poor recent performance  
-                frequency_signal = -0.1  # Reduce trading frequency
+            if recent_performance > 10:
+                frequency_signal = 0.05
+            elif recent_performance < -20:
+                frequency_signal = -0.1
             else:
                 frequency_signal = 0.01 if pnl > 0 else -0.02
             
             self.meta_learner.update_parameter('trade_frequency_multiplier', frequency_signal)
         
-        # Adaptive phase progression
         self._adapt_learning_phase()
         
-        # Learn from significant outcomes
-        if abs(pnl) > 20:  # Significant trade
+        if abs(pnl) > 20:
             normalized_outcome = np.tanh(pnl / 50.0)
             self.meta_learner.update_parameter('position_size_base', normalized_outcome)
     
-    # Rest of the methods stay the same...
-    def get_position_size(self) -> float:
-        """Adaptive position sizing based on current performance and phase"""
-        
-        risk_params = self.meta_learner.get_risk_parameters()
-        base_size = risk_params['position_size_base']
-        
-        # Adjust by phase
-        phase_multiplier = {'exploration': 0.3, 'development': 0.7, 'production': 1.0}[self.current_phase]
-        
-        # Adjust by recent performance
-        if len(self.loss_history) >= 5:
-            recent_performance = np.mean(self.loss_history[-5:])
-            performance_multiplier = max(0.2, 1.0 + recent_performance / 50.0)  # Better performance = larger size
-        else:
-            performance_multiplier = 1.0
-        
-        # Adjust by consecutive losses
-        loss_adjustment = max(0.5, 1.0 - (self.consecutive_losses * 0.1))
-        
-        final_size = base_size * phase_multiplier * performance_multiplier * loss_adjustment
-        return max(0.1, min(2.0, final_size))  # Clamp to reasonable bounds
-    
     def _adapt_learning_phase(self):
-        """Adapt learning phase based on actual performance, not hardcoded rules"""
-        
+        """Adapt learning phase based on actual performance"""
         if len(self.loss_history) < 10:
-            return  # Need minimum data
+            return
         
-        # Calculate phase readiness based on actual performance
         recent_performance = self.loss_history[-10:]
         win_rate = sum(1 for pnl in recent_performance if pnl > 0) / len(recent_performance)
         avg_pnl = np.mean(recent_performance)
-        consistency = 1.0 - (np.std(recent_performance) / 50.0)  # Lower std = higher consistency
+        consistency = 1.0 - (np.std(recent_performance) / 50.0)
         
-        # Calculate readiness score
         readiness_score = (win_rate * 0.4) + (max(0, avg_pnl / 50.0) * 0.4) + (consistency * 0.2)
-        
-        # Store performance for this phase
         self.phase_performance_history[self.current_phase].append(readiness_score)
         
-        # Adaptive progression thresholds
         if self.current_phase == 'exploration':
-            # Progress to development if showing competence
             if readiness_score > 0.4 and avg_pnl > 5:
                 self.current_phase = 'development'
                 log.info(f"ADAPTIVE PROGRESSION: Advanced to development phase (readiness: {readiness_score:.2f})")
-                self.meta_learner.update_parameter('position_size_base', 0.2)  # Boost confidence
+                self.meta_learner.update_parameter('position_size_base', 0.2)
         
         elif self.current_phase == 'development':
-            # Progress to production if showing consistent profitability
             if readiness_score > 0.6 and avg_pnl > 10 and win_rate > 0.5:
                 self.current_phase = 'production'
                 log.info(f"ADAPTIVE PROGRESSION: Advanced to production phase (readiness: {readiness_score:.2f})")
                 self.meta_learner.update_parameter('position_size_base', 0.3)
             
-            # Regress if performing poorly
             elif readiness_score < 0.2 and avg_pnl < -10:
                 self.current_phase = 'exploration'
                 log.warning(f"ADAPTIVE REGRESSION: Dropped to exploration phase (readiness: {readiness_score:.2f})")
                 self.meta_learner.update_parameter('position_size_base', -0.3)
         
         elif self.current_phase == 'production':
-            # Regress if performance deteriorates
             if readiness_score < 0.3 or avg_pnl < -15:
                 self.current_phase = 'development'
                 log.warning(f"ADAPTIVE REGRESSION: Dropped to development phase (readiness: {readiness_score:.2f})")
                 self.meta_learner.update_parameter('position_size_base', -0.2)
-    
-    def get_adaptive_status(self) -> str:
-        """Get adaptive safety status"""
-        
-        risk_params = self.meta_learner.get_risk_parameters()
-        
-        status = f"""
-ADAPTIVE SAFETY STATUS:
-  Current Phase: {self.current_phase}
-  
-Daily Limits (Adaptive):
-  Daily P&L: ${self.daily_pnl:.2f} / ${-risk_params['max_daily_loss_pct'] * 10000:.0f} limit
-  Trades Today: {self.trades_today}
-  Consecutive Losses: {self.consecutive_losses} / {risk_params['max_consecutive_losses']:.0f} limit
-  Trade Frequency Multiplier: {self.meta_learner.get_parameter('trade_frequency_multiplier'):.2f}
-  
-Position Sizing (Learned):
-  Current Size: {self.get_position_size():.3f}
-  Base Size: {risk_params['position_size_base']:.3f}
-  
-Recent Performance:
-"""
-        
-        if len(self.loss_history) >= 5:
-            recent_pnl = self.loss_history[-5:]
-            win_rate = sum(1 for p in recent_pnl if p > 0) / len(recent_pnl)
-            avg_pnl = np.mean(recent_pnl)
-            status += f"  Win Rate: {win_rate:.1%}\n"
-            status += f"  Avg P&L: ${avg_pnl:.2f}\n"
-        
-        status += f"\nALL LIMITS ADAPTING THROUGH EXPERIENCE!"
-        
-        return status
 
-class PureBlackBoxTradeManager:
+class PureBlackBoxSignalGenerator:
     """
-    PURE BLACK BOX: Complete trade management with zero hardcoded knowledge
-    Everything adapts through meta-learning
+    REFACTORED: Pure signal generation with NO position tracking
+    
+    What this does:
+    - Generate trading signals using all existing subsystems
+    - Learn from trade outcomes streamed back from NinjaTrader
+    - Adapt all meta-parameters based on real execution results
+    
+    What this does NOT do:
+    - Track position sizes or entry prices
+    - Calculate P&L
+    - Manage account balance
+    - Execute trades or manage orders
     """
 
     def __init__(self, intelligence_engine, tcp_bridge, config):
@@ -276,50 +202,38 @@ class PureBlackBoxTradeManager:
         # Environment for state tracking
         self.env = MarketEnv()
         
-        # State tracking
+        # State tracking for signal generation only
         self.last_market_obs = self.env.get_obs()
         self.last_subsystem_features = None
         self.last_decision = {}
         
-        # Position tracking
-        self.current_position = {
-            'in_position': False,
-            'entry_price': 0,
-            'entry_time': None,
-            'action': 0,
-            'size': 0.0,
-            'tool_used': '',
-            'entry_confidence': 0.0,
-            'meta_params_at_entry': {}
-        }
+        # Signal tracking for learning - NO POSITION TRACKING
+        self.pending_signals = {}  # Signals waiting for outcomes
+        self.signal_counter = 0
         
-        # Pure statistics - no preset expectations
-        self.trade_stats = {
-            'total_trades': 0,
-            'winning_trades': 0,
-            'losing_trades': 0,
-            'total_pnl': 0.0,
-            'best_trade': 0.0,
-            'worst_trade': 0.0,
-            'avg_hold_time': 0.0,
+        # Pure statistics
+        self.signal_stats = {
+            'total_signals': 0,
+            'successful_signals': 0,
+            'failed_signals': 0,
+            'total_pnl_from_signals': 0.0,
             'tool_discoveries': {'dna': 0, 'micro': 0, 'temporal': 0, 'immune': 0},
             'adaptive_features_used': {
                 'dynamic_stops': 0,
                 'dynamic_targets': 0,
-                'confidence_based_exits': 0,
+                'confidence_based_signals': 0,
                 'meta_learned_entries': 0
             }
         }
         
-        log.info("PURE BLACK BOX Trade Manager initialized")
-        log.info("ALL parameters will adapt through meta-learning")
-        log.info("Safety limits, position sizing, and thresholds will evolve")
+        log.info("PURE BLACK BOX Signal Generator initialized")
+        log.info("NO position tracking - pure signal generation only")
 
     def on_new_bar(self, msg: Dict[str, Any]):
-        """Pure black box bar processing with complete adaptation"""
+        """Pure black box signal generation with complete adaptation"""
         try:
             # Adaptive safety check
-            if not self.safety_manager.can_trade():
+            if not self.safety_manager.can_generate_signal():
                 return
             
             # Extract price data
@@ -336,145 +250,183 @@ class PureBlackBoxTradeManager:
             subsystem_features = self.extract_adaptive_subsystem_features(intelligence_result)
             
             # Pure black box decision making
-            if not self.current_position['in_position']:
-                decision = self.agent.select_action_and_strategy(
-                    market_obs=market_obs,
-                    subsystem_features=subsystem_features,
-                    current_price=price,
-                    in_position=False
-                )
-                
-                # Store decision data for learning
-                self.last_decision = decision
-                self.last_market_obs = market_obs
-                self.last_subsystem_features = subsystem_features
-                
-                # Execute pure AI decision
-                self._execute_pure_adaptive_decision(decision, price, intelligence_result)
+            decision = self.agent.select_action_and_strategy(
+                market_obs=market_obs,
+                subsystem_features=subsystem_features,
+                current_price=price,
+                in_position=False  # We don't track positions
+            )
             
-            else:
-                # Position management with adaptive parameters
-                self._handle_adaptive_position_management(price, market_obs, subsystem_features)
+            # Store decision data for learning
+            self.last_decision = decision
+            self.last_market_obs = market_obs
+            self.last_subsystem_features = subsystem_features
             
-            # Adaptive logging
-            if self.last_decision:
-                primary_tool = self.last_decision.get('primary_tool', 'unknown')
-                confidence = self.last_decision.get('confidence', 0.0)
-                threshold = self.last_decision.get('entry_threshold_used', 0.5)
-                
-                log.info(f"BLACK BOX ADAPTIVE: {primary_tool.upper()} tool, "
-                       f"confidence {confidence:.3f} vs adaptive threshold {threshold:.3f}")
+            # Generate signal if AI wants to trade
+            if decision['action'] != 0:
+                self._generate_clean_signal(decision, price, intelligence_result)
             
         except Exception as e:
-            log.error(f"Pure black box error: {e}")
-            import traceback
-            traceback.print_exc()
+            log.error(f"Pure signal generation error: {e}")
 
-    def _handle_adaptive_position_management(self, current_price: float, market_obs: np.ndarray, 
-                                           subsystem_features: np.ndarray):
-        """Position management with fully adaptive parameters"""
-        
-        # Get adaptive decision for position management
-        position_decision = self.agent.select_action_and_strategy(
-            market_obs=market_obs,
-            subsystem_features=subsystem_features,
-            current_price=current_price,
-            in_position=True
-        )
-        
-        # Adaptive exit decision
-        if position_decision.get('should_exit', False):
-            exit_reason = "adaptive_confidence_exit"
-            exit_confidence = position_decision.get('confidence', 0.0)
-            exit_threshold = position_decision.get('entry_threshold_used', 0.5)  # Using entry threshold for exit
-            
-            self.tcp_bridge.send_signal(0, exit_confidence, f"AI_adaptive_exit")
-            
-            log.info(f"🚪 ADAPTIVE EXIT: Confidence {exit_confidence:.3f} below adaptive threshold {exit_threshold:.3f}")
-            log.info(f"   Tool used: {self.current_position.get('tool_used', 'unknown').upper()}")
-            
-            self.trade_stats['adaptive_features_used']['confidence_based_exits'] += 1
-            
-            # Complete trade
-            self._complete_adaptive_trade(exit_reason, current_price)
-
-    def _execute_pure_adaptive_decision(self, decision: Dict, current_price: float, intelligence_result: Dict):
-        """Execute decision with fully adaptive parameters"""
+    def _generate_clean_signal(self, decision: Dict, current_price: float, intelligence_result: Dict):
+        """Generate clean signal for NinjaTrader execution"""
         
         action = decision['action']
         confidence = decision['confidence']
+        tool_name = decision['primary_tool']
         
-        # Check adaptive entry conditions
-        if action != 0 and not self.current_position['in_position']:
-            
-            # Get adaptive position size
-            position_size = self.safety_manager.get_position_size()
-            
-            action_code = 1 if action == 1 else 2
-            tool_name = decision['primary_tool']
-            direction = 'long' if action == 1 else 'short'
-            
-            # Build quality string with adaptive parameters
-            quality = f"AI_{tool_name}_{direction}_adaptive"
-            
-            # Adaptive risk management - AI learned parameters
-            stop_price = 0.0
-            target_price = 0.0
+        # AI calculates position size
+        ai_position_size = self.safety_manager.get_position_size()
+        
+        # Build signal data
+        signal_data = {
+            "action": action,
+            "confidence": confidence,
+            "tool_used": tool_name,
+            "position_size": ai_position_size,
+            "ai_suggested_stop": decision.get('stop_price', 0.0),
+            "ai_suggested_target": decision.get('target_price', 0.0),
+            "use_stop": decision.get('use_stop', False),
+            "use_target": decision.get('use_target', False),
+            "reasoning": self._generate_adaptive_reasoning(decision, intelligence_result),
+            "timestamp": datetime.now().timestamp()
+        }
+        
+        # Send to NinjaTrader with AI position size
+        self.tcp_bridge.send_signal(
+            action=action,
+            confidence=confidence,
+            quality=f"{tool_name}_adaptive",
+            stop_price=decision.get('stop_price', 0.0),
+            target_price=decision.get('target_price', 0.0),
+            position_size=ai_position_size
+        )
+        
+        # Store signal for learning
+        self.signal_counter += 1
+        signal_id = f"signal_{self.signal_counter}"
+        
+        self.pending_signals[signal_id] = {
+            'signal_data': signal_data,
+            'decision': decision,
+            'intelligence_result': intelligence_result,
+            'timestamp': datetime.now(),
+            'outcome_received': False
+        }
+        
+        # Update stats
+        self.signal_stats['total_signals'] += 1
+        self.signal_stats['tool_discoveries'][tool_name] += 1
+        self.signal_stats['adaptive_features_used']['meta_learned_entries'] += 1
+        
+        if decision.get('use_stop'):
+            self.signal_stats['adaptive_features_used']['dynamic_stops'] += 1
+        if decision.get('use_target'):
+            self.signal_stats['adaptive_features_used']['dynamic_targets'] += 1
+        
+        log.info(f"🎯 CLEAN SIGNAL #{self.signal_counter}: {tool_name.upper()} {['EXIT', 'BUY', 'SELL'][action]}")
+        log.info(f"   Confidence: {confidence:.3f}")
+        log.info(f"   AI Position Size: {ai_position_size:.2f}")
+        log.info(f"   AI Stop: ${decision.get('stop_price', 0):.2f}" if decision.get('use_stop') else "   No AI Stop")
+        log.info(f"   AI Target: ${decision.get('target_price', 0):.2f}" if decision.get('use_target') else "   No AI Target")
+        
+        # Clean up old pending signals
+        self._cleanup_old_pending_signals()
 
-            if decision['use_stop'] and decision['stop_price']:
-                stop_price = decision['stop_price']
-                quality += f"_adaptiveStop{decision['stop_distance_pct']:.1f}pct"
-                self.trade_stats['adaptive_features_used']['dynamic_stops'] += 1
+    def _generate_adaptive_reasoning(self, decision: Dict, intelligence_result: Dict) -> str:
+        """Generate reasoning using existing code patterns"""
+        
+        primary_tool = decision.get('primary_tool', 'unknown')
+        confidence = decision['confidence']
+        exploration = decision.get('exploration_taken', False)
+        
+        reasoning_parts = []
+        
+        if exploration:
+            reasoning_parts.append(f"EXPLORATION: Random {primary_tool.upper()} tool selection")
+        else:
+            reasoning_parts.append(f"LEARNED: {primary_tool.upper()} tool")
+        
+        threshold_used = decision.get('entry_threshold_used', 0.5)
+        if confidence >= threshold_used:
+            margin = confidence - threshold_used
+            reasoning_parts.append(f"High confidence ({confidence:.2f} > {threshold_used:.2f})")
+        else:
+            reasoning_parts.append(f"Marginal confidence ({confidence:.2f})")
+        
+        # Add meta-learning insight
+        learning_efficiency = self.meta_learner.get_learning_efficiency()
+        if learning_efficiency > 0.5:
+            reasoning_parts.append("FAST LEARNING MODE")
+        elif learning_efficiency < -0.2:
+            reasoning_parts.append("ADAPTATION MODE")
+        
+        return " | ".join(reasoning_parts)
 
-            if decision['use_target'] and decision['target_price']:
-                target_price = decision['target_price']
-                quality += f"_adaptiveTarget{decision['target_distance_pct']:.1f}pct"
-                self.trade_stats['adaptive_features_used']['dynamic_targets'] += 1
-
-            # Send signal with adaptive parameters
-            self.tcp_bridge.send_signal(action_code, confidence, quality, stop_price, target_price)
+    def learn_from_execution_outcome(self, outcome_data: Dict):
+        """Learn from NinjaTrader execution outcome"""
+        try:
+            # Extract outcome data
+            signal_timestamp = outcome_data.get('signal_timestamp')
+            final_pnl = outcome_data.get('final_pnl', 0.0)
+            exit_reason = outcome_data.get('exit_reason', 'unknown')
+            duration_minutes = outcome_data.get('duration_minutes', 0)
             
-            # Track position with adaptive metadata
-            self.current_position = {
-                'in_position': True,
-                'entry_price': current_price,
-                'entry_time': datetime.now(),
-                'action': action,
-                'size': position_size,
-                'tool_used': tool_name,
-                'entry_confidence': confidence,
-                'meta_params_at_entry': decision.get('meta_parameters_used', {})
+            # Find matching signal
+            matching_signal = None
+            for signal_id, signal_data in self.pending_signals.items():
+                if abs(signal_data['timestamp'].timestamp() - signal_timestamp) < 30:  # 30 sec tolerance
+                    matching_signal = signal_data
+                    break
+            
+            if not matching_signal:
+                log.warning(f"No matching signal found for outcome")
+                return
+            
+            # Safety manager learning
+            self.safety_manager.record_signal_outcome(final_pnl)
+            
+            # Create trade outcome for agent learning
+            trade_outcome = {
+                'pnl': final_pnl,
+                'hold_time_hours': duration_minutes / 60.0,
+                'used_stop': matching_signal['decision'].get('use_stop', False),
+                'used_target': matching_signal['decision'].get('use_target', False),
+                'tool_confidence': matching_signal['decision'].get('confidence', 0.5),
+                'primary_tool': matching_signal['decision'].get('primary_tool', 'unknown'),
+                'exit_reason': exit_reason,
+                'exploration_taken': matching_signal['decision'].get('exploration_taken', False),
+                'meta_params_used': matching_signal['decision'].get('meta_parameters_used', {})
             }
             
-            self.trade_stats['total_trades'] += 1
-            self.trade_stats['tool_discoveries'][tool_name] += 1
-            self.trade_stats['adaptive_features_used']['meta_learned_entries'] += 1
+            # Let agent learn from outcome
+            self.agent.store_experience_and_learn(matching_signal['decision'], trade_outcome)
             
-            # Adaptive logging
-            threshold_used = decision.get('entry_threshold_used', 0.5)
-            exploration = decision.get('exploration_taken', False)
+            # Update signal stats
+            if final_pnl > 0:
+                self.signal_stats['successful_signals'] += 1
+            else:
+                self.signal_stats['failed_signals'] += 1
             
-            log.info(f"🎯 PURE ADAPTIVE ENTRY:")
-            log.info(f"   Tool: {tool_name.upper()} ({'EXPLORATION' if exploration else 'LEARNED'})")
-            log.info(f"   Direction: {direction}, Confidence: {confidence:.3f}")
-            log.info(f"   Adaptive Threshold: {threshold_used:.3f}")
-            log.info(f"   Entry Price: ${current_price:.2f}, Adaptive Size: {position_size}")
-            log.info(f"   Phase: {self.safety_manager.current_phase}")
-            log.info(f"   Trade #{self.trade_stats['total_trades']}")
+            self.signal_stats['total_pnl_from_signals'] += final_pnl
             
-            if decision['use_stop']:
-                log.info(f"   Adaptive Stop: ${decision['stop_price']:.2f} ({decision['stop_distance_pct']:.1f}%)")
-            if decision['use_target']:
-                log.info(f"   Adaptive Target: ${decision['target_price']:.2f} ({decision['target_distance_pct']:.1f}%)")
-
-            log.info(f"DEBUG DECISION KEYS: {list(decision.keys())}")
-            log.info(f"DEBUG PRIMARY TOOL: {decision.get('primary_tool', 'NOT_FOUND')}")
+            log.info(f"🎓 SIGNAL OUTCOME LEARNED:")
+            log.info(f"   P&L: ${final_pnl:.2f}")
+            log.info(f"   Tool: {trade_outcome['primary_tool'].upper()}")
+            log.info(f"   Exit: {exit_reason}")
+            log.info(f"   Duration: {duration_minutes}min")
+            
+            # Mark as processed
+            matching_signal['outcome_received'] = True
+            
+        except Exception as e:
+            log.error(f"Error learning from outcome: {e}")
 
     def extract_adaptive_subsystem_features(self, intelligence_result: Dict) -> np.ndarray:
-        """Extract features with adaptive normalization"""
+        """Use existing feature extraction method"""
         features = []
         
-        # Raw subsystem signals with adaptive scaling
         subsystem_signals = intelligence_result.get('subsystem_signals', {})
         subsystem_scores = intelligence_result.get('subsystem_scores', {})
         
@@ -508,214 +460,76 @@ class PureBlackBoxTradeManager:
         
         return np.array(features, dtype=np.float32)
 
-    def record_adaptive_trade_outcome(self, exit_price: float, pnl: float, exit_reason: str = "unknown"):
-        """Record outcome with adaptive reward learning"""
-        try:
-            if not self.last_decision:
-                return
-            
-            # Update trade statistics
-            self.trade_stats['total_pnl'] += pnl
-            self.trade_stats['best_trade'] = max(self.trade_stats['best_trade'], pnl)
-            self.trade_stats['worst_trade'] = min(self.trade_stats['worst_trade'], pnl)
-            
-            if pnl > 0:
-                self.trade_stats['winning_trades'] += 1
-            else:
-                self.trade_stats['losing_trades'] += 1
-            
-            # Calculate hold time
-            if self.current_position.get('entry_time'):
-                hold_time_hours = (datetime.now() - self.current_position['entry_time']).total_seconds() / 3600
-                self.trade_stats['avg_hold_time'] = (self.trade_stats['avg_hold_time'] * (self.trade_stats['total_trades'] - 1) + hold_time_hours) / self.trade_stats['total_trades']
-            else:
-                hold_time_hours = 1.0
-            
-            # Safety manager learning
-            self.safety_manager.record_trade(pnl)
-            
-            # Comprehensive trade data for adaptive reward learning
-            trade_data = {
-                'pnl': pnl,
-                'hold_time_hours': hold_time_hours,
-                'used_stop': self.last_decision.get('use_stop', False),
-                'used_target': self.last_decision.get('use_target', False),
-                'tool_confidence': self.last_decision.get('confidence', 0.5),
-                'primary_tool': self.last_decision.get('primary_tool', 'unknown'),
-                'exit_reason': exit_reason,
-                'entry_confidence': self.current_position.get('entry_confidence', 0.5),
-                'position_size': self.current_position.get('size', 1.0),
-                'exploration_taken': self.last_decision.get('exploration_taken', False),
-                'meta_params_used': self.last_decision.get('meta_parameters_used', {}),
-                'max_drawdown_pct': max(0, -min(0, pnl)) / max(abs(exit_price), 1000),
-                'price_volatility': 20.0,  # Could be calculated from recent price data
-                'max_risk_taken': self.current_position.get('size', 1.0) * 50  # Rough estimate
-            }
-            
-            # Let agent learn from outcome
-            self.agent.store_experience_and_learn(self.last_decision, trade_data)
-            
-            # Pure learning summary
-            log.info(f"🎓 PURE ADAPTIVE LEARNING:")
-            log.info(f"   P&L: ${pnl:.2f}")
-            log.info(f"   Tool: {self.last_decision.get('primary_tool', 'unknown').upper()}")
-            log.info(f"   Exit: {exit_reason}")
-            log.info(f"   Hold Time: {hold_time_hours:.1f}h")
-            log.info(f"   Phase: {self.safety_manager.current_phase}")
-            
-            # Meta-learning insights
-            current_position_size = self.safety_manager.get_position_size()
-            entry_threshold = self.meta_learner.get_confidence_thresholds()['entry']
-            log.info(f"   Adaptive Position Size: {current_position_size:.3f}")
-            log.info(f"   Adaptive Entry Threshold: {entry_threshold:.3f}")
-            
-            # Update state
-            self.last_market_obs = self.env.get_obs()
-            
-        except Exception as e:
-            log.error(f"Error recording adaptive outcome: {e}")
-
-    def _complete_adaptive_trade(self, reason: str, exit_price: float):
-        """Complete trade with adaptive learning"""
-        if not self.current_position['in_position']:
-            return
-        
-        entry_price = self.current_position['entry_price']
-        action = self.current_position['action']
-        
-        # Calculate P&L
-        if action == 1:  # Long
-            pnl = (exit_price - entry_price) * 2.0  # $2 per point for MNQ
-        else:  # Short
-            pnl = (entry_price - exit_price) * 2.0
-        
-        # Adaptive logging
-        duration_hours = (datetime.now() - self.current_position['entry_time']).total_seconds() / 3600
-        
-        log.info(f"📊 PURE ADAPTIVE TRADE COMPLETED:")
-        log.info(f"   Tool: {self.current_position['tool_used'].upper()}")
-        log.info(f"   P&L: ${pnl:.2f}")
-        log.info(f"   Duration: {duration_hours:.1f}h")
-        log.info(f"   Reason: {reason}")
-        log.info(f"   Phase: {self.safety_manager.current_phase}")
-        
-        # Record adaptive outcome
-        self.record_adaptive_trade_outcome(exit_price, pnl, reason)
-        
-        # Reset position
-        self.current_position = {
-            'in_position': False,
-            'entry_price': 0,
-            'entry_time': None,
-            'action': 0,
-            'size': 0.0,
-            'tool_used': '',
-            'entry_confidence': 0.0,
-            'meta_params_at_entry': {}
-        }
+    def _cleanup_old_pending_signals(self):
+        """Clean up old pending signals"""
+        if len(self.pending_signals) > 50:
+            # Remove oldest 25 signals
+            oldest_signals = sorted(self.pending_signals.keys())[:25]
+            for old_signal in oldest_signals:
+                del self.pending_signals[old_signal]
 
     def get_adaptive_performance_report(self) -> str:
-        """Comprehensive adaptive performance report"""
+        """Generate performance report"""
         
         # Agent status
         agent_status = self.agent.get_pure_blackbox_status()
         
         # Safety status
-        safety_status = self.safety_manager.get_adaptive_status()
+        safety_status = self.safety_manager.get_adaptive_status() if hasattr(self.safety_manager, 'get_adaptive_status') else "Safety status not available"
         
-        # Trade statistics
-        trades = self.trade_stats['total_trades']
-        win_rate = self.trade_stats['winning_trades'] / max(1, trades)
-        avg_pnl = self.trade_stats['total_pnl'] / max(1, trades)
+        # Signal statistics
+        signals = self.signal_stats['total_signals']
+        success_rate = self.signal_stats['successful_signals'] / max(1, signals)
+        avg_pnl = self.signal_stats['total_pnl_from_signals'] / max(1, signals)
         
-        trade_report = f"""
+        signal_report = f"""
+=== PURE SIGNAL GENERATION PERFORMANCE ===
 
-=== PURE ADAPTIVE TRADE PERFORMANCE ===
-
-Trade Statistics:
-  Total Trades: {trades}
-  Win Rate: {win_rate:.1%} ({self.trade_stats['winning_trades']} wins, {self.trade_stats['losing_trades']} losses)
-  Average P&L: ${avg_pnl:.2f}
-  Total P&L: ${self.trade_stats['total_pnl']:.2f}
-  Best Trade: ${self.trade_stats['best_trade']:.2f}
-  Worst Trade: ${self.trade_stats['worst_trade']:.2f}
-  Avg Hold Time: {self.trade_stats['avg_hold_time']:.1f}h
+Signal Statistics:
+  Total Signals: {signals}
+  Success Rate: {success_rate:.1%} ({self.signal_stats['successful_signals']} wins, {self.signal_stats['failed_signals']} losses)
+  Average P&L per Signal: ${avg_pnl:.2f}
+  Total P&L from Signals: ${self.signal_stats['total_pnl_from_signals']:.2f}
 
 Tool Discovery Progress:
-  DNA: {self.trade_stats['tool_discoveries']['dna']} uses
-  MICRO: {self.trade_stats['tool_discoveries']['micro']} uses
-  TEMPORAL: {self.trade_stats['tool_discoveries']['temporal']} uses
-  IMMUNE: {self.trade_stats['tool_discoveries']['immune']} uses
+  DNA: {self.signal_stats['tool_discoveries']['dna']} signals
+  MICRO: {self.signal_stats['tool_discoveries']['micro']} signals
+  TEMPORAL: {self.signal_stats['tool_discoveries']['temporal']} signals
+  IMMUNE: {self.signal_stats['tool_discoveries']['immune']} signals
 
 Adaptive Features Used:
-  Meta-Learned Entries: {self.trade_stats['adaptive_features_used']['meta_learned_entries']}
-  Dynamic Stops: {self.trade_stats['adaptive_features_used']['dynamic_stops']}
-  Dynamic Targets: {self.trade_stats['adaptive_features_used']['dynamic_targets']}
-  Confidence-Based Exits: {self.trade_stats['adaptive_features_used']['confidence_based_exits']}
-"""
-        
-        if self.current_position['in_position']:
-            pos = self.current_position
-            duration = (datetime.now() - pos['entry_time']).total_seconds() / 3600
-            trade_report += f"""
-Current Position (Adaptive):
-  Tool: {pos['tool_used'].upper()}
-  Entry Price: ${pos['entry_price']:.2f}
-  Duration: {duration:.1f}h
-  Entry Confidence: {pos['entry_confidence']:.3f}
-  Adaptive Size: {pos['size']:.3f}
+  Meta-Learned Entries: {self.signal_stats['adaptive_features_used']['meta_learned_entries']}
+  Dynamic Stops: {self.signal_stats['adaptive_features_used']['dynamic_stops']}
+  Dynamic Targets: {self.signal_stats['adaptive_features_used']['dynamic_targets']}
+
+Pending Signals: {len(self.pending_signals)}
 """
         
         combined_report = f"""
 {agent_status}
 
-{safety_status}
+{signal_report}
 
-{trade_report}
-
-ALL PARAMETERS OPTIMIZING THROUGH PURE EXPERIENCE!
-No hardcoded thresholds - complete adaptation through meta-learning!
+NO POSITION TRACKING - Pure signal generation with adaptive learning!
+All execution and risk management handled by NinjaTrader!
 """
         
         return combined_report
 
-    # External interface methods
-    def on_trade_update(self, update_type: str, price: float, reason: str = ""):
-        """Handle trade updates from NinjaTrader with adaptive learning"""
-        if update_type == "filled":
-            log.info(f"Adaptive trade filled at ${price:.2f}")
-        elif update_type == "stopped":
-            self._complete_adaptive_trade("adaptive_stop_hit", price)
-        elif update_type == "target_hit":
-            self._complete_adaptive_trade("adaptive_target_hit", price)
-        elif update_type == "closed":
-            self._complete_adaptive_trade(reason or "manual_close", price)
-
-    def emergency_close_all(self):
-        """Emergency close with adaptive learning"""
-        if self.current_position['in_position']:
-            self.tcp_bridge.send_signal(0, 0.9, "EMERGENCY_CLOSE")
-            log.warning("ADAPTIVE EMERGENCY CLOSE: All positions closed")
-            
-            # Learn from emergency situation
-            self.meta_learner.update_parameter('max_daily_loss_pct', -0.5)  # Increase caution
-            self.meta_learner.update_parameter('position_size_base', -0.3)
-    
     def force_save_all_adaptive_learning(self):
         """Force save all adaptive learning"""
         self.agent.force_save_all_learning()
-        log.info("PURE ADAPTIVE: All meta-learning progress saved")
+        log.info("PURE SIGNAL GENERATOR: All meta-learning progress saved")
 
 # Factory function
 def create_pure_blackbox_trade_manager(intelligence_engine, tcp_bridge, config):
-    """Create pure black box trade manager"""
+    """Create pure black box signal generator"""
     
-    manager = PureBlackBoxTradeManager(intelligence_engine, tcp_bridge, config)
+    manager = PureBlackBoxSignalGenerator(intelligence_engine, tcp_bridge, config)
     
-    log.info("PURE BLACK BOX TRADE MANAGER CREATED")
-    log.info("All parameters will adapt through meta-learning")
-    log.info("Safety limits, position sizing, and thresholds will evolve")
-    log.info("Complete adaptation through experience - no hardcoded values")
+    log.info("PURE BLACK BOX SIGNAL GENERATOR CREATED")
+    log.info("NO position tracking - clean signal generation only")
+    log.info("All position management delegated to NinjaTrader")
     
     return manager
 

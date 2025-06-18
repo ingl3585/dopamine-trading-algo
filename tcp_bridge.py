@@ -1,4 +1,4 @@
-# tcp_bridge.py - FIXED: Updated imports and config usage
+# tcp_bridge.py - UPDATED: Added position_size parameter support
 
 import socket
 import struct
@@ -11,7 +11,7 @@ from typing import Callable, Optional, Dict
 log = logging.getLogger(__name__)
 
 class TCPBridge:
-    """Enhanced TCP communication bridge with NinjaTrader - AI price-based risk management"""
+    """Enhanced TCP communication bridge with NinjaTrader - AI position sizing support"""
     
     def __init__(self, config):
         self.config = config
@@ -43,7 +43,7 @@ class TCPBridge:
         self._sig_srv.listen(1)
 
         log.info(f"Enhanced TCP Bridge initialized on {self.TCP_HOST}:{self.FEATURE_PORT} (features) and {self.TCP_HOST}:{self.SIGNAL_PORT} (signals)")
-        log.info("AI will learn optimal stop/target placement through experience")
+        log.info("AI will determine optimal position sizing through learning")
 
     def start(self):
         """Start TCP server and wait for connections"""
@@ -66,7 +66,7 @@ class TCPBridge:
             self.ssock.settimeout(None)
             
             self.connected = True
-            log.info("NinjaTrader connected successfully - AI learning active")
+            log.info("NinjaTrader connected successfully - AI position sizing active")
             
         except socket.timeout:
             log.error("Connection timeout - NinjaTrader not responding")
@@ -116,9 +116,9 @@ class TCPBridge:
                         # Trade completion for AI learning
                         if self.on_trade_completion:
                             self.on_trade_completion(message)
-                            log.info(f"Trade completion received: {message.get('signal_id', 'unknown')} - "
-                                   f"Exit: ${message.get('exit_price', 0):.2f}, "
-                                   f"Reason: {message.get('exit_reason', 'unknown')}")
+                            log.info(f"Trade completion received: {message.get('trade_id', 'unknown')} - "
+                                   f"P&L: ${message.get('final_pnl', 0):.2f}, "
+                                   f"Size: {message.get('position_size', 0):.2f}")
                     
                     elif "price_15m" in message:
                         # Regular market data
@@ -140,9 +140,10 @@ class TCPBridge:
         log.info("Enhanced TCP receive loop stopped")
 
     def send_signal(self, action: int, confidence: float, quality: str,
-                   stop_price: float = 0.0, target_price: float = 0.0):
+                   stop_price: float = 0.0, target_price: float = 0.0, 
+                   position_size: float = 1.0):
         """
-        Send AI trading signal with LEARNED price-based risk management
+        Send AI trading signal with AI-calculated position size and risk management
         
         Args:
             action: 0=exit, 1=buy, 2=sell
@@ -150,6 +151,7 @@ class TCPBridge:
             quality: AI decision description
             stop_price: Actual stop loss price (0.0 = AI chose no stop)
             target_price: Actual take profit price (0.0 = AI chose no target)
+            position_size: AI-calculated position size
         """
         
         if not self.connected:
@@ -169,10 +171,11 @@ class TCPBridge:
                 "action": int(action),
                 "confidence": float(confidence),
                 "quality": str(quality),
-                "use_stop": use_stop,                    # AI decision: use stop or not
-                "stop_price": float(stop_price),         # Actual price AI wants
-                "use_target": use_target,                # AI decision: use target or not
-                "target_price": float(target_price),     # Actual price AI wants
+                "position_size": float(position_size),     # AI-calculated position size
+                "use_stop": use_stop,                      # AI decision: use stop or not
+                "stop_price": float(stop_price),           # Actual price AI wants
+                "use_target": use_target,                  # AI decision: use target or not
+                "target_price": float(target_price),       # Actual price AI wants
                 "timestamp": int(net_ticks)
             }
             
@@ -186,7 +189,7 @@ class TCPBridge:
             self.signals_sent += 1
             self.last_signal_time = time.time()
             
-            log.info(f"AI Signal #{self.signals_sent}: {action_name} (conf: {confidence:.3f}, quality: {quality})")
+            log.info(f"AI Signal #{self.signals_sent}: {action_name} (conf: {confidence:.3f}, size: {position_size:.2f})")
             
             # Log AI's risk management decisions
             risk_decisions = []
@@ -200,11 +203,11 @@ class TCPBridge:
             else:
                 risk_decisions.append("No target (AI choice)")
             
-            log.info(f"AI Risk Management: {' | '.join(risk_decisions)}")
+            log.info(f"AI Decisions: Size: {position_size:.2f} | {' | '.join(risk_decisions)}")
             
             # Track AI learning progression
             if self.signals_sent % 10 == 0:
-                log.info(f"AI Learning Progress: {self.signals_sent} signals sent")
+                log.info(f"AI Learning Progress: {self.signals_sent} signals sent with AI position sizing")
             
             return True
             
@@ -248,6 +251,7 @@ class TCPBridge:
                 "action": action,
                 "confidence": float(confidence),
                 "quality": quality,
+                "position_size": float(amount),  # Amount for scaling/partial exit
                 "use_stop": False,      # Position management doesn't set new stops
                 "stop_price": 0.0,
                 "use_target": False,    # Position management doesn't set new targets
@@ -261,7 +265,7 @@ class TCPBridge:
             self.ssock.sendall(header + data)
             
             self.signals_sent += 1
-            log.info(f"AI Position Management #{self.signals_sent}: {action_type} (conf: {confidence:.3f})")
+            log.info(f"AI Position Management #{self.signals_sent}: {action_type} (conf: {confidence:.3f}, amount: {amount:.2f})")
             log.info(f"AI Reasoning: {reasoning}")
             
             return True
@@ -285,7 +289,7 @@ class TCPBridge:
         """Send emergency close signal"""
         if self.connected:
             log.warning("Sending EMERGENCY CLOSE signal")
-            self.send_signal(0, 0.99, "EMERGENCY_CLOSE")
+            self.send_signal(0, 0.99, "EMERGENCY_CLOSE", position_size=0.0)
             time.sleep(0.5)  # Give time for signal to process
 
     def stop(self):
@@ -294,7 +298,7 @@ class TCPBridge:
         
         # Send any final signals if needed
         if self.connected and self.signals_sent > 0:
-            log.info(f"AI sent {self.signals_sent} total signals during this session")
+            log.info(f"AI sent {self.signals_sent} total signals with position sizing during this session")
         
         self.running = False
         self.connected = False
@@ -316,7 +320,7 @@ class TCPBridge:
         log.info(f"Enhanced TCP Bridge stopped - {connections_closed} connections closed")
         
         if self.signals_sent > 0:
-            log.info(f"Session Summary: {self.signals_sent} AI signals sent")
+            log.info(f"Session Summary: {self.signals_sent} AI signals sent with adaptive position sizing")
             log.info("AI learning data preserved for next session")
 
     # Utility methods for AI learning
