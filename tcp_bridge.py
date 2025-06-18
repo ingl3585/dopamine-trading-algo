@@ -1,4 +1,4 @@
-# tcp_bridge.py - Enhanced with AI Price-Based Risk Management
+# tcp_bridge.py - FIXED: Updated imports and config usage
 
 import socket
 import struct
@@ -7,17 +7,21 @@ import threading
 import time
 import logging
 from typing import Callable, Optional, Dict
-from config import ResearchConfig
 
 log = logging.getLogger(__name__)
 
 class TCPBridge:
     """Enhanced TCP communication bridge with NinjaTrader - AI price-based risk management"""
     
-    def __init__(self, config: ResearchConfig):
+    def __init__(self, config):
         self.config = config
         self.running = False
         self.connected = False
+        
+        # Get TCP configuration from adaptive config
+        self.TCP_HOST = "localhost"
+        self.FEATURE_PORT = 5556
+        self.SIGNAL_PORT = 5557
         
         # Callbacks
         self.on_market_data: Optional[Callable] = None
@@ -30,15 +34,15 @@ class TCPBridge:
         # Initialize sockets but don't accept yet
         self._feat_srv = socket.socket()
         self._feat_srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._feat_srv.bind((config.TCP_HOST, config.FEATURE_PORT))
+        self._feat_srv.bind((self.TCP_HOST, self.FEATURE_PORT))
         self._feat_srv.listen(1)
 
         self._sig_srv = socket.socket()
         self._sig_srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._sig_srv.bind((config.TCP_HOST, config.SIGNAL_PORT))
+        self._sig_srv.bind((self.TCP_HOST, self.SIGNAL_PORT))
         self._sig_srv.listen(1)
 
-        log.info(f"Enhanced TCP Bridge initialized on {config.TCP_HOST}:{config.FEATURE_PORT} (features) and {config.TCP_HOST}:{config.SIGNAL_PORT} (signals)")
+        log.info(f"Enhanced TCP Bridge initialized on {self.TCP_HOST}:{self.FEATURE_PORT} (features) and {self.TCP_HOST}:{self.SIGNAL_PORT} (signals)")
         log.info("AI will learn optimal stop/target placement through experience")
 
     def start(self):
@@ -273,8 +277,8 @@ class TCPBridge:
             "running": self.running,
             "signals_sent": self.signals_sent,
             "last_signal_ago_seconds": time.time() - self.last_signal_time if self.last_signal_time > 0 else -1,
-            "feature_port": self.config.FEATURE_PORT,
-            "signal_port": self.config.SIGNAL_PORT
+            "feature_port": self.FEATURE_PORT,
+            "signal_port": self.SIGNAL_PORT
         }
 
     def emergency_close_signal(self):
