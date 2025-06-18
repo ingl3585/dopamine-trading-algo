@@ -1,244 +1,241 @@
-# trade_manager_ai.py - PURE BLACK BOX: No wisdom, no biases, pure learning
+# pure_blackbox_trade_manager.py - REPLACES trade_manager_ai.py with full meta-learning
 
 from datetime import datetime
 from typing import Dict, Any
 import logging
 import numpy as np
-from rl_agent import StrategicToolLearningAgent
+from rl_agent import PureBlackBoxStrategicAgent
 from market_env import MarketEnv
-from advanced_position_management import PositionManagementLearner, PositionState
+from meta_learner import PureMetaLearner, AdaptiveRewardLearner
 
 log = logging.getLogger(__name__)
 
-class PureBlackBoxConfidenceLearner:
+class AdaptiveSafetyManager:
     """
-    Pure black box confidence learning - no trader wisdom, just experience
-    """
-    
-    def __init__(self):
-        # Start with completely neutral thresholds - AI discovers everything
-        self.confidence_thresholds = {
-            'exit': {'dna': 0.5, 'micro': 0.5, 'temporal': 0.5, 'immune': 0.5},
-            'scale': {'dna': 0.5, 'micro': 0.5, 'temporal': 0.5, 'immune': 0.5}
-        }
-        
-        # Track outcomes for threshold adjustment
-        self.threshold_outcomes = {
-            'exit': {'dna': [], 'micro': [], 'temporal': [], 'immune': []},
-            'scale': {'dna': [], 'micro': [], 'temporal': [], 'immune': []}
-        }
-        
-        # Pure learning parameters
-        self.learning_rate = 0.02
-        self.min_samples = 5  # Need more samples since no wisdom bias
-        
-        log.info("PURE BLACK BOX: AI starts with zero trading knowledge")
-        log.info("All strategies will be discovered through pure experience")
-    
-    def get_threshold(self, action_type: str, tool: str) -> float:
-        """Get current learned threshold for tool/action"""
-        return self.confidence_thresholds[action_type].get(tool, 0.5)
-    
-    def should_take_action(self, action_type: str, tool: str, confidence: float) -> bool:
-        """Pure experience-based decision - no market regime adjustments"""
-        threshold = self.get_threshold(action_type, tool)
-        return confidence >= threshold
-    
-    def record_outcome(self, action_type: str, tool: str, confidence: float, outcome: float):
-        """Record outcome and adjust thresholds based purely on results"""
-        
-        # Store outcome
-        self.threshold_outcomes[action_type][tool].append({
-            'confidence': confidence,
-            'outcome': outcome,
-            'timestamp': datetime.now()
-        })
-        
-        # Keep recent history only
-        if len(self.threshold_outcomes[action_type][tool]) > 30:
-            self.threshold_outcomes[action_type][tool] = \
-                self.threshold_outcomes[action_type][tool][-20:]
-        
-        # Learn from outcomes
-        self._update_threshold(action_type, tool)
-    
-    def _update_threshold(self, action_type: str, tool: str):
-        """Pure learning - adjust thresholds based only on what works"""
-        
-        outcomes = self.threshold_outcomes[action_type][tool]
-        if len(outcomes) < self.min_samples:
-            return
-        
-        current_threshold = self.confidence_thresholds[action_type][tool]
-        
-        # Analyze recent performance
-        recent_outcomes = outcomes[-15:]
-        
-        # Separate by confidence level relative to current threshold
-        above_threshold = [o for o in recent_outcomes if o['confidence'] >= current_threshold]
-        below_threshold = [o for o in recent_outcomes if o['confidence'] < current_threshold]
-        
-        # Calculate success rates
-        above_success = sum(1 for o in above_threshold if o['outcome'] > 0) / max(len(above_threshold), 1)
-        below_success = sum(1 for o in below_threshold if o['outcome'] > 0) / max(len(below_threshold), 1) if below_threshold else 0
-        
-        # Adjust threshold based on what's working
-        if len(below_threshold) >= 3 and below_success > above_success + 0.2:
-            # Lower confidence decisions working better - lower threshold
-            new_threshold = current_threshold * (1 - self.learning_rate)
-            self.confidence_thresholds[action_type][tool] = new_threshold
-            log.info(f"BLACK BOX LEARNING: Lowering {action_type} threshold for {tool.upper()} to {new_threshold:.3f}")
-            
-        elif len(above_threshold) >= 3 and above_success < 0.4:
-            # High confidence decisions failing - raise threshold
-            new_threshold = current_threshold * (1 + self.learning_rate)
-            self.confidence_thresholds[action_type][tool] = new_threshold
-            log.info(f"BLACK BOX LEARNING: Raising {action_type} threshold for {tool.upper()} to {new_threshold:.3f}")
-        
-        elif len(above_threshold) >= 3 and above_success > 0.7:
-            # High confidence working well - slightly lower threshold
-            new_threshold = current_threshold * (1 - self.learning_rate * 0.5)
-            self.confidence_thresholds[action_type][tool] = new_threshold
-            log.info(f"BLACK BOX LEARNING: Optimizing {action_type} threshold for {tool.upper()} to {new_threshold:.3f}")
-        
-        # Keep thresholds in bounds
-        self.confidence_thresholds[action_type][tool] = max(0.05, min(0.95, self.confidence_thresholds[action_type][tool]))
-    
-    def get_learning_status(self) -> str:
-        """Pure learning status - no wisdom comparisons"""
-        
-        status = "PURE BLACK BOX CONFIDENCE LEARNING:\n"
-        
-        for action_type in ['exit', 'scale']:
-            status += f"\n{action_type.upper()} Thresholds (Learned from Experience):\n"
-            for tool, threshold in self.confidence_thresholds[action_type].items():
-                samples = len(self.threshold_outcomes[action_type][tool])
-                
-                if samples > 0:
-                    recent_success = sum(1 for o in self.threshold_outcomes[action_type][tool][-5:] if o['outcome'] > 0) / min(5, samples)
-                    status += f"  {tool.upper()}: {threshold:.3f} ({samples} samples, {recent_success:.1%} recent success)\n"
-                else:
-                    status += f"  {tool.upper()}: {threshold:.3f} (no experience yet)\n"
-        
-        return status
-
-class SafetyManager:
-    """
-    Pure safety constraints - no trading wisdom, just risk management
+    PURE adaptive safety - no hardcoded limits, everything learned from losses
     """
     
-    def __init__(self):
-        # Progressive position sizing based on learning phase
+    def __init__(self, meta_learner: PureMetaLearner):
+        self.meta_learner = meta_learner
+        
+        # Adaptive phase progression (no hardcoded thresholds)
         self.learning_phases = {
-            'exploration': {'max_position_size': 0.1, 'max_daily_trades': 3},
-            'development': {'max_position_size': 0.5, 'max_daily_trades': 8},
-            'production': {'max_position_size': 1.0, 'max_daily_trades': 15}
+            'exploration': {'confidence_requirement': 0.0, 'success_requirement': 0.0},
+            'development': {'confidence_requirement': 0.4, 'success_requirement': 0.3},
+            'production': {'confidence_requirement': 0.6, 'success_requirement': 0.5}
         }
         
-        # Hard safety limits
-        self.max_daily_loss = 200  # Hard stop
-        self.max_consecutive_losses = 6
         self.current_phase = 'exploration'
         
-        # Tracking
+        # Dynamic tracking
         self.daily_pnl = 0.0
         self.consecutive_losses = 0
         self.trades_today = 0
         self.last_date = datetime.now().date()
         
-        log.info("SAFETY MANAGER: Progressive risk limits enabled")
-        log.info(f"Starting phase: {self.current_phase}")
+        # Adaptive learning from losses
+        self.loss_history = []
+        self.phase_performance_history = {phase: [] for phase in self.learning_phases.keys()}
+        
+        log.info("ADAPTIVE SAFETY: All limits will adapt based on actual loss experience")
     
     def can_trade(self) -> bool:
-        """Check if trading is allowed based on safety limits"""
+        """Adaptive trading permission based on learned risk parameters"""
         
         # Reset daily counters
         current_date = datetime.now().date()
         if current_date != self.last_date:
+            # Learn from yesterday's performance before reset
+            if self.trades_today > 0:
+                daily_performance = self.daily_pnl / max(1, self.trades_today)
+                self.meta_learner.update_parameter('max_daily_loss_pct', daily_performance / 100.0)
+                
+                if self.daily_pnl < 0:
+                    self.meta_learner.update_parameter('max_consecutive_losses', -0.1)
+                else:
+                    self.meta_learner.update_parameter('max_consecutive_losses', 0.1)
+            
             self.daily_pnl = 0.0
             self.trades_today = 0
             self.last_date = current_date
         
-        # Check limits
-        phase_limits = self.learning_phases[self.current_phase]
+        # Get adaptive limits
+        risk_params = self.meta_learner.get_risk_parameters()
+        max_daily_loss = risk_params['max_daily_loss_pct'] * 10000  # Assuming $10k account
+        max_consecutive = risk_params['max_consecutive_losses']
         
-        if self.daily_pnl <= -self.max_daily_loss:
-            log.warning(f"SAFETY: Daily loss limit hit (${self.daily_pnl:.2f})")
+        # Check adaptive limits
+        if self.daily_pnl <= -max_daily_loss:
+            log.warning(f"ADAPTIVE SAFETY: Daily loss limit hit (${self.daily_pnl:.2f} vs ${-max_daily_loss:.2f})")
+            
+            # Learn from hitting limit
+            self.meta_learner.update_parameter('max_daily_loss_pct', -0.5)  # Increase caution
             return False
         
-        if self.consecutive_losses >= self.max_consecutive_losses:
-            log.warning(f"SAFETY: Consecutive loss limit hit ({self.consecutive_losses})")
+        if self.consecutive_losses >= max_consecutive:
+            log.warning(f"ADAPTIVE SAFETY: Consecutive loss limit hit ({self.consecutive_losses} vs {max_consecutive})")
+            
+            # Learn from hitting limit
+            self.meta_learner.update_parameter('max_consecutive_losses', -0.3)
             return False
         
-        if self.trades_today >= phase_limits['max_daily_trades']:
-            log.info(f"SAFETY: Daily trade limit hit ({self.trades_today})")
+        # Adaptive daily trade limits based on performance
+        performance_factor = max(0.5, 1.0 + (self.daily_pnl / 100.0))  # Better performance = more trades allowed
+        base_trades = {'exploration': 5, 'development': 12, 'production': 20}[self.current_phase]
+        max_trades_today = int(base_trades * performance_factor)
+        
+        if self.trades_today >= max_trades_today:
+            log.info(f"ADAPTIVE SAFETY: Daily trade limit hit ({self.trades_today} vs {max_trades_today})")
             return False
         
         return True
     
     def get_position_size(self) -> float:
-        """Get allowed position size for current learning phase"""
-        phase_limits = self.learning_phases[self.current_phase]
-        return phase_limits['max_position_size']
+        """Adaptive position sizing based on current performance and phase"""
+        
+        risk_params = self.meta_learner.get_risk_parameters()
+        base_size = risk_params['position_size_base']
+        
+        # Adjust by phase
+        phase_multiplier = {'exploration': 0.3, 'development': 0.7, 'production': 1.0}[self.current_phase]
+        
+        # Adjust by recent performance
+        if len(self.loss_history) >= 5:
+            recent_performance = np.mean(self.loss_history[-5:])
+            performance_multiplier = max(0.2, 1.0 + recent_performance / 50.0)  # Better performance = larger size
+        else:
+            performance_multiplier = 1.0
+        
+        # Adjust by consecutive losses
+        loss_adjustment = max(0.5, 1.0 - (self.consecutive_losses * 0.1))
+        
+        final_size = base_size * phase_multiplier * performance_multiplier * loss_adjustment
+        return max(0.1, min(2.0, final_size))  # Clamp to reasonable bounds
     
     def record_trade(self, pnl: float):
-        """Record trade outcome for safety tracking"""
+        """Record trade and adapt safety parameters"""
         self.daily_pnl += pnl
         self.trades_today += 1
+        self.loss_history.append(pnl)
         
+        # Keep recent history
+        if len(self.loss_history) > 50:
+            self.loss_history = self.loss_history[-30:]
+        
+        # Update consecutive losses
         if pnl < 0:
             self.consecutive_losses += 1
         else:
             self.consecutive_losses = 0
         
-        # Phase progression based on performance
-        self._update_learning_phase()
+        # Adaptive phase progression
+        self._adapt_learning_phase()
+        
+        # Learn from significant outcomes
+        if abs(pnl) > 20:  # Significant trade
+            normalized_outcome = np.tanh(pnl / 50.0)
+            self.meta_learner.update_parameter('position_size_base', normalized_outcome)
     
-    def _update_learning_phase(self):
-        """Progress through learning phases based on performance"""
+    def _adapt_learning_phase(self):
+        """Adapt learning phase based on actual performance, not hardcoded rules"""
         
-        if self.trades_today < 20:  # Need minimum experience
-            return
+        if len(self.loss_history) < 10:
+            return  # Need minimum data
         
-        # Simple progression: positive daily P&L advances phase
-        if self.current_phase == 'exploration' and self.daily_pnl > 50:
-            self.current_phase = 'development'
-            log.info("SAFETY: Advanced to development phase - increasing position sizes")
+        # Calculate phase readiness based on actual performance
+        recent_performance = self.loss_history[-10:]
+        win_rate = sum(1 for pnl in recent_performance if pnl > 0) / len(recent_performance)
+        avg_pnl = np.mean(recent_performance)
+        consistency = 1.0 - (np.std(recent_performance) / 50.0)  # Lower std = higher consistency
         
-        elif self.current_phase == 'development' and self.daily_pnl > 100:
-            self.current_phase = 'production'
-            log.info("SAFETY: Advanced to production phase - full position sizes")
+        # Calculate readiness score
+        readiness_score = (win_rate * 0.4) + (max(0, avg_pnl / 50.0) * 0.4) + (consistency * 0.2)
         
-        # Regression: big losses drop back a phase
-        elif self.daily_pnl < -100:
-            if self.current_phase == 'production':
+        # Store performance for this phase
+        self.phase_performance_history[self.current_phase].append(readiness_score)
+        
+        # Adaptive progression thresholds
+        if self.current_phase == 'exploration':
+            # Progress to development if showing competence
+            if readiness_score > 0.4 and avg_pnl > 5:
                 self.current_phase = 'development'
-                log.warning("SAFETY: Dropped to development phase due to losses")
-            elif self.current_phase == 'development':
+                log.info(f"ADAPTIVE PROGRESSION: Advanced to development phase (readiness: {readiness_score:.2f})")
+                self.meta_learner.update_parameter('position_size_base', 0.2)  # Boost confidence
+        
+        elif self.current_phase == 'development':
+            # Progress to production if showing consistent profitability
+            if readiness_score > 0.6 and avg_pnl > 10 and win_rate > 0.5:
+                self.current_phase = 'production'
+                log.info(f"ADAPTIVE PROGRESSION: Advanced to production phase (readiness: {readiness_score:.2f})")
+                self.meta_learner.update_parameter('position_size_base', 0.3)
+            
+            # Regress if performing poorly
+            elif readiness_score < 0.2 and avg_pnl < -10:
                 self.current_phase = 'exploration'
-                log.warning("SAFETY: Dropped to exploration phase due to losses")
+                log.warning(f"ADAPTIVE REGRESSION: Dropped to exploration phase (readiness: {readiness_score:.2f})")
+                self.meta_learner.update_parameter('position_size_base', -0.3)
+        
+        elif self.current_phase == 'production':
+            # Regress if performance deteriorates
+            if readiness_score < 0.3 or avg_pnl < -15:
+                self.current_phase = 'development'
+                log.warning(f"ADAPTIVE REGRESSION: Dropped to development phase (readiness: {readiness_score:.2f})")
+                self.meta_learner.update_parameter('position_size_base', -0.2)
+    
+    def get_adaptive_status(self) -> str:
+        """Get adaptive safety status"""
+        
+        risk_params = self.meta_learner.get_risk_parameters()
+        
+        status = f"""
+ADAPTIVE SAFETY STATUS:
+  Current Phase: {self.current_phase}
+  
+Daily Limits (Adaptive):
+  Daily P&L: ${self.daily_pnl:.2f} / ${-risk_params['max_daily_loss_pct'] * 10000:.0f} limit
+  Trades Today: {self.trades_today}
+  Consecutive Losses: {self.consecutive_losses} / {risk_params['max_consecutive_losses']:.0f} limit
+  
+Position Sizing (Learned):
+  Current Size: {self.get_position_size():.3f}
+  Base Size: {risk_params['position_size_base']:.3f}
+  
+Recent Performance:
+"""
+        
+        if len(self.loss_history) >= 5:
+            recent_pnl = self.loss_history[-5:]
+            win_rate = sum(1 for p in recent_pnl if p > 0) / len(recent_pnl)
+            avg_pnl = np.mean(recent_pnl)
+            status += f"  Win Rate: {win_rate:.1%}\n"
+            status += f"  Avg P&L: ${avg_pnl:.2f}\n"
+        
+        status += f"\nALL LIMITS ADAPTING THROUGH EXPERIENCE!"
+        
+        return status
 
 class PureBlackBoxTradeManager:
     """
-    PURE BLACK BOX: No wisdom, no biases, just learning from experience
+    PURE BLACK BOX: Complete trade management with zero hardcoded knowledge
+    Everything adapts through meta-learning
     """
 
     def __init__(self, intelligence_engine, tcp_bridge):
         self.intel = intelligence_engine
         self.tcp_bridge = tcp_bridge
         
-        # Pure black box AI - no wisdom initialization
-        self.agent = StrategicToolLearningAgent(
+        # Pure black box agent with meta-learning
+        self.agent = PureBlackBoxStrategicAgent(
             market_obs_size=15,
             subsystem_features_size=16
         )
         
-        # Advanced position management AI
-        self.position_ai = PositionManagementLearner(self.agent)
+        # Access to meta-learner
+        self.meta_learner = self.agent.meta_learner
+        self.reward_learner = self.agent.reward_learner
         
-        # PURE learning systems - no wisdom
-        self.confidence_learner = PureBlackBoxConfidenceLearner()
-        self.safety_manager = SafetyManager()
+        # Adaptive safety manager
+        self.safety_manager = AdaptiveSafetyManager(self.meta_learner)
         
         # Environment for state tracking
         self.env = MarketEnv()
@@ -256,30 +253,36 @@ class PureBlackBoxTradeManager:
             'action': 0,
             'size': 0.0,
             'tool_used': '',
-            'scales_added': 0,
-            'partial_exits': 0
+            'entry_confidence': 0.0,
+            'meta_params_at_entry': {}
         }
         
         # Pure statistics - no preset expectations
         self.trade_stats = {
             'total_trades': 0,
-            'scaling_trades': 0,
-            'partial_exit_trades': 0,
-            'full_exit_trades': 0,
+            'winning_trades': 0,
+            'losing_trades': 0,
             'total_pnl': 0.0,
             'best_trade': 0.0,
             'worst_trade': 0.0,
-            'tool_discovery': {'dna': 0, 'micro': 0, 'temporal': 0, 'immune': 0}
+            'avg_hold_time': 0.0,
+            'tool_discoveries': {'dna': 0, 'micro': 0, 'temporal': 0, 'immune': 0},
+            'adaptive_features_used': {
+                'dynamic_stops': 0,
+                'dynamic_targets': 0,
+                'confidence_based_exits': 0,
+                'meta_learned_entries': 0
+            }
         }
         
         log.info("PURE BLACK BOX Trade Manager initialized")
-        log.info("AI will discover ALL trading strategies from scratch")
-        log.info("No hardcoded knowledge - pure pattern discovery")
+        log.info("ALL parameters will adapt through meta-learning")
+        log.info("Safety limits, position sizing, and thresholds will evolve")
 
     def on_new_bar(self, msg: Dict[str, Any]):
-        """Pure black box processing - AI discovers everything"""
+        """Pure black box bar processing with complete adaptation"""
         try:
-            # Safety check
+            # Adaptive safety check
             if not self.safety_manager.can_trade():
                 return
             
@@ -292,166 +295,110 @@ class PureBlackBoxTradeManager:
             market_obs = self.env.get_obs()
             self.env.step(price, 0)
             
-            # Position management with pure learning
-            if self.current_position['in_position']:
-                self._handle_pure_position_management(price, market_obs)
+            # Process with intelligence systems
+            intelligence_result = self.intel.process_market_data(prices, volumes, datetime.now())
+            subsystem_features = self.extract_adaptive_subsystem_features(intelligence_result)
             
-            # New entry decisions with pure black box learning
+            # Pure black box decision making
             if not self.current_position['in_position']:
                 decision = self.agent.select_action_and_strategy(
                     market_obs=market_obs,
-                    subsystem_features=self.extract_subsystem_features(
-                        self.intel.process_market_data(prices, volumes, datetime.now())
-                    ),
+                    subsystem_features=subsystem_features,
                     current_price=price,
-                    in_position=self.current_position['in_position']
+                    in_position=False
                 )
                 
-                # Store decision data for pure learning
+                # Store decision data for learning
                 self.last_decision = decision
                 self.last_market_obs = market_obs
-                self.last_subsystem_features = decision['raw_subsystem_features']
+                self.last_subsystem_features = subsystem_features
                 
-                # Execute decision
-                self._execute_pure_ai_decision(decision, price)
+                # Execute pure AI decision
+                self._execute_pure_adaptive_decision(decision, price, intelligence_result)
             
-            # Pure discovery logging
+            else:
+                # Position management with adaptive parameters
+                self._handle_adaptive_position_management(price, market_obs, subsystem_features)
+            
+            # Adaptive logging
             if self.last_decision:
                 primary_tool = self.last_decision.get('primary_tool', 'unknown')
                 confidence = self.last_decision.get('confidence', 0.0)
-                log.info(f"BLACK BOX DISCOVERY: {primary_tool.upper()} tool, confidence {confidence:.3f}")
+                threshold = self.last_decision.get('entry_threshold_used', 0.5)
+                
+                log.info(f"BLACK BOX ADAPTIVE: {primary_tool.upper()} tool, "
+                       f"confidence {confidence:.3f} vs adaptive threshold {threshold:.3f}")
             
         except Exception as e:
             log.error(f"Pure black box error: {e}")
             import traceback
             traceback.print_exc()
 
-    def _handle_pure_position_management(self, current_price: float, market_obs: np.ndarray):
-        """Position management with pure learning - no wisdom biases"""
+    def _handle_adaptive_position_management(self, current_price: float, market_obs: np.ndarray, 
+                                           subsystem_features: np.ndarray):
+        """Position management with fully adaptive parameters"""
         
-        if self.position_ai.current_position:
-            self.position_ai.update_position(current_price)
-            tool_used = self.position_ai.current_position.tool_used
+        # Get adaptive decision for position management
+        position_decision = self.agent.select_action_and_strategy(
+            market_obs=market_obs,
+            subsystem_features=subsystem_features,
+            current_price=current_price,
+            in_position=True
+        )
+        
+        # Adaptive exit decision
+        if position_decision.get('should_exit', False):
+            exit_reason = "adaptive_confidence_exit"
+            exit_confidence = position_decision.get('confidence', 0.0)
+            exit_threshold = position_decision.get('entry_threshold_used', 0.5)  # Using entry threshold for exit
             
-            # SCALING with pure learning
-            scale_decision = self.position_ai.should_scale_position(market_obs, current_price)
+            self.tcp_bridge.send_signal(0, exit_confidence, f"AI_adaptive_exit")
             
-            # Pure experience-based threshold check
-            if (scale_decision['action'] != 'no_scale' and 
-                self.confidence_learner.should_take_action(
-                    'scale', tool_used, scale_decision['confidence'])):
-                
-                scale_amount = scale_decision['scale_amount']
-                action_code = 1 if self.current_position['action'] == 1 else 2
-                quality = f"AI_scale_{scale_decision['action']}_{tool_used}"
-                
-                self.tcp_bridge.send_signal(action_code, scale_decision['confidence'], quality)
-                
-                # Update tracking
-                old_size = self.current_position['size']
-                self.current_position['size'] += scale_amount
-                self.current_position['scales_added'] += 1
-                self.trade_stats['scaling_trades'] += 1
-                
-                threshold_used = self.confidence_learner.get_threshold('scale', tool_used)
-                
-                log.info(f"🔄 PURE AI SCALING: {scale_decision['reasoning']}")
-                log.info(f"   Confidence: {scale_decision['confidence']:.3f} vs learned threshold {threshold_used:.3f}")
-                log.info(f"   Size: {old_size:.1f} -> {self.current_position['size']:.1f}")
-                
-                # Record for pure learning
-                self._pending_scale_decision = {
-                    'tool': tool_used,
-                    'confidence': scale_decision['confidence'],
-                    'action_type': 'scale'
-                }
+            log.info(f"🚪 ADAPTIVE EXIT: Confidence {exit_confidence:.3f} below adaptive threshold {exit_threshold:.3f}")
+            log.info(f"   Tool used: {self.current_position.get('tool_used', 'unknown').upper()}")
             
-            # EXITS with pure learning
-            exit_decision = self.position_ai.should_exit_position(market_obs, current_price)
+            self.trade_stats['adaptive_features_used']['confidence_based_exits'] += 1
             
-            # Pure experience-based threshold check
-            if (exit_decision['action'] != 'hold' and 
-                self.confidence_learner.should_take_action(
-                    'exit', tool_used, exit_decision['confidence'])):
-                
-                threshold_used = self.confidence_learner.get_threshold('exit', tool_used)
-                
-                if exit_decision['action'] == 'exit_100%':
-                    # Full exit
-                    self.tcp_bridge.send_signal(0, exit_decision['confidence'], 
-                                              f"AI_exit_full_{tool_used}")
-                    
-                    self.trade_stats['full_exit_trades'] += 1
-                    log.info(f"🚪 PURE AI FULL EXIT: {exit_decision['reasoning']}")
-                    log.info(f"   Confidence: {exit_decision['confidence']:.3f} vs learned threshold {threshold_used:.3f}")
-                    
-                    # Record for pure learning
-                    self._pending_exit_decision = {
-                        'tool': tool_used,
-                        'confidence': exit_decision['confidence'],
-                        'action_type': 'exit'
-                    }
-                    
-                    # Complete trade
-                    self._complete_trade("AI_full_exit", current_price)
-                    
-                elif 'exit_' in exit_decision['action']:
-                    # Partial exit
-                    exit_amount = exit_decision['exit_amount']
-                    exit_quality = f"AI_exit_{exit_decision['action']}_{tool_used}"
-                    
-                    self.tcp_bridge.send_signal(0, exit_decision['confidence'], exit_quality)
-                    
-                    # Update position
-                    old_size = self.current_position['size']
-                    self.current_position['size'] *= (1.0 - exit_amount)
-                    self.current_position['partial_exits'] += 1
-                    self.trade_stats['partial_exit_trades'] += 1
-                    
-                    log.info(f"💰 PURE AI PARTIAL EXIT: {exit_decision['reasoning']}")
-                    log.info(f"   Confidence: {exit_decision['confidence']:.3f} vs learned threshold {threshold_used:.3f}")
-                    log.info(f"   Size: {old_size:.1f} -> {self.current_position['size']:.1f}")
-                    
-                    # Record partial exit for learning
-                    self.confidence_learner.record_outcome(
-                        'exit', tool_used, exit_decision['confidence'], 0.1
-                    )
+            # Complete trade
+            self._complete_adaptive_trade(exit_reason, current_price)
 
-    def _execute_pure_ai_decision(self, decision: Dict, current_price: float):
-        """Execute AI decision with pure black box learning"""
+    def _execute_pure_adaptive_decision(self, decision: Dict, current_price: float, intelligence_result: Dict):
+        """Execute decision with fully adaptive parameters"""
         
         action = decision['action']
         confidence = decision['confidence']
         
-        # Check if AI wants to enter
+        # Check adaptive entry conditions
         if action != 0 and not self.current_position['in_position']:
             
-            # Get safety-managed position size
+            # Get adaptive position size
             position_size = self.safety_manager.get_position_size()
             
             action_code = 1 if action == 1 else 2
             tool_name = decision['primary_tool']
             direction = 'long' if action == 1 else 'short'
             
-            # Build quality string
-            quality = f"AI_{tool_name}_{direction}"
+            # Build quality string with adaptive parameters
+            quality = f"AI_{tool_name}_{direction}_adaptive"
             
-            # AI-learned risk management (no hardcoded rules)
+            # Adaptive risk management - AI learned parameters
             stop_price = 0.0
             target_price = 0.0
 
             if decision['use_stop'] and decision['stop_price']:
                 stop_price = decision['stop_price']
-                quality += f"_stop{decision['stop_distance_pct']:.1f}pct"
+                quality += f"_adaptiveStop{decision['stop_distance_pct']:.1f}pct"
+                self.trade_stats['adaptive_features_used']['dynamic_stops'] += 1
 
             if decision['use_target'] and decision['target_price']:
                 target_price = decision['target_price']
-                quality += f"_target{decision['target_distance_pct']:.1f}pct"
+                quality += f"_adaptiveTarget{decision['target_distance_pct']:.1f}pct"
+                self.trade_stats['adaptive_features_used']['dynamic_targets'] += 1
 
-            # Send signal
+            # Send signal with adaptive parameters
             self.tcp_bridge.send_signal(action_code, confidence, quality, stop_price, target_price)
             
-            # Track position
+            # Track position with adaptive metadata
             self.current_position = {
                 'in_position': True,
                 'entry_price': current_price,
@@ -459,141 +406,138 @@ class PureBlackBoxTradeManager:
                 'action': action,
                 'size': position_size,
                 'tool_used': tool_name,
-                'scales_added': 0,
-                'partial_exits': 0
+                'entry_confidence': confidence,
+                'meta_params_at_entry': decision.get('meta_parameters_used', {})
             }
             
-            # Start position AI tracking
-            self.position_ai.start_position(
-                entry_price=current_price,
-                initial_size=position_size,
-                tool_used=tool_name,
-                entry_confidence=confidence,
-                market_regime='unknown'  # No regime classification
-            )
-            
             self.trade_stats['total_trades'] += 1
-            self.trade_stats['tool_discovery'][tool_name] += 1
+            self.trade_stats['tool_discoveries'][tool_name] += 1
+            self.trade_stats['adaptive_features_used']['meta_learned_entries'] += 1
             
-            log.info(f"🎯 PURE BLACK BOX ENTRY:")
-            log.info(f"   Tool Discovered: {tool_name.upper()}")
+            # Adaptive logging
+            threshold_used = decision.get('entry_threshold_used', 0.5)
+            exploration = decision.get('exploration_taken', False)
+            
+            log.info(f"🎯 PURE ADAPTIVE ENTRY:")
+            log.info(f"   Tool: {tool_name.upper()} ({'EXPLORATION' if exploration else 'LEARNED'})")
             log.info(f"   Direction: {direction}, Confidence: {confidence:.3f}")
-            log.info(f"   Entry Price: ${current_price:.2f}, Size: {position_size}")
-            log.info(f"   Trade #{self.trade_stats['total_trades']}")
+            log.info(f"   Adaptive Threshold: {threshold_used:.3f}")
+            log.info(f"   Entry Price: ${current_price:.2f}, Adaptive Size: {position_size}")
             log.info(f"   Phase: {self.safety_manager.current_phase}")
+            log.info(f"   Trade #{self.trade_stats['total_trades']}")
             
             if decision['use_stop']:
-                log.info(f"   AI Stop: ${decision['stop_price']:.2f}")
+                log.info(f"   Adaptive Stop: ${decision['stop_price']:.2f} ({decision['stop_distance_pct']:.1f}%)")
             if decision['use_target']:
-                log.info(f"   AI Target: ${decision['target_price']:.2f}")
+                log.info(f"   Adaptive Target: ${decision['target_price']:.2f} ({decision['target_distance_pct']:.1f}%)")
 
-    def record_trade_outcome(self, exit_price: float, pnl: float, exit_reason: str = "unknown"):
-        """Pure learning from trade outcomes - no preset rewards"""
+    def extract_adaptive_subsystem_features(self, intelligence_result: Dict) -> np.ndarray:
+        """Extract features with adaptive normalization"""
+        features = []
+        
+        # Raw subsystem signals with adaptive scaling
+        subsystem_signals = intelligence_result.get('subsystem_signals', {})
+        subsystem_scores = intelligence_result.get('subsystem_scores', {})
+        
+        # DNA features
+        dna_signal = subsystem_signals.get('dna', 0.0)
+        dna_confidence = subsystem_scores.get('dna', 0.0)
+        dna_patterns = min(intelligence_result.get('similar_patterns_count', 0) / 10.0, 1.0)
+        dna_length = min(intelligence_result.get('dna_sequence_length', 0) / 20.0, 1.0)
+        features.extend([dna_signal, dna_confidence, dna_patterns, dna_length])
+        
+        # Micro features
+        micro_signal = subsystem_signals.get('micro', 0.0)
+        micro_confidence = subsystem_scores.get('micro', 0.0)
+        micro_strength = abs(micro_signal) * micro_confidence
+        micro_active = 1.0 if intelligence_result.get('micro_pattern_id') else 0.0
+        features.extend([micro_signal, micro_confidence, micro_strength, micro_active])
+        
+        # Temporal features
+        temporal_signal = subsystem_signals.get('temporal', 0.0)
+        temporal_confidence = subsystem_scores.get('temporal', 0.0)
+        temporal_strength = abs(temporal_signal) * temporal_confidence
+        temporal_active = 1.0 if abs(temporal_signal) > 0.1 else 0.0
+        features.extend([temporal_signal, temporal_confidence, temporal_strength, temporal_active])
+        
+        # Immune features
+        immune_signal = subsystem_signals.get('immune', 0.0)
+        immune_confidence = subsystem_scores.get('immune', 0.0)
+        danger_flag = 1.0 if intelligence_result.get('is_dangerous_pattern') else 0.0
+        benefit_flag = 1.0 if intelligence_result.get('is_beneficial_pattern') else 0.0
+        features.extend([immune_signal, immune_confidence, danger_flag, benefit_flag])
+        
+        return np.array(features, dtype=np.float32)
+
+    def record_adaptive_trade_outcome(self, exit_price: float, pnl: float, exit_reason: str = "unknown"):
+        """Record outcome with adaptive reward learning"""
         try:
             if not self.last_decision:
                 return
             
-            # Update statistics
+            # Update trade statistics
             self.trade_stats['total_pnl'] += pnl
             self.trade_stats['best_trade'] = max(self.trade_stats['best_trade'], pnl)
             self.trade_stats['worst_trade'] = min(self.trade_stats['worst_trade'], pnl)
             
-            # Safety tracking
+            if pnl > 0:
+                self.trade_stats['winning_trades'] += 1
+            else:
+                self.trade_stats['losing_trades'] += 1
+            
+            # Calculate hold time
+            if self.current_position.get('entry_time'):
+                hold_time_hours = (datetime.now() - self.current_position['entry_time']).total_seconds() / 3600
+                self.trade_stats['avg_hold_time'] = (self.trade_stats['avg_hold_time'] * (self.trade_stats['total_trades'] - 1) + hold_time_hours) / self.trade_stats['total_trades']
+            else:
+                hold_time_hours = 1.0
+            
+            # Safety manager learning
             self.safety_manager.record_trade(pnl)
             
-            # Pure P&L-based reward (no bonuses, no wisdom validation)
-            base_reward = pnl / 50.0  # Normalize for MNQ
+            # Comprehensive trade data for adaptive reward learning
+            trade_data = {
+                'pnl': pnl,
+                'hold_time_hours': hold_time_hours,
+                'used_stop': self.last_decision.get('use_stop', False),
+                'used_target': self.last_decision.get('use_target', False),
+                'tool_confidence': self.last_decision.get('confidence', 0.5),
+                'primary_tool': self.last_decision.get('primary_tool', 'unknown'),
+                'exit_reason': exit_reason,
+                'entry_confidence': self.current_position.get('entry_confidence', 0.5),
+                'position_size': self.current_position.get('size', 1.0),
+                'exploration_taken': self.last_decision.get('exploration_taken', False),
+                'meta_params_used': self.last_decision.get('meta_parameters_used', {}),
+                'max_drawdown_pct': max(0, -min(0, pnl)) / max(abs(exit_price), 1000),
+                'price_volatility': 20.0,  # Could be calculated from recent price data
+                'max_risk_taken': self.current_position.get('size', 1.0) * 50  # Rough estimate
+            }
             
-            # ONLY position management rewards (universal principles)
-            bonus_reward = 0.0
-            
-            # Risk management (universal principle: limit losses)
-            if exit_reason == "stop_hit" and self.last_decision.get('use_stop', False):
-                if pnl > -30:  # Stop limited loss
-                    bonus_reward += 0.2
-                    log.info("PURE LEARNING: +0.2 for protective stop")
-            
-            # Profit taking (universal principle: secure gains)
-            if exit_reason == "target_hit" and self.last_decision.get('use_target', False):
-                bonus_reward += 0.2
-                log.info("PURE LEARNING: +0.2 for hitting target")
-            
-            # Position scaling outcomes
-            if self.current_position['scales_added'] > 0:
-                if pnl > 10:
-                    bonus_reward += 0.3 * self.current_position['scales_added']
-                    log.info(f"PURE LEARNING: +{0.3 * self.current_position['scales_added']:.1f} for successful scaling")
-                else:
-                    bonus_reward -= 0.1 * self.current_position['scales_added']
-                    log.info(f"PURE LEARNING: -{0.1 * self.current_position['scales_added']:.1f} for failed scaling")
-            
-            # Partial exits
-            if self.current_position['partial_exits'] > 0:
-                bonus_reward += 0.1  # Small reward for risk management
-                log.info("PURE LEARNING: +0.1 for partial exits")
-            
-            total_reward = base_reward + bonus_reward
-            
-            # Update pure confidence thresholds
-            primary_tool = self.last_decision.get('primary_tool', '')
-            normalized_outcome = pnl / 50.0
-            
-            # Record outcomes for pure learning
-            if hasattr(self, '_pending_exit_decision'):
-                decision = self._pending_exit_decision
-                self.confidence_learner.record_outcome(
-                    decision['action_type'],
-                    decision['tool'], 
-                    decision['confidence'],
-                    normalized_outcome
-                )
-                log.info(f"PURE THRESHOLD LEARNING: Updated {decision['action_type']} for {decision['tool'].upper()}")
-                delattr(self, '_pending_exit_decision')
-            
-            if hasattr(self, '_pending_scale_decision'):
-                decision = self._pending_scale_decision
-                self.confidence_learner.record_outcome(
-                    decision['action_type'],
-                    decision['tool'], 
-                    decision['confidence'],
-                    normalized_outcome
-                )
-                log.info(f"PURE THRESHOLD LEARNING: Updated {decision['action_type']} for {decision['tool'].upper()}")
-                delattr(self, '_pending_scale_decision')
-            
-            # Store experience for AI learning
-            next_market_obs = self.env.get_obs()
-            next_subsystem_features = self.last_subsystem_features
-            
-            self.agent.store_experience(
-                state_data=self.last_decision,
-                reward=total_reward,
-                next_market_obs=next_market_obs,
-                next_subsystem_features=next_subsystem_features,
-                done=True
-            )
+            # Let agent learn from outcome
+            self.agent.store_experience_and_learn(self.last_decision, trade_data)
             
             # Pure learning summary
-            log.info(f"🎓 PURE BLACK BOX LEARNING:")
-            log.info(f"   P&L: ${pnl:.2f} -> Reward: {total_reward:.3f}")
-            log.info(f"   Tool: {primary_tool.upper()}")
+            log.info(f"🎓 PURE ADAPTIVE LEARNING:")
+            log.info(f"   P&L: ${pnl:.2f}")
+            log.info(f"   Tool: {self.last_decision.get('primary_tool', 'unknown').upper()}")
             log.info(f"   Exit: {exit_reason}")
-            log.info(f"   Base: {base_reward:.3f}, Bonus: {bonus_reward:.3f}")
+            log.info(f"   Hold Time: {hold_time_hours:.1f}h")
+            log.info(f"   Phase: {self.safety_manager.current_phase}")
             
-            # Tool discovery progress
-            discoveries = self.trade_stats['tool_discovery']
-            total_discoveries = sum(discoveries.values())
-            if total_discoveries > 0:
-                log.info(f"   Tool Discovery: DNA({discoveries['dna']}) MICRO({discoveries['micro']}) TEMPORAL({discoveries['temporal']}) IMMUNE({discoveries['immune']})")
+            # Meta-learning insights
+            current_position_size = self.safety_manager.get_position_size()
+            entry_threshold = self.meta_learner.get_confidence_thresholds()['entry']
+            log.info(f"   Adaptive Position Size: {current_position_size:.3f}")
+            log.info(f"   Adaptive Entry Threshold: {entry_threshold:.3f}")
             
             # Update state
-            self.last_market_obs = next_market_obs
+            self.last_market_obs = self.env.get_obs()
             
         except Exception as e:
-            log.error(f"Error recording pure outcome: {e}")
+            log.error(f"Error recording adaptive outcome: {e}")
 
-    def _complete_trade(self, reason: str, exit_price: float):
-        """Complete trade with pure learning"""
+    def _complete_adaptive_trade(self, reason: str, exit_price: float):
+        """Complete trade with adaptive learning"""
         if not self.current_position['in_position']:
             return
         
@@ -606,24 +550,18 @@ class PureBlackBoxTradeManager:
         else:  # Short
             pnl = (entry_price - exit_price) * 2.0
         
-        # Pure logging
+        # Adaptive logging
         duration_hours = (datetime.now() - self.current_position['entry_time']).total_seconds() / 3600
         
-        log.info(f"📊 PURE BLACK BOX TRADE COMPLETED:")
+        log.info(f"📊 PURE ADAPTIVE TRADE COMPLETED:")
         log.info(f"   Tool: {self.current_position['tool_used'].upper()}")
         log.info(f"   P&L: ${pnl:.2f}")
         log.info(f"   Duration: {duration_hours:.1f}h")
-        log.info(f"   Scales: {self.current_position['scales_added']}")
-        log.info(f"   Exits: {self.current_position['partial_exits']}")
         log.info(f"   Reason: {reason}")
         log.info(f"   Phase: {self.safety_manager.current_phase}")
         
-        # Record pure outcome
-        self.record_trade_outcome(exit_price, pnl, reason)
-        
-        # Position AI learning
-        if self.position_ai.current_position:
-            self.position_ai.close_position(exit_price)
+        # Record adaptive outcome
+        self.record_adaptive_trade_outcome(exit_price, pnl, reason)
         
         # Reset position
         self.current_position = {
@@ -633,113 +571,158 @@ class PureBlackBoxTradeManager:
             'action': 0,
             'size': 0.0,
             'tool_used': '',
-            'scales_added': 0,
-            'partial_exits': 0
+            'entry_confidence': 0.0,
+            'meta_params_at_entry': {}
         }
 
-    def extract_subsystem_features(self, intelligence_result):
-        """Extract features from subsystems - no interpretation"""
-        features = []
+    def get_adaptive_performance_report(self) -> str:
+        """Comprehensive adaptive performance report"""
         
-        # Raw subsystem signals
-        dna_signal = intelligence_result['subsystem_signals'].get('dna', 0.0)
-        dna_confidence = intelligence_result['subsystem_scores'].get('dna', 0.0)
-        dna_patterns = intelligence_result.get('similar_patterns_count', 0) / 10.0
-        dna_length = min(intelligence_result.get('dna_sequence_length', 0) / 20.0, 1.0)
-        features.extend([dna_signal, dna_confidence, dna_patterns, dna_length])
+        # Agent status
+        agent_status = self.agent.get_pure_blackbox_status()
         
-        micro_signal = intelligence_result['subsystem_signals'].get('micro', 0.0)
-        micro_confidence = intelligence_result['subsystem_scores'].get('micro', 0.0)
-        micro_strength = abs(micro_signal) * micro_confidence
-        micro_active = 1.0 if intelligence_result.get('micro_pattern_id') else 0.0
-        features.extend([micro_signal, micro_confidence, micro_strength, micro_active])
+        # Safety status
+        safety_status = self.safety_manager.get_adaptive_status()
         
-        temporal_signal = intelligence_result['subsystem_signals'].get('temporal', 0.0)
-        temporal_confidence = intelligence_result['subsystem_scores'].get('temporal', 0.0)
-        temporal_strength = abs(temporal_signal) * temporal_confidence
-        temporal_active = 1.0 if abs(temporal_signal) > 0.1 else 0.0
-        features.extend([temporal_signal, temporal_confidence, temporal_strength, temporal_active])
-        
-        immune_signal = intelligence_result['subsystem_signals'].get('immune', 0.0)
-        immune_confidence = intelligence_result['subsystem_scores'].get('immune', 0.0)
-        danger_flag = 1.0 if intelligence_result.get('is_dangerous_pattern') else 0.0
-        benefit_flag = 1.0 if intelligence_result.get('is_beneficial_pattern') else 0.0
-        features.extend([immune_signal, immune_confidence, danger_flag, benefit_flag])
-        
-        return np.array(features, dtype=np.float32)
-
-    def get_performance_report(self) -> str:
-        """Pure black box performance report"""
-        
-        base_report = self.agent.get_tool_performance_report()
-        
+        # Trade statistics
         trades = self.trade_stats['total_trades']
+        win_rate = self.trade_stats['winning_trades'] / max(1, trades)
         avg_pnl = self.trade_stats['total_pnl'] / max(1, trades)
         
-        pure_stats = f"""
+        trade_report = f"""
 
-=== PURE BLACK BOX PERFORMANCE ===
+=== PURE ADAPTIVE TRADE PERFORMANCE ===
 
-Total Trades: {trades}
-Average P&L: ${avg_pnl:.2f}
-Best Trade: ${self.trade_stats['best_trade']:.2f}
-Worst Trade: ${self.trade_stats['worst_trade']:.2f}
-Total P&L: ${self.trade_stats['total_pnl']:.2f}
+Trade Statistics:
+  Total Trades: {trades}
+  Win Rate: {win_rate:.1%} ({self.trade_stats['winning_trades']} wins, {self.trade_stats['losing_trades']} losses)
+  Average P&L: ${avg_pnl:.2f}
+  Total P&L: ${self.trade_stats['total_pnl']:.2f}
+  Best Trade: ${self.trade_stats['best_trade']:.2f}
+  Worst Trade: ${self.trade_stats['worst_trade']:.2f}
+  Avg Hold Time: {self.trade_stats['avg_hold_time']:.1f}h
 
 Tool Discovery Progress:
-- DNA: {self.trade_stats['tool_discovery']['dna']} uses
-- MICRO: {self.trade_stats['tool_discovery']['micro']} uses
-- TEMPORAL: {self.trade_stats['tool_discovery']['temporal']} uses
-- IMMUNE: {self.trade_stats['tool_discovery']['immune']} uses
+  DNA: {self.trade_stats['tool_discoveries']['dna']} uses
+  MICRO: {self.trade_stats['tool_discoveries']['micro']} uses
+  TEMPORAL: {self.trade_stats['tool_discoveries']['temporal']} uses
+  IMMUNE: {self.trade_stats['tool_discoveries']['immune']} uses
 
-Advanced Features:
-- Scaling Trades: {self.trade_stats['scaling_trades']}
-- Partial Exits: {self.trade_stats['partial_exit_trades']}
-- Full Exits: {self.trade_stats['full_exit_trades']}
-
-Safety Status:
-- Current Phase: {self.safety_manager.current_phase}
-- Daily P&L: ${self.safety_manager.daily_pnl:.2f}
-- Consecutive Losses: {self.safety_manager.consecutive_losses}
-
-AI discovering trading strategies through pure experience!
+Adaptive Features Used:
+  Meta-Learned Entries: {self.trade_stats['adaptive_features_used']['meta_learned_entries']}
+  Dynamic Stops: {self.trade_stats['adaptive_features_used']['dynamic_stops']}
+  Dynamic Targets: {self.trade_stats['adaptive_features_used']['dynamic_targets']}
+  Confidence-Based Exits: {self.trade_stats['adaptive_features_used']['confidence_based_exits']}
 """
         
-        threshold_report = f"""
+        if self.current_position['in_position']:
+            pos = self.current_position
+            duration = (datetime.now() - pos['entry_time']).total_seconds() / 3600
+            trade_report += f"""
+Current Position (Adaptive):
+  Tool: {pos['tool_used'].upper()}
+  Entry Price: ${pos['entry_price']:.2f}
+  Duration: {duration:.1f}h
+  Entry Confidence: {pos['entry_confidence']:.3f}
+  Adaptive Size: {pos['size']:.3f}
+"""
+        
+        combined_report = f"""
+{agent_status}
 
-{self.confidence_learner.get_learning_status()}
+{safety_status}
+
+{trade_report}
+
+ALL PARAMETERS OPTIMIZING THROUGH PURE EXPERIENCE!
+No hardcoded thresholds - complete adaptation through meta-learning!
 """
         
-        if self.position_ai.current_position:
-            pos = self.position_ai.current_position
-            pure_stats += f"""
-Current Position:
-- Tool: {pos.tool_used.upper()}
-- P&L: {pos.current_pnl:.2%}
-- Duration: {(datetime.now() - pos.entry_time).total_seconds()/3600:.1f}h
-- Scales: {pos.scales_added}
-- Exits: {pos.partial_exits}
-"""
-        
-        return base_report + pure_stats + threshold_report
+        return combined_report
 
     # External interface methods
     def on_trade_update(self, update_type: str, price: float, reason: str = ""):
-        """Handle trade updates from NinjaTrader"""
+        """Handle trade updates from NinjaTrader with adaptive learning"""
         if update_type == "filled":
-            log.info(f"Trade filled at ${price:.2f}")
+            log.info(f"Adaptive trade filled at ${price:.2f}")
         elif update_type == "stopped":
-            self._complete_trade("stop_hit", price)
+            self._complete_adaptive_trade("adaptive_stop_hit", price)
         elif update_type == "target_hit":
-            self._complete_trade("target_hit", price)
+            self._complete_adaptive_trade("adaptive_target_hit", price)
         elif update_type == "closed":
-            self._complete_trade(reason or "manual_close", price)
+            self._complete_adaptive_trade(reason or "manual_close", price)
 
     def emergency_close_all(self):
-        """Emergency close all positions"""
+        """Emergency close with adaptive learning"""
         if self.current_position['in_position']:
             self.tcp_bridge.send_signal(0, 0.9, "EMERGENCY_CLOSE")
-            log.warning("EMERGENCY CLOSE: All positions closed")
+            log.warning("ADAPTIVE EMERGENCY CLOSE: All positions closed")
+            
+            # Learn from emergency situation
+            self.meta_learner.update_parameter('max_daily_loss_pct', -0.5)  # Increase caution
+            self.meta_learner.update_parameter('position_size_base', -0.3)
+    
+    def force_save_all_adaptive_learning(self):
+        """Force save all adaptive learning"""
+        self.agent.force_save_all_learning()
+        log.info("PURE ADAPTIVE: All meta-learning progress saved")
+
+# Factory function
+def create_pure_blackbox_trade_manager(intelligence_engine, tcp_bridge):
+    """Create pure black box trade manager"""
+    
+    manager = PureBlackBoxTradeManager(intelligence_engine, tcp_bridge)
+    
+    log.info("PURE BLACK BOX TRADE MANAGER CREATED")
+    log.info("All parameters will adapt through meta-learning")
+    log.info("Safety limits, position sizing, and thresholds will evolve")
+    log.info("Complete adaptation through experience - no hardcoded values")
+    
+    return manager
+
+# Usage example
+if __name__ == "__main__":
+    print("Testing Pure Black Box Trade Manager...")
+    
+    # This would normally be created with real intelligence engine and TCP bridge
+    # For testing, we'll create a minimal version
+    
+    class MockIntelligence:
+        def process_market_data(self, prices, volumes, timestamp):
+            return {
+                'subsystem_signals': {'dna': 0.2, 'micro': -0.1, 'temporal': 0.0, 'immune': 0.3},
+                'subsystem_scores': {'dna': 0.7, 'micro': 0.5, 'temporal': 0.3, 'immune': 0.8},
+                'similar_patterns_count': 5,
+                'dna_sequence_length': 25,
+                'micro_pattern_id': 'test_pattern',
+                'is_dangerous_pattern': False,
+                'is_beneficial_pattern': True
+            }
+    
+    class MockTCPBridge:
+        def send_signal(self, action, confidence, quality, stop_price=0, target_price=0):
+            print(f"Mock signal: {action}, {confidence:.3f}, {quality}")
+    
+    mock_intel = MockIntelligence()
+    mock_tcp = MockTCPBridge()
+    
+    manager = create_pure_blackbox_trade_manager(mock_intel, mock_tcp)
+    
+    print("Initial status:")
+    print(manager.get_adaptive_performance_report())
+    
+    # Simulate some market data processing
+    for i in range(5):
+        mock_msg = {
+            'price_1m': [4000 + i, 4001 + i, 4002 + i],
+            'volume_1m': [1000, 1100, 1200]
+        }
         
-        if self.position_ai.current_position:
-            self.position_ai.close_position(0)
+        manager.on_new_bar(mock_msg)
+        
+        # Simulate trade completion every other iteration
+        if i % 2 == 1 and manager.current_position['in_position']:
+            manager._complete_adaptive_trade("test_exit", 4005 + i)
+    
+    print("\nFinal status after adaptive learning:")
+    print(manager.get_adaptive_performance_report())

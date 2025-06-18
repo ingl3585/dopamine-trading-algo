@@ -1,4 +1,4 @@
-# rl_agent.py - ENHANCED: Strategic subsystem tool learning agent
+# pure_blackbox_rl_agent.py - REPLACES rl_agent.py with full meta-learning
 
 import threading
 import time
@@ -10,41 +10,263 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-from policy_network import EnhancedPolicyNetwork, ValueNetwork, SubsystemInterpreter
+from datetime import datetime
+
+# Import meta-learning components
+from meta_learner import PureMetaLearner, AdaptiveRewardLearner
 
 log = logging.getLogger(__name__)
 
-class StrategicToolLearningAgent:
+class SelfEvolvingPolicyNetwork(torch.nn.Module):
     """
-    Enhanced RL agent that learns to strategically use your existing subsystems as tools
+    Policy network that evolves its own architecture based on performance
+    """
     
-    Key Learning Objectives:
-    1. When to trust each subsystem (DNA vs Micro vs Temporal vs Immune)
-    2. How to combine subsystems for better decisions
-    3. Which tools work best in different market regimes
-    4. Optimal risk management for each tool type
-    5. Exit timing based on tool confidence
+    def __init__(self, meta_learner: PureMetaLearner, market_obs_size: int = 15, subsystem_features_size: int = 16):
+        super().__init__()
+        self.meta_learner = meta_learner
+        self.market_obs_size = market_obs_size
+        self.subsystem_features_size = subsystem_features_size
+        
+        # Build initial architecture
+        self._build_network()
+        
+        # Track performance for architecture adaptation
+        self.performance_history = deque(maxlen=100)
+        self.last_rebuild_step = 0
+        self.rebuild_threshold = 0.02  # Rebuild if performance drops 2%
+        
+    def _build_network(self):
+        """Build network with current meta-learned architecture"""
+        
+        arch = self.meta_learner.get_network_architecture()
+        self.hidden_size = arch['hidden_size']
+        self.lstm_layers = arch['lstm_layers']
+        self.dropout_rate = arch['dropout_rate']
+        
+        # Market observation encoder with adaptive LSTM layers
+        self.market_encoder = torch.nn.LSTM(
+            self.market_obs_size, 
+            self.hidden_size, 
+            num_layers=self.lstm_layers,
+            dropout=self.dropout_rate if self.lstm_layers > 1 else 0,
+            batch_first=True
+        )
+        
+        # Subsystem feature processor with adaptive complexity
+        subsystem_layers = []
+        subsystem_layers.append(torch.nn.Linear(self.subsystem_features_size, self.hidden_size))
+        subsystem_layers.append(torch.nn.ReLU())
+        
+        # Add layers based on complexity parameter
+        complexity = self.meta_learner.get_parameter('hidden_layer_multiplier')
+        if complexity > 1.5:
+            subsystem_layers.extend([
+                torch.nn.Dropout(self.dropout_rate),
+                torch.nn.Linear(self.hidden_size, self.hidden_size),
+                torch.nn.ReLU()
+            ])
+        
+        subsystem_layers.extend([
+            torch.nn.Linear(self.hidden_size, self.hidden_size // 2),
+            torch.nn.ReLU()
+        ])
+        
+        self.subsystem_processor = torch.nn.Sequential(*subsystem_layers)
+        
+        # Adaptive attention mechanism
+        attention_size = self.hidden_size + self.hidden_size // 2
+        self.attention = torch.nn.MultiheadAttention(
+            attention_size, 
+            num_heads=max(1, arch['attention_layers']),
+            dropout=self.dropout_rate,
+            batch_first=True
+        )
+        
+        # Decision heads with adaptive sizing
+        decision_input_size = attention_size
+        
+        # Action head (buy/sell/hold)
+        self.action_head = self._create_adaptive_head(decision_input_size, 3, "action")
+        
+        # Confidence head
+        self.confidence_head = self._create_adaptive_head(decision_input_size, 1, "confidence")
+        
+        # Risk management heads
+        self.stop_head = self._create_adaptive_head(decision_input_size, 2, "stop")  # use_stop, distance
+        self.target_head = self._create_adaptive_head(decision_input_size, 2, "target")  # use_target, distance
+        
+        # Tool selection head
+        self.tool_selection_head = self._create_adaptive_head(decision_input_size, 4, "tool")  # DNA, Micro, Temporal, Immune
+        
+        # Value estimation for learning
+        self.value_head = self._create_adaptive_head(decision_input_size, 1, "value")
+        
+        log.info(f"NETWORK EVOLUTION: Built architecture with {self.hidden_size} hidden, "
+               f"{self.lstm_layers} LSTM layers, {arch['attention_layers']} attention heads")
+    
+    def _create_adaptive_head(self, input_size: int, output_size: int, head_type: str):
+        """Create decision head with adaptive complexity"""
+        
+        complexity = self.meta_learner.get_parameter('hidden_layer_multiplier')
+        
+        layers = []
+        
+        if complexity > 1.8:  # High complexity
+            layers.extend([
+                torch.nn.Linear(input_size, self.hidden_size),
+                torch.nn.ReLU(),
+                torch.nn.Dropout(self.dropout_rate),
+                torch.nn.Linear(self.hidden_size, self.hidden_size // 2),
+                torch.nn.ReLU(),
+                torch.nn.Linear(self.hidden_size // 2, output_size)
+            ])
+        elif complexity > 1.2:  # Medium complexity
+            layers.extend([
+                torch.nn.Linear(input_size, self.hidden_size // 2),
+                torch.nn.ReLU(),
+                torch.nn.Dropout(self.dropout_rate),
+                torch.nn.Linear(self.hidden_size // 2, output_size)
+            ])
+        else:  # Simple head
+            layers.extend([
+                torch.nn.Linear(input_size, output_size)
+            ])
+        
+        return torch.nn.Sequential(*layers)
+    
+    def forward(self, market_obs, subsystem_features):
+        """Forward pass with adaptive architecture"""
+        
+        batch_size = market_obs.shape[0]
+        
+        # Encode market observations
+        market_encoded, _ = self.market_encoder(market_obs)
+        market_repr = market_encoded[:, -1]  # Last timestep
+        
+        # Process subsystem features
+        subsystem_repr = self.subsystem_processor(subsystem_features)
+        
+        # Combine representations
+        combined = torch.cat([market_repr, subsystem_repr], dim=-1)
+        combined = combined.unsqueeze(1)  # Add sequence dimension for attention
+        
+        # Apply attention
+        attended, attention_weights = self.attention(combined, combined, combined)
+        attended = attended.squeeze(1)  # Remove sequence dimension
+        
+        # Generate all outputs
+        action_logits = self.action_head(attended)
+        confidence = torch.sigmoid(self.confidence_head(attended))
+        
+        # Risk management outputs
+        stop_outputs = self.stop_head(attended)
+        use_stop = torch.sigmoid(stop_outputs[:, 0:1])
+        stop_distance = torch.sigmoid(stop_outputs[:, 1:2]) * self.meta_learner.get_parameter('stop_loss_max_pct')
+        
+        target_outputs = self.target_head(attended)
+        use_target = torch.sigmoid(target_outputs[:, 0:1])
+        target_distance = torch.sigmoid(target_outputs[:, 1:2]) * self.meta_learner.get_parameter('take_profit_max_pct')
+        
+        # Tool selection
+        tool_logits = self.tool_selection_head(attended)
+        tool_probs = F.softmax(tool_logits, dim=-1)
+        
+        # Value estimation
+        value = self.value_head(attended)
+        
+        return {
+            'action_logits': action_logits,
+            'confidence': confidence,
+            'use_stop': use_stop,
+            'stop_distance': stop_distance,
+            'use_target': use_target,
+            'target_distance': target_distance,
+            'tool_probs': tool_probs,
+            'attention_weights': attention_weights,
+            'value': value,
+            'combined_features': attended
+        }
+    
+    def maybe_evolve_architecture(self, performance_score: float, step_count: int):
+        """Evolve architecture if performance is declining"""
+        
+        self.performance_history.append(performance_score)
+        
+        # Check if we should rebuild (every 200 steps minimum)
+        if (step_count - self.last_rebuild_step) >= 200 and len(self.performance_history) >= 50:
+            
+            recent_perf = np.mean(list(self.performance_history)[-20:])
+            older_perf = np.mean(list(self.performance_history)[-50:-30])
+            
+            performance_decline = older_perf - recent_perf
+            
+            if performance_decline > self.rebuild_threshold:
+                log.info(f"ARCHITECTURE EVOLUTION: Performance declined by {performance_decline:.3f}")
+                log.info(f"Recent: {recent_perf:.3f}, Older: {older_perf:.3f}")
+                
+                # Update architecture parameters to trigger rebuild
+                current_complexity = self.meta_learner.get_parameter('hidden_layer_multiplier')
+                
+                # Try different complexity
+                if current_complexity > 1.5:
+                    new_complexity = current_complexity * 0.8  # Simplify
+                    evolution_direction = "SIMPLIFYING"
+                else:
+                    new_complexity = current_complexity * 1.3  # Complexify
+                    evolution_direction = "COMPLEXIFYING"
+                
+                # Update meta-parameter
+                self.meta_learner.parameters['hidden_layer_multiplier'] = new_complexity
+                
+                # Rebuild network
+                old_hidden = self.hidden_size
+                self._build_network()
+                
+                log.info(f"NETWORK EVOLVED: {evolution_direction} architecture")
+                log.info(f"Hidden size: {old_hidden} → {self.hidden_size}")
+                log.info(f"Complexity: {current_complexity:.2f} → {new_complexity:.2f}")
+                
+                self.last_rebuild_step = step_count
+                
+                return True  # Signal that network was rebuilt
+        
+        return False
+
+class PureBlackBoxStrategicAgent:
+    """
+    PURE BLACK BOX: Agent that learns EVERYTHING through experience
+    - All parameters adapt through meta-learning
+    - Network architecture evolves based on performance
+    - Reward structure discovers what actually matters
+    - Tool usage learned through trial and error
     """
     
     def __init__(self, market_obs_size: int = 15, subsystem_features_size: int = 16):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        # Enhanced networks
-        self.policy = EnhancedPolicyNetwork(market_obs_size, subsystem_features_size).to(self.device)
-        self.value = ValueNetwork(market_obs_size, subsystem_features_size).to(self.device)
-        self.target_policy = EnhancedPolicyNetwork(market_obs_size, subsystem_features_size).to(self.device)
-        self.target_value = ValueNetwork(market_obs_size, subsystem_features_size).to(self.device)
+        # Initialize meta-learning system
+        self.meta_learner = PureMetaLearner()
+        self.reward_learner = AdaptiveRewardLearner(self.meta_learner)
         
-        # Copy weights to target networks
+        # Self-evolving networks
+        self.policy = SelfEvolvingPolicyNetwork(
+            self.meta_learner, market_obs_size, subsystem_features_size
+        ).to(self.device)
+        
+        self.target_policy = SelfEvolvingPolicyNetwork(
+            self.meta_learner, market_obs_size, subsystem_features_size
+        ).to(self.device)
+        
+        # Copy initial weights
         self.target_policy.load_state_dict(self.policy.state_dict())
-        self.target_value.load_state_dict(self.value.state_dict())
         
-        # Optimizers
-        self.policy_optimizer = optim.Adam(self.policy.parameters(), lr=1e-4)
-        self.value_optimizer = optim.Adam(self.value.parameters(), lr=3e-4)
+        # Adaptive optimizers
+        self._update_optimizers()
         
-        # Experience buffer
-        self.experience_buffer = deque(maxlen=50000)
+        # Experience buffer with adaptive size
+        buffer_size = self.meta_learner.get_learning_parameters()['buffer_size']
+        self.experience_buffer = deque(maxlen=buffer_size)
         
         # Tool performance tracking
         self.tool_performance_history = {
@@ -54,84 +276,109 @@ class StrategicToolLearningAgent:
             'immune': deque(maxlen=200)
         }
         
-        # Tool combination tracking
-        self.combination_performance = {
-            'dna_micro': deque(maxlen=100),
-            'dna_temporal': deque(maxlen=100),
-            'dna_immune': deque(maxlen=100),
-            'micro_temporal': deque(maxlen=100),
-            'micro_immune': deque(maxlen=100),
-            'temporal_immune': deque(maxlen=100)
-        }
+        # Adaptive exploration
+        self.epsilon = 0.9  # Start high, will adapt
+        self._update_exploration_parameters()
         
-        # Learning parameters
-        self.gamma = 0.99
-        self.tau = 0.005  # Soft update rate
-        self.sync_every = 1000
+        # Learning state
         self.step_count = 0
-        self.learning_started = False
+        self.network_rebuilds = 0
+        self.last_optimizer_update = 0
         
-        # Exploration parameters - FIXED: Slower decay for more tool exploration
-        self.epsilon = 1.0
-        self.epsilon_decay = 0.999  # Slower decay
-        self.epsilon_min = 0.3      # Higher minimum for continued exploration
-        
-        # Performance metrics
+        # Performance tracking
         self.recent_rewards = deque(maxlen=100)
         self.tool_usage_count = {'dna': 0, 'micro': 0, 'temporal': 0, 'immune': 0}
         self.successful_tool_usage = {'dna': 0, 'micro': 0, 'temporal': 0, 'immune': 0}
         
-        # Start background learning
-        self._start_background_learning()
+        # Background learning
+        self._start_adaptive_learning()
         
-        log.info("Strategic Tool Learning Agent initialized")
-        log.info("Learning objectives: Tool selection, combinations, regime adaptation, risk management")
+        log.info("PURE BLACK BOX AGENT: All parameters will self-optimize")
+        log.info("Network architecture will evolve based on performance")
+        log.info("Reward structure will discover what actually drives success")
     
-    def select_action_and_strategy(self, market_obs: np.ndarray, subsystem_features: np.ndarray, 
+    def _update_optimizers(self):
+        """Update optimizers with current meta-learned learning rates"""
+        learning_params = self.meta_learner.get_learning_parameters()
+        
+        self.policy_optimizer = optim.Adam(
+            self.policy.parameters(),
+            lr=learning_params['policy_lr']
+        )
+        
+        # Track optimizer updates
+        self.last_optimizer_update = self.step_count
+        
+        log.debug(f"OPTIMIZER UPDATE: Policy LR = {learning_params['policy_lr']:.6f}")
+    
+    def _update_exploration_parameters(self):
+        """Update exploration parameters from meta-learner"""
+        learning_params = self.meta_learner.get_learning_parameters()
+        
+        self.epsilon_decay = learning_params['epsilon_decay']
+        self.epsilon_min = learning_params['epsilon_min']
+        
+    def select_action_and_strategy(self, market_obs: np.ndarray, subsystem_features: np.ndarray,
                                  current_price: float, in_position: bool = False) -> Dict:
-        """
-        Select action and complete trading strategy using learned tool usage
-        """
+        """Select action using pure black box learning with adaptive parameters"""
+        
         with torch.no_grad():
             # Prepare inputs
             market_tensor = torch.tensor(market_obs, dtype=torch.float32, device=self.device)
-            market_tensor = market_tensor.unsqueeze(0).unsqueeze(0)  # (1, 1, obs_size)
+            market_tensor = market_tensor.unsqueeze(0).unsqueeze(0)
             
             subsystem_tensor = torch.tensor(subsystem_features, dtype=torch.float32, device=self.device)
-            subsystem_tensor = subsystem_tensor.unsqueeze(0)  # (1, features_size)
+            subsystem_tensor = subsystem_tensor.unsqueeze(0)
             
-            # Get policy outputs
+            # Forward pass
             outputs = self.policy(market_tensor, subsystem_tensor)
             
-            # Action selection with exploration
+            # Action selection with adaptive confidence threshold
             action_probs = F.softmax(outputs['action_logits'], dim=-1).cpu().numpy()[0]
+            confidence = float(outputs['confidence'].cpu().numpy()[0])
             
-            if random.random() < self.epsilon and self.learning_started:
+            # Get adaptive thresholds
+            thresholds = self.meta_learner.get_confidence_thresholds()
+            entry_threshold = thresholds['entry']
+            
+            # Adaptive exploration
+            if random.random() < self.epsilon:
                 action = random.choice([0, 1, 2])  # Exploration
+                exploration_taken = True
+            elif confidence >= entry_threshold:
+                action = np.argmax(action_probs)  # Confident exploitation
+                exploration_taken = False
             else:
-                action = np.argmax(action_probs)  # Exploitation
+                action = 0  # Hold due to low confidence
+                exploration_taken = False
             
-            # Extract all decision components
-            confidence = float(outputs['overall_confidence'].cpu().numpy()[0])
-            use_stop_prob = float(outputs['use_stop'].cpu().numpy()[0])
+            # Extract other outputs
+            use_stop = float(outputs['use_stop'].cpu().numpy()[0]) > 0.5
             stop_distance = float(outputs['stop_distance'].cpu().numpy()[0])
-            use_target_prob = float(outputs['use_target'].cpu().numpy()[0])
+            use_target = float(outputs['use_target'].cpu().numpy()[0]) > 0.5
             target_distance = float(outputs['target_distance'].cpu().numpy()[0])
-            exit_confidence = float(outputs['exit_confidence'].cpu().numpy()[0])
             
-            # Tool analysis
-            tool_trust = outputs['tool_trust'].cpu().numpy()[0]
-            tool_combinations = outputs['tool_combinations'].cpu().numpy()[0]
-            market_regime = outputs['market_regime'].cpu().numpy()[0]
-            attention_weights = outputs['attention_weights'].cpu().numpy()[0]
+            # Tool selection using learned probabilities
+            tool_probs = outputs['tool_probs'].cpu().numpy()[0]
             
-            # Risk management decisions
-            use_stop = random.random() < use_stop_prob
-            use_target = random.random() < use_target_prob
+            # Add exploration to tool selection
+            if random.random() < 0.2:  # 20% tool exploration
+                primary_tool_idx = random.choice([0, 1, 2, 3])
+            else:
+                primary_tool_idx = np.argmax(tool_probs)
+            
+            tool_names = ['dna', 'micro', 'temporal', 'immune']
+            primary_tool = tool_names[primary_tool_idx]
+            
+            # Secondary tool
+            tool_probs_copy = tool_probs.copy()
+            tool_probs_copy[primary_tool_idx] = 0  # Remove primary
+            secondary_tool_idx = np.argmax(tool_probs_copy)
+            secondary_tool = tool_names[secondary_tool_idx]
             
             # Calculate actual prices
-            stop_price = None
-            target_price = None
+            stop_price = 0.0
+            target_price = 0.0
             
             if use_stop and action != 0:
                 if action == 1:  # Long
@@ -145,33 +392,21 @@ class StrategicToolLearningAgent:
                 else:  # Short
                     target_price = current_price * (1 - target_distance)
             
-            # Determine primary and secondary tools - FIXED: Add exploration to tool selection
-            tool_names = ['dna', 'micro', 'temporal', 'immune']
-            
-            # Add exploration to tool selection even during exploitation
-            if random.random() < 0.2:  # 20% chance to explore different tools
-                primary_tool = random.choice(tool_names)
-                tool_ranking = sorted(enumerate(tool_trust), key=lambda x: x[1], reverse=True)
-                secondary_tool = tool_names[tool_ranking[0][0]] if tool_names[tool_ranking[0][0]] != primary_tool else tool_names[tool_ranking[1][0]]
-            else:
-                tool_ranking = sorted(enumerate(tool_trust), key=lambda x: x[1], reverse=True)
-                primary_tool = tool_names[tool_ranking[0][0]]
-                secondary_tool = tool_names[tool_ranking[1][0]] if len(tool_ranking) > 1 else None
-            
-            # Market regime interpretation
-            regime_names = ['trending', 'volatile', 'sideways', 'reversal']
-            market_regime_name = regime_names[np.argmax(market_regime)]
-            
             # Should exit current position?
-            should_exit = in_position and (exit_confidence > 0.3)
+            exit_threshold = thresholds['exit']
+            should_exit = in_position and (confidence < exit_threshold or 
+                                         (random.random() < 0.1 and exploration_taken))
             
-            # Generate reasoning
-            reasoning = self._generate_reasoning(primary_tool, secondary_tool, market_regime_name, 
-                                               confidence, tool_trust[tool_ranking[0][0]])
+            # Generate reasoning based on learned patterns
+            reasoning = self._generate_adaptive_reasoning(
+                primary_tool, confidence, entry_threshold, tool_probs[primary_tool_idx], exploration_taken
+            )
             
             return {
                 'action': action,
                 'confidence': confidence,
+                'entry_threshold_used': entry_threshold,
+                'exploration_taken': exploration_taken,
                 'use_stop': use_stop,
                 'stop_price': stop_price,
                 'stop_distance_pct': stop_distance * 100,
@@ -183,319 +418,339 @@ class StrategicToolLearningAgent:
                 # Tool analysis
                 'primary_tool': primary_tool,
                 'secondary_tool': secondary_tool,
-                'tool_trust': {tool_names[i]: float(tool_trust[i]) for i in range(4)},
-                'tool_combinations': tool_combinations,
-                'market_regime': market_regime_name,
-                'attention_weights': attention_weights,
+                'tool_probabilities': {tool_names[i]: float(tool_probs[i]) for i in range(4)},
                 'reasoning': reasoning,
                 
-                # Raw data for experience storage
+                # Meta-learning data
+                'meta_parameters_used': {
+                    'entry_threshold': entry_threshold,
+                    'stop_max_pct': stop_distance,
+                    'target_max_pct': target_distance,
+                    'current_epsilon': self.epsilon
+                },
+                
+                # Raw data for learning
                 'raw_market_obs': market_obs.copy(),
                 'raw_subsystem_features': subsystem_features.copy(),
                 'raw_outputs': {k: v.cpu().numpy() if torch.is_tensor(v) else v 
                               for k, v in outputs.items()}
             }
     
-    def _generate_reasoning(self, primary_tool: str, secondary_tool: str, 
-                          regime: str, confidence: float, primary_trust: float) -> str:
-        """Generate human-readable reasoning for the decision"""
+    def _generate_adaptive_reasoning(self, primary_tool: str, confidence: float, 
+                                   threshold: float, tool_confidence: float, exploration: bool) -> str:
+        """Generate reasoning based on learned parameters"""
         
         reasoning_parts = []
         
-        # Primary tool reasoning
-        reasoning_parts.append(f"Primary tool: {primary_tool.upper()} (trust: {primary_trust:.2f})")
-        
-        # Secondary tool support
-        if secondary_tool and primary_trust < 0.8:
-            reasoning_parts.append(f"Supported by {secondary_tool.upper()}")
-        
-        # Market regime context
-        reasoning_parts.append(f"Market regime: {regime}")
-        
-        # Confidence interpretation
-        if confidence > 0.5:
-            reasoning_parts.append("High confidence decision")
-        elif confidence > 0.3:
-            reasoning_parts.append("Moderate confidence")
+        if exploration:
+            reasoning_parts.append(f"EXPLORATION: Random {primary_tool.upper()} tool selection")
         else:
-            reasoning_parts.append("Low confidence - cautious approach")
+            reasoning_parts.append(f"LEARNED: {primary_tool.upper()} tool (prob: {tool_confidence:.2f})")
+        
+        if confidence >= threshold:
+            margin = confidence - threshold
+            reasoning_parts.append(f"High confidence ({confidence:.2f} > {threshold:.2f}, margin: {margin:.2f})")
+        else:
+            reasoning_parts.append(f"Low confidence ({confidence:.2f} < {threshold:.2f}) - HOLDING")
+        
+        # Add meta-learning insight
+        learning_efficiency = self.meta_learner.get_learning_efficiency()
+        if learning_efficiency > 0.5:
+            reasoning_parts.append("FAST LEARNING MODE")
+        elif learning_efficiency < -0.2:
+            reasoning_parts.append("ADAPTATION MODE")
         
         return " | ".join(reasoning_parts)
     
-    def store_experience(self, state_data: Dict, reward: float, next_market_obs: np.ndarray,
-                        next_subsystem_features: np.ndarray, done: bool):
-        """Store experience with tool performance tracking"""
+    def store_experience_and_learn(self, state_data: Dict, trade_outcome: Dict):
+        """Store experience and trigger adaptive learning"""
         
+        # Calculate adaptive reward
+        adaptive_reward = self.reward_learner.calculate_adaptive_reward(trade_outcome)
+        
+        # Store experience
         experience = {
-            'market_obs': state_data['raw_market_obs'],
-            'subsystem_features': state_data['raw_subsystem_features'],
-            'action': state_data['action'],
-            'reward': reward,
-            'next_market_obs': next_market_obs,
-            'next_subsystem_features': next_subsystem_features,
-            'done': done,
-            'tool_trust': state_data['tool_trust'],
-            'primary_tool': state_data['primary_tool'],
-            'market_regime': state_data['market_regime']
+            'state_data': state_data,
+            'trade_outcome': trade_outcome,
+            'adaptive_reward': adaptive_reward,
+            'timestamp': datetime.now(),
+            'meta_parameters': state_data.get('meta_parameters_used', {})
         }
         
         self.experience_buffer.append(experience)
         
         # Track tool performance
-        primary_tool = state_data['primary_tool']
-        self.tool_usage_count[primary_tool] += 1
-        
-        # Record tool success/failure
-        if reward > 0.01:  # Successful trade
-            self.successful_tool_usage[primary_tool] += 1
-            self.tool_performance_history[primary_tool].append(1.0)
-        else:
-            self.tool_performance_history[primary_tool].append(0.0)
-        
-        # Track tool combinations
-        if state_data.get('secondary_tool'):
-            combo_key = f"{primary_tool}_{state_data['secondary_tool']}"
-            if combo_key in self.combination_performance:
-                success = 1.0 if reward > 0.01 else 0.0
-                self.combination_performance[combo_key].append(success)
+        primary_tool = state_data.get('primary_tool', 'unknown')
+        if primary_tool in self.tool_usage_count:
+            self.tool_usage_count[primary_tool] += 1
+            
+            if adaptive_reward > 0.1:  # Successful outcome
+                self.successful_tool_usage[primary_tool] += 1
+                self.tool_performance_history[primary_tool].append(1.0)
+            else:
+                self.tool_performance_history[primary_tool].append(0.0)
         
         # Update recent performance
-        self.recent_rewards.append(reward)
+        self.recent_rewards.append(adaptive_reward)
         
-        # Decay exploration
+        # Update meta-parameters based on outcome
+        self._update_meta_parameters_from_outcome(state_data, trade_outcome, adaptive_reward)
+        
+        # Trigger learning
+        if len(self.experience_buffer) >= self.meta_learner.get_learning_parameters()['batch_size']:
+            self._adaptive_learning_step()
+        
+        # Decay exploration adaptively
+        self._update_exploration_parameters()
         self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
-    
-    def _start_background_learning(self):
-        """Start background learning thread"""
-        def learning_loop():
-            while True:
-                if len(self.experience_buffer) < 50:  # FIXED: Start learning much earlier
-                    time.sleep(1)
-                    continue
-                
-                if not self.learning_started:
-                    self.learning_started = True
-                    log.info("Tool learning started - sufficient experience collected")
-                
-                self._train_step()
-                time.sleep(0.1)
-        
-        thread = threading.Thread(target=learning_loop, daemon=True)
-        thread.start()
-        log.info("Background tool learning thread started")
-    
-    def _train_step(self):
-        """Training step with focus on tool usage learning"""
-        if len(self.experience_buffer) < 64:
-            return
-        
-        # Sample batch
-        batch = random.sample(self.experience_buffer, 64)
-        
-        # Prepare tensors
-        market_obs = torch.stack([
-            torch.tensor(exp['market_obs'], dtype=torch.float32)
-            for exp in batch
-        ]).unsqueeze(1).to(self.device)
-        
-        subsystem_features = torch.stack([
-            torch.tensor(exp['subsystem_features'], dtype=torch.float32)
-            for exp in batch
-        ]).to(self.device)
-        
-        actions = torch.tensor([exp['action'] for exp in batch], 
-                              dtype=torch.long, device=self.device)
-        rewards = torch.tensor([exp['reward'] for exp in batch], 
-                              dtype=torch.float32, device=self.device)
-        
-        next_market_obs = torch.stack([
-            torch.tensor(exp['next_market_obs'], dtype=torch.float32)
-            for exp in batch
-        ]).unsqueeze(1).to(self.device)
-        
-        next_subsystem_features = torch.stack([
-            torch.tensor(exp['next_subsystem_features'], dtype=torch.float32)
-            for exp in batch
-        ]).to(self.device)
-        
-        dones = torch.tensor([exp['done'] for exp in batch], 
-                           dtype=torch.float32, device=self.device)
-        
-        # Current values and policy outputs
-        current_policy_outputs = self.policy(market_obs, subsystem_features)
-        current_values = self.value(market_obs, subsystem_features).squeeze()
-        
-        # Current action values
-        current_action_values = current_policy_outputs['action_logits'].gather(1, actions.unsqueeze(1)).squeeze()
-        
-        # Target values
-        with torch.no_grad():
-            next_values = self.target_value(next_market_obs, next_subsystem_features).squeeze()
-            target_values = rewards + (1 - dones) * self.gamma * next_values
-        
-        # Value loss
-        value_loss = F.mse_loss(current_values, target_values)
-        
-        # Policy loss (actor-critic style)
-        advantages = (target_values - current_values).detach()
-        policy_loss = -torch.mean(current_action_values * advantages)
-        
-        # Tool trust regularization - encourage diverse tool usage
-        tool_trust = current_policy_outputs['tool_trust']
-        tool_diversity_loss = -torch.mean(torch.sum(tool_trust * torch.log(tool_trust + 1e-8), dim=1))
-        
-        # Combined loss
-        total_policy_loss = policy_loss + 0.01 * tool_diversity_loss
-        
-        # Update value network
-        self.value_optimizer.zero_grad()
-        value_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.value.parameters(), 1.0)
-        self.value_optimizer.step()
-        
-        # Update policy network
-        self.policy_optimizer.zero_grad()
-        total_policy_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.policy.parameters(), 1.0)
-        self.policy_optimizer.step()
         
         self.step_count += 1
         
-        # Soft update target networks
-        if self.step_count % 10 == 0:
-            self._soft_update_targets()
+        # Update optimizers periodically with new learning rates
+        if self.step_count - self.last_optimizer_update >= 100:
+            self._update_optimizers()
         
-        # Hard update every so often
-        if self.step_count % self.sync_every == 0:
-            self.target_policy.load_state_dict(self.policy.state_dict())
-            self.target_value.load_state_dict(self.value.state_dict())
-            log.info(f"Tool learning: Networks synced at step {self.step_count}")
+        # Check for network evolution
+        if len(self.recent_rewards) >= 20:
+            recent_performance = np.mean(list(self.recent_rewards)[-20:])
+            network_rebuilt = self.policy.maybe_evolve_architecture(recent_performance, self.step_count)
             
-            # Log learning progress
-            self._log_learning_progress()
+            if network_rebuilt:
+                self.network_rebuilds += 1
+                # Copy evolved architecture to target
+                self.target_policy.load_state_dict(self.policy.state_dict())
+                # Reset optimizer for new architecture
+                self._update_optimizers()
     
-    def _soft_update_targets(self):
-        """Soft update of target networks"""
+    def _update_meta_parameters_from_outcome(self, state_data: Dict, trade_outcome: Dict, reward: float):
+        """Update meta-parameters based on trading outcome"""
+        
+        # Normalize outcome for meta-learning
+        pnl = trade_outcome.get('pnl', 0.0)
+        normalized_outcome = np.tanh(pnl / 50.0)  # Normalize to [-1, 1]
+        
+        # Update parameters that were used in this decision
+        parameter_updates = {}
+        
+        # Entry confidence threshold
+        if state_data.get('action', 0) != 0:  # If we took a position
+            parameter_updates['entry_confidence_threshold'] = normalized_outcome
+        
+        # Risk management parameters
+        if state_data.get('use_stop', False):
+            parameter_updates['stop_loss_max_pct'] = normalized_outcome
+        
+        if state_data.get('use_target', False):
+            parameter_updates['take_profit_max_pct'] = normalized_outcome
+        
+        # Position sizing
+        parameter_updates['position_size_base'] = normalized_outcome
+        
+        # Learning rates (boost if reward is good)
+        if abs(reward) > 0.2:  # Significant outcome
+            lr_update = 0.1 if reward > 0 else -0.05
+            parameter_updates['policy_learning_rate'] = lr_update
+            parameter_updates['meta_learning_rate'] = lr_update
+        
+        # Tool selection parameters
+        primary_tool = state_data.get('primary_tool', '')
+        if primary_tool:
+            # This would update tool-specific parameters if they existed
+            pass
+        
+        # Batch update meta-parameters
+        learning_efficiency = reward  # Simplified efficiency measure
+        self.meta_learner.batch_update_parameters(parameter_updates, learning_efficiency)
+    
+    def _start_adaptive_learning(self):
+        """Start adaptive background learning"""
+        def adaptive_learning_loop():
+            while True:
+                if len(self.experience_buffer) < 10:
+                    time.sleep(1)
+                    continue
+                
+                # Adaptive learning frequency
+                learning_params = self.meta_learner.get_learning_parameters()
+                batch_size = learning_params['batch_size']
+                
+                if len(self.experience_buffer) >= batch_size:
+                    self._adaptive_learning_step()
+                
+                # Adaptive sleep time based on learning efficiency
+                learning_efficiency = self.meta_learner.get_learning_efficiency()
+                sleep_time = 0.5 if learning_efficiency > 0.3 else 0.1  # Learn faster if inefficient
+                time.sleep(sleep_time)
+        
+        thread = threading.Thread(target=adaptive_learning_loop, daemon=True, name="AdaptiveLearning")
+        thread.start()
+        log.info("ADAPTIVE LEARNING: Background thread started")
+    
+    def _adaptive_learning_step(self):
+        """Adaptive learning step with meta-learned parameters"""
+        
+        learning_params = self.meta_learner.get_learning_parameters()
+        batch_size = learning_params['batch_size']
+        
+        if len(self.experience_buffer) < batch_size:
+            return
+        
+        # Sample batch
+        batch = random.sample(list(self.experience_buffer), batch_size)
+        
+        # Extract data
+        rewards = torch.tensor([exp['adaptive_reward'] for exp in batch], 
+                              dtype=torch.float32, device=self.device)
+        
+        # Simple policy gradient with adaptive reward
+        policy_loss = -torch.mean(rewards)  # Maximize adaptive reward
+        
+        # Update policy
+        self.policy_optimizer.zero_grad()
+        policy_loss.backward()
+        
+        # Adaptive gradient clipping
+        max_grad_norm = 1.0 + self.meta_learner.get_learning_efficiency()  # Adapt clipping
+        torch.nn.utils.clip_grad_norm_(self.policy.parameters(), max_grad_norm)
+        
+        self.policy_optimizer.step()
+        
+        # Soft update target network
+        tau = 0.005
         for target_param, param in zip(self.target_policy.parameters(), self.policy.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+            target_param.data.copy_(tau * param.data + (1 - tau) * target_param.data)
         
-        for target_param, param in zip(self.target_value.parameters(), self.value.parameters()):
-            target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+        # Log progress occasionally
+        if self.step_count % 100 == 0:
+            avg_reward = torch.mean(rewards).item()
+            log.info(f"ADAPTIVE LEARNING: Step {self.step_count}, Avg reward: {avg_reward:.3f}, "
+                   f"Epsilon: {self.epsilon:.3f}, Network rebuilds: {self.network_rebuilds}")
     
-    def _log_learning_progress(self):
-        """Log learning progress and tool performance"""
-        if len(self.recent_rewards) > 10:
-            avg_reward = np.mean(list(self.recent_rewards)[-20:])
-            log.info(f"Tool Learning Progress: Avg reward: {avg_reward:.4f}, Epsilon: {self.epsilon:.3f}")
-            
-            # Tool performance summary
-            for tool in ['dna', 'micro', 'temporal', 'immune']:
-                usage = self.tool_usage_count[tool]
-                success = self.successful_tool_usage[tool]
-                success_rate = success / usage if usage > 0 else 0.0
-                log.info(f"  {tool.upper()}: {usage} uses, {success_rate:.2%} success")
-    
-    def get_tool_performance_report(self) -> str:
-        """Generate comprehensive tool performance report"""
+    def get_pure_blackbox_status(self) -> str:
+        """Get comprehensive pure black box status"""
         
-        report = f"""
-=== STRATEGIC TOOL LEARNING REPORT ===
-
-Learning Status:
-- Training Steps: {self.step_count}
-- Experience Buffer: {len(self.experience_buffer)} samples
-- Learning Active: {self.learning_started}
-- Exploration Rate: {self.epsilon:.3f}
-
-Tool Usage & Performance:
-"""
+        # Meta-learning status
+        meta_status = self.meta_learner.get_adaptation_report()
         
+        # Reward learning status  
+        reward_status = self.reward_learner.get_reward_analysis()
+        
+        # Tool performance
+        tool_status = "\nTOOL LEARNING STATUS:\n"
         for tool in ['dna', 'micro', 'temporal', 'immune']:
             usage = self.tool_usage_count[tool]
             success = self.successful_tool_usage[tool]
             success_rate = success / usage if usage > 0 else 0.0
             
-            # Recent performance
-            recent_perf = list(self.tool_performance_history[tool])[-20:] if self.tool_performance_history[tool] else []
+            recent_perf = list(self.tool_performance_history[tool])[-10:] if self.tool_performance_history[tool] else []
             recent_success = np.mean(recent_perf) if recent_perf else 0.0
             
-            report += f"  {tool.upper()}: {usage} uses, {success_rate:.1%} overall, {recent_success:.1%} recent\n"
+            tool_status += f"  {tool.upper()}: {usage} uses, {success_rate:.1%} overall, {recent_success:.1%} recent\n"
         
-        report += f"\nTool Combinations Performance:\n"
-        for combo, history in self.combination_performance.items():
-            if history:
-                combo_success = np.mean(list(history))
-                report += f"  {combo.replace('_', ' + ').upper()}: {combo_success:.1%} success ({len(history)} uses)\n"
+        # Network evolution status
+        network_status = f"""
+NETWORK EVOLUTION STATUS:
+  Current Architecture: {self.policy.hidden_size} hidden, {self.policy.lstm_layers} LSTM layers
+  Network Rebuilds: {self.network_rebuilds}
+  Dropout Rate: {self.policy.dropout_rate:.3f}
+  
+LEARNING STATE:
+  Training Steps: {self.step_count}
+  Experience Buffer: {len(self.experience_buffer)}/{self.experience_buffer.maxlen}
+  Current Epsilon: {self.epsilon:.3f}
+  Recent Avg Reward: {np.mean(list(self.recent_rewards)[-20:]):.3f if len(self.recent_rewards) >= 20 else 'N/A'}
+"""
         
-        if self.recent_rewards:
-            recent_avg = np.mean(list(self.recent_rewards)[-20:])
-            report += f"\nRecent Performance: {recent_avg:.4f} avg reward (last 20 trades)\n"
+        combined_status = f"""
+=== PURE BLACK BOX AGENT STATUS ===
+
+{meta_status}
+
+{reward_status}
+
+{tool_status}
+
+{network_status}
+
+PURE BLACK BOX: All parameters self-optimizing through experience!
+Network architecture evolving based on performance!
+Reward structure discovering what actually drives success!
+"""
         
-        report += f"\nAI is learning optimal tool usage patterns for different market conditions!"
-        
-        return report
+        return combined_status
     
-    def get_current_tool_preferences(self) -> Dict[str, float]:
-        """Get current learned tool preferences"""
-        preferences = {}
+    def force_save_all_learning(self):
+        """Force save all meta-learning progress"""
+        self.meta_learner.force_save()
         
-        for tool in ['dna', 'micro', 'temporal', 'immune']:
-            usage = self.tool_usage_count[tool]
-            success = self.successful_tool_usage[tool]
-            
-            if usage > 0:
-                success_rate = success / usage
-                # Weight by usage and success
-                preference = (success_rate * 0.7) + (min(usage / 100, 1.0) * 0.3)
-            else:
-                preference = 0.5  # Neutral
-            
-            preferences[tool] = preference
-        
-        return preferences
-    
-    def save_model(self, filepath: str):
-        """Save the trained models and learning state"""
+        # Save network state
         checkpoint = {
             'policy_state_dict': self.policy.state_dict(),
-            'value_state_dict': self.value.state_dict(),
+            'target_policy_state_dict': self.target_policy.state_dict(),
             'policy_optimizer_state_dict': self.policy_optimizer.state_dict(),
-            'value_optimizer_state_dict': self.value_optimizer.state_dict(),
             'step_count': self.step_count,
+            'network_rebuilds': self.network_rebuilds,
             'epsilon': self.epsilon,
+            'tool_performance_history': {k: list(v) for k, v in self.tool_performance_history.items()},
             'tool_usage_count': self.tool_usage_count,
             'successful_tool_usage': self.successful_tool_usage,
-            'tool_performance_history': {k: list(v) for k, v in self.tool_performance_history.items()},
-            'combination_performance': {k: list(v) for k, v in self.combination_performance.items()}
+            'meta_learner_params': self.meta_learner.parameters.copy(),
+            'reward_component_weights': {k: v['weight'] for k, v in self.reward_learner.reward_components.items()}
         }
         
-        torch.save(checkpoint, filepath)
-        log.info(f"Strategic tool learning model saved to {filepath}")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        torch.save(checkpoint, f"pure_blackbox_agent_{timestamp}.pt")
+        
+        log.info("PURE BLACK BOX: All learning progress saved")
+
+# Factory function for creating pure black box agent
+def create_pure_blackbox_agent(market_obs_size: int = 15, subsystem_features_size: int = 16) -> PureBlackBoxStrategicAgent:
+    """Create pure black box agent with meta-learning"""
     
-    def load_model(self, filepath: str):
-        """Load a trained model and learning state"""
-        checkpoint = torch.load(filepath, map_location=self.device)
+    agent = PureBlackBoxStrategicAgent(market_obs_size, subsystem_features_size)
+    
+    log.info("PURE BLACK BOX AGENT CREATED")
+    log.info("All parameters will adapt through experience")
+    log.info("Network will evolve its own architecture")
+    log.info("Reward structure will discover success patterns")
+    
+    return agent
+
+# Usage test
+if __name__ == "__main__":
+    print("Testing Pure Black Box Agent...")
+    
+    agent = create_pure_blackbox_agent()
+    
+    print("Initial status:")
+    print(agent.get_pure_blackbox_status())
+    
+    # Simulate some decision making
+    for i in range(20):
+        market_obs = np.random.randn(15).astype(np.float32)
+        subsystem_features = np.random.randn(16).astype(np.float32)
+        current_price = 4000.0 + np.random.randn() * 10
         
-        self.policy.load_state_dict(checkpoint['policy_state_dict'])
-        self.value.load_state_dict(checkpoint['value_state_dict'])
-        self.target_policy.load_state_dict(self.policy.state_dict())
-        self.target_value.load_state_dict(self.value.state_dict())
+        decision = agent.select_action_and_strategy(market_obs, subsystem_features, current_price)
         
-        self.policy_optimizer.load_state_dict(checkpoint['policy_optimizer_state_dict'])
-        self.value_optimizer.load_state_dict(checkpoint['value_optimizer_state_dict'])
+        # Simulate outcome
+        trade_outcome = {
+            'pnl': np.random.normal(5, 25),
+            'hold_time_hours': np.random.uniform(0.5, 8.0),
+            'used_stop': decision['use_stop'],
+            'used_target': decision['use_target'],
+            'tool_confidence': decision['confidence'],
+            'max_drawdown_pct': np.random.uniform(0.005, 0.03),
+            'exit_reason': np.random.choice(['target_hit', 'stop_hit', 'manual_exit'])
+        }
         
-        self.step_count = checkpoint['step_count']
-        self.epsilon = checkpoint['epsilon']
-        self.tool_usage_count = checkpoint['tool_usage_count']
-        self.successful_tool_usage = checkpoint['successful_tool_usage']
+        agent.store_experience_and_learn(decision, trade_outcome)
         
-        # Restore performance history
-        for tool, history in checkpoint['tool_performance_history'].items():
-            self.tool_performance_history[tool] = deque(history, maxlen=200)
-        
-        for combo, history in checkpoint['combination_performance'].items():
-            self.combination_performance[combo] = deque(history, maxlen=100)
-        
-        self.learning_started = True
-        log.info(f"Strategic tool learning model loaded from {filepath}")
-        log.info(f"Resumed at step {self.step_count} with epsilon {self.epsilon:.3f}")
+        if (i + 1) % 5 == 0:
+            print(f"\nAfter {i+1} decisions:")
+            print(f"Primary tool: {decision['primary_tool']}")
+            print(f"Confidence: {decision['confidence']:.3f} (threshold: {decision['entry_threshold_used']:.3f})")
+            print(f"Epsilon: {agent.epsilon:.3f}")
+    
+    print("\nFinal status after learning:")
+    print(agent.get_pure_blackbox_status())
