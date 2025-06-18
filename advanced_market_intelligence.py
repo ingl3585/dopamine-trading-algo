@@ -262,9 +262,12 @@ class DNASequencingSystem:
         
         return combined
     
-    def find_similar_patterns(self, current_sequence: str, similarity_threshold: float = 0.7) -> List[MarketPattern]:
-        """Find similar DNA patterns in memory"""
+    def find_similar_patterns(self, current_sequence: str) -> List[MarketPattern]:
+        """FIXED: Find similar DNA patterns using adaptive similarity threshold"""
         similar_patterns = []
+        
+        # Get adaptive similarity threshold from meta-learner
+        similarity_threshold = self.meta_learner.get_parameter('dna_similarity_threshold')
         
         for seq, pattern in self.dna_patterns.items():
             if len(seq) == 0 or len(current_sequence) == 0:
@@ -1045,22 +1048,29 @@ class AdvancedMarketIntelligence:
                 time.sleep(60)  # Wait 1 minute before retrying
     
     def cleanup_old_patterns(self):
-        """Remove old, low-confidence patterns to manage memory"""
-        cutoff_date = datetime.now() - timedelta(days=30)
+        """FIXED: Remove old patterns using adaptive memory management"""
         
-        # Clean DNA patterns
+        # Get adaptive cleanup parameters
+        cleanup_days = int(self.get_parameter('pattern_memory_multiplier') * 30)  # Base 30 days
+        cutoff_date = datetime.now() - timedelta(days=cleanup_days)
+        
+        # Clean DNA patterns with adaptive thresholds
         patterns_to_remove = []
+        min_confidence = 0.3 * self.get_parameter('pattern_memory_multiplier')  # Adaptive confidence threshold
+        min_occurrences = int(5 * self.get_parameter('pattern_memory_multiplier'))  # Adaptive occurrence threshold
+        
         for seq, pattern in self.dna_system.dna_patterns.items():
             if (pattern.last_seen < cutoff_date and 
-                pattern.confidence < 0.3 and 
-                pattern.occurrences < 5):
+                pattern.confidence < min_confidence and 
+                pattern.occurrences < min_occurrences):
                 patterns_to_remove.append(seq)
         
         for seq in patterns_to_remove:
             del self.dna_system.dna_patterns[seq]
         
         if patterns_to_remove:
-            log.info(f"Cleaned up {len(patterns_to_remove)} old DNA patterns")
+            log.info(f"Adaptive cleanup: removed {len(patterns_to_remove)} old DNA patterns")
+            log.info(f"Cleanup criteria: {cleanup_days} days, {min_confidence:.2f} min confidence")
     
     def start_continuous_learning(self):
         """Start the continuous learning background thread"""

@@ -188,7 +188,7 @@ class SelfEvolvingPolicyNetwork(torch.nn.Module):
         }
     
     def maybe_evolve_architecture(self, performance_score: float, step_count: int):
-        """Evolve architecture if performance is declining"""
+        """Evolve architecture if performance is declining - FIXED to use proper meta-learning"""
         
         self.performance_history.append(performance_score)
         
@@ -201,34 +201,31 @@ class SelfEvolvingPolicyNetwork(torch.nn.Module):
             performance_decline = older_perf - recent_perf
             
             if performance_decline > self.rebuild_threshold:
-                log.info(f"Performance declined by {performance_decline:.3f}")
+                log.info(f"ARCHITECTURE EVOLUTION: Performance declined by {performance_decline:.3f}")
                 log.info(f"Recent: {recent_perf:.3f}, Older: {older_perf:.3f}")
                 
-                # Update architecture parameters to trigger rebuild
-                current_complexity = self.meta_learner.get_parameter('hidden_layer_multiplier')
+                # FIXED: Use proper meta-learning channel instead of direct parameter manipulation
+                evolution_outcome = -performance_decline  # Negative for poor performance
+                self.meta_learner.update_parameter('hidden_layer_multiplier', evolution_outcome)
                 
-                # Try different complexity
-                if current_complexity > 1.5:
-                    new_complexity = current_complexity * 0.8  # Simplify
-                    evolution_direction = "SIMPLIFYING"
-                else:
-                    new_complexity = current_complexity * 1.3  # Complexify
-                    evolution_direction = "COMPLEXIFYING"
-                
-                # Update meta-parameter
-                self.meta_learner.parameters['hidden_layer_multiplier'] = new_complexity
-                
-                # Rebuild network
-                old_hidden = self.hidden_size
-                self._build_network()
-                
-                log.info(f"Network evolved: {evolution_direction} architecture")
-                log.info(f"Hidden size: {old_hidden} → {self.hidden_size}")
-                log.info(f"Complexity: {current_complexity:.2f} → {new_complexity:.2f}")
-                
-                self.last_rebuild_step = step_count
-                
-                return True  # Signal that network was rebuilt
+                # Let meta-learner decide if architecture should change
+                if self.meta_learner.should_rebuild_network():
+                    # Get new architecture parameters
+                    old_hidden = self.hidden_size
+                    old_complexity = self.meta_learner.get_parameter('hidden_layer_multiplier')
+                    
+                    # Rebuild network with new parameters
+                    self._build_network()
+                    
+                    evolution_direction = "COMPLEXIFYING" if self.hidden_size > old_hidden else "SIMPLIFYING"
+                    
+                    log.info(f"NETWORK EVOLVED: {evolution_direction} architecture")
+                    log.info(f"Hidden size: {old_hidden} → {self.hidden_size}")
+                    log.info(f"Complexity: {old_complexity:.2f} → {self.meta_learner.get_parameter('hidden_layer_multiplier'):.2f}")
+                    
+                    self.last_rebuild_step = step_count
+                    
+                    return True  # Signal that network was rebuilt
         
         return False
 
@@ -316,7 +313,7 @@ class PureBlackBoxStrategicAgent:
         self.epsilon_min = learning_params['epsilon_min']
         
     def select_action_and_strategy(self, market_obs: np.ndarray, subsystem_features: np.ndarray,
-                                 current_price: float, in_position: bool = False) -> Dict:
+                                current_price: float, in_position: bool = False) -> Dict:
         """Select action using pure black box learning with adaptive parameters"""
         
         with torch.no_grad():
@@ -338,7 +335,7 @@ class PureBlackBoxStrategicAgent:
             thresholds = self.meta_learner.get_confidence_thresholds()
             entry_threshold = thresholds['entry']
             
-            # Adaptive exploration
+            # FIXED: Adaptive exploration rates (no hardcoded values)
             if random.random() < self.epsilon:
                 action = random.choice([0, 1, 2])  # Exploration
                 exploration_taken = True
@@ -355,11 +352,13 @@ class PureBlackBoxStrategicAgent:
             use_target = float(outputs['use_target'].cpu().numpy()[0]) > 0.5
             target_distance = float(outputs['target_distance'].cpu().numpy()[0])
             
-            # Tool selection using learned probabilities
+            # FIXED: Tool selection using adaptive exploration
             tool_probs = outputs['tool_probs'].cpu().numpy()[0]
             
-            # Add exploration to tool selection
-            if random.random() < 0.2:  # 20% tool exploration
+            # Get adaptive tool exploration rate
+            tool_exploration_rate = self.meta_learner.get_parameter('tool_exploration_rate')
+            
+            if random.random() < tool_exploration_rate:
                 primary_tool_idx = random.choice([0, 1, 2, 3])
             else:
                 primary_tool_idx = np.argmax(tool_probs)
@@ -389,10 +388,12 @@ class PureBlackBoxStrategicAgent:
                 else:  # Short
                     target_price = current_price * (1 - target_distance)
             
-            # Should exit current position?
+            # FIXED: Should exit with adaptive exploration rate
             exit_threshold = thresholds['exit']
+            exit_exploration_rate = self.meta_learner.get_parameter('exit_exploration_rate')
+            
             should_exit = in_position and (confidence < exit_threshold or 
-                                         (random.random() < 0.1 and exploration_taken))
+                                        (random.random() < exit_exploration_rate and exploration_taken))
             
             # Generate reasoning based on learned patterns
             reasoning = self._generate_adaptive_reasoning(
@@ -423,14 +424,16 @@ class PureBlackBoxStrategicAgent:
                     'entry_threshold': entry_threshold,
                     'stop_max_pct': stop_distance,
                     'target_max_pct': target_distance,
-                    'current_epsilon': self.epsilon
+                    'current_epsilon': self.epsilon,
+                    'tool_exploration_rate': tool_exploration_rate,
+                    'exit_exploration_rate': exit_exploration_rate
                 },
                 
                 # Raw data for learning
                 'raw_market_obs': market_obs.copy(),
                 'raw_subsystem_features': subsystem_features.copy(),
                 'raw_outputs': {k: v.cpu().numpy() if torch.is_tensor(v) else v 
-                              for k, v in outputs.items()}
+                            for k, v in outputs.items()}
             }
     
     def _generate_adaptive_reasoning(self, primary_tool: str, confidence: float, 

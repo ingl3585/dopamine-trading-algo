@@ -140,8 +140,8 @@ class TCPBridge:
         log.info("TCP receive loop stopped")
 
     def send_signal(self, action: int, confidence: float, quality: str,
-                   stop_price: float = 0.0, target_price: float = 0.0, 
-                   position_size: float = 1.0):
+                stop_price: float = 0.0, target_price: float = 0.0, 
+                position_size: float = 1.0, meta_learner=None):
         """
         Send AI trading signal with AI-calculated position size and risk management
         
@@ -167,15 +167,20 @@ class TCPBridge:
             unix_timestamp = time.time()
             net_ticks = int((unix_timestamp * 10000000) + 621355968000000000)
             
+            adaptive_timeout = 30.0  # Default
+            if meta_learner:
+                adaptive_timeout = meta_learner.get_parameter('signal_timeout_seconds')
+            
             signal = {
                 "action": int(action),
                 "confidence": float(confidence),
                 "quality": str(quality),
-                "position_size": float(position_size),     # AI-calculated position size
-                "use_stop": use_stop,                      # AI decision: use stop or not
-                "stop_price": float(stop_price),           # Actual price AI wants
-                "use_target": use_target,                  # AI decision: use target or not
-                "target_price": float(target_price),       # Actual price AI wants
+                "position_size": float(position_size),
+                "use_stop": stop_price > 0.0,
+                "stop_price": float(stop_price),
+                "use_target": target_price > 0.0,
+                "target_price": float(target_price),
+                "adaptive_timeout": float(adaptive_timeout),  # NEW
                 "timestamp": int(net_ticks)
             }
             

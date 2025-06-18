@@ -163,14 +163,28 @@ class AdaptiveSafetyManager:
                 log.warning(f"ADAPTIVE REGRESSION: Dropped to development phase (readiness: {readiness_score:.2f})")
                 self.meta_learner.update_parameter('position_size_base', -0.2)
 
-    def get_position_size(self) -> float:
-        """Return current adaptive position size based on phase"""
-        if self.current_phase == 'exploration':
-            return self.config.EXPLORATION_PHASE_SIZE
-        elif self.current_phase == 'development':
-            return self.config.DEVELOPMENT_PHASE_SIZE
-        else:
-            return self.config.PRODUCTION_PHASE_SIZE
+    def get_position_size(self, account_data: Dict = None, current_price: float = 4000.0) -> float:
+        """FIXED: Return adaptive position size based on account data when available"""
+        
+        # If account data is available, use account-based sizing (PROMPT REQUIREMENT)
+        if account_data and 'buying_power' in account_data:
+            return self.calculate_account_based_position_size(
+                account_data, current_price, self.current_phase
+            )
+        
+        # Fallback to phase-based sizing with adaptive multipliers
+        base_sizes = {
+            'exploration': self.config.EXPLORATION_PHASE_SIZE,
+            'development': self.config.DEVELOPMENT_PHASE_SIZE,
+            'production': self.config.PRODUCTION_PHASE_SIZE
+        }
+        
+        base_size = base_sizes.get(self.current_phase, 1.0)
+        
+        # Apply adaptive multiplier
+        adaptive_multiplier = self.meta_learner.get_parameter('position_size_base')
+        
+        return max(1.0, base_size * adaptive_multiplier)
 
 class PureBlackBoxSignalGenerator:
     """
@@ -274,6 +288,54 @@ class PureBlackBoxSignalGenerator:
             
         except Exception as e:
             log.error(f"Pure signal generation error: {e}")
+    
+    def calculate_account_based_position_size(self, account_data: Dict, current_price: float, 
+                                            current_phase: str) -> float:
+        """Calculate position size based on account/margin data as required by prompt"""
+        
+        # Extract account information
+        available_capital = account_data.get('buying_power', 25000)
+        account_balance = account_data.get('account_balance', 25000)
+        daily_pnl = account_data.get('daily_pnl', 0.0)
+        
+        # Get adaptive risk parameters
+        risk_per_trade_pct = self.meta_learner.get_parameter('risk_per_trade_pct')
+        position_size_base = self.meta_learner.get_parameter('position_size_base')
+        
+        # Calculate base position size from available capital
+        risk_amount = available_capital * risk_per_trade_pct
+        
+        # MNQ futures specifics
+        estimated_margin_per_contract = 50.0  # Approximate margin requirement
+        point_value = 2.0  # $2 per point for MNQ
+        
+        # Maximum contracts by margin
+        max_contracts_by_margin = available_capital / estimated_margin_per_contract
+        
+        # Phase-based adjustments (adaptive)
+        phase_multipliers = {
+            'exploration': 0.3,
+            'development': 0.6, 
+            'production': 1.0
+        }
+        phase_multiplier = phase_multipliers.get(current_phase, 0.5)
+        
+        # Account performance adjustment
+        if account_balance > 0:
+            performance_factor = 1.0 + min(0.5, max(-0.5, daily_pnl / account_balance))
+        else:
+            performance_factor = 0.5
+        
+        # Calculate final position size
+        base_contracts = (risk_amount / (current_price * point_value)) * position_size_base
+        
+        final_size = base_contracts * phase_multiplier * performance_factor
+        
+        # Safety bounds
+        final_size = max(1, min(final_size, max_contracts_by_margin * 0.8))  # Never use more than 80% of margin
+        final_size = min(final_size, 10)  # Absolute safety cap
+        
+        return int(final_size)
 
     def _generate_clean_signal(self, decision: Dict, current_price: float, intelligence_result: Dict):
         """Generate clean signal for NinjaTrader execution"""

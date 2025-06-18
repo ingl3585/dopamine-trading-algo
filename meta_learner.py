@@ -121,6 +121,7 @@ class PureMetaLearner:
             'position_size_base': {'initial': 0.5, 'bounds': (0.1, 2.0), 'lr': 1e-4},
             'stop_loss_max_pct': {'initial': 0.02, 'bounds': (0.005, 0.08), 'lr': 1e-5},
             'take_profit_max_pct': {'initial': 0.04, 'bounds': (0.01, 0.15), 'lr': 1e-5},
+            'risk_per_trade_pct': {'initial': 0.02, 'bounds': (0.005, 0.1), 'lr': 1e-5},  # NEW
             
             # Learning Rates
             'policy_learning_rate': {'initial': 1e-4, 'bounds': (1e-6, 1e-2), 'lr': 1e-6},
@@ -132,10 +133,12 @@ class PureMetaLearner:
             'exit_confidence_threshold': {'initial': 0.5, 'bounds': (0.1, 0.9), 'lr': 1e-4},
             'scaling_confidence_threshold': {'initial': 0.6, 'bounds': (0.2, 0.9), 'lr': 1e-4},
             
-            # Exploration
+            # Exploration - NOW ADAPTIVE
             'epsilon_decay_rate': {'initial': 0.9995, 'bounds': (0.99, 0.9999), 'lr': 1e-6},
             'epsilon_min': {'initial': 0.15, 'bounds': (0.05, 0.5), 'lr': 1e-4},
             'exploration_bonus': {'initial': 0.1, 'bounds': (0.0, 1.0), 'lr': 1e-4},
+            'tool_exploration_rate': {'initial': 0.2, 'bounds': (0.05, 0.5), 'lr': 1e-4},  # NEW
+            'exit_exploration_rate': {'initial': 0.1, 'bounds': (0.02, 0.3), 'lr': 1e-4},  # NEW
             
             # Network Architecture
             'hidden_layer_multiplier': {'initial': 1.0, 'bounds': (0.5, 3.0), 'lr': 1e-4},
@@ -143,9 +146,15 @@ class PureMetaLearner:
             'attention_weight': {'initial': 1.0, 'bounds': (0.1, 3.0), 'lr': 1e-4},
             'dropout_rate': {'initial': 0.1, 'bounds': (0.0, 0.5), 'lr': 1e-4},
             
-            # Memory Management
+            # Memory Management - NOW ADAPTIVE
             'experience_buffer_size': {'initial': 10000, 'bounds': (1000, 100000), 'lr': 1e-3},
             'batch_size_multiplier': {'initial': 1.0, 'bounds': (0.5, 4.0), 'lr': 1e-4},
+            'experience_buffer_multiplier': {'initial': 1.0, 'bounds': (0.5, 3.0), 'lr': 1e-4},  # NEW
+            'pattern_memory_multiplier': {'initial': 1.0, 'bounds': (0.5, 5.0), 'lr': 1e-4},  # NEW
+            
+            # Communication & Timing - NOW ADAPTIVE
+            'signal_timeout_seconds': {'initial': 30.0, 'bounds': (10.0, 120.0), 'lr': 1e-3},  # NEW
+            'dna_similarity_threshold': {'initial': 0.7, 'bounds': (0.3, 0.9), 'lr': 1e-4},  # NEW
             
             # Advanced Features
             'scaling_frequency': {'initial': 0.3, 'bounds': (0.1, 0.8), 'lr': 1e-4},
