@@ -165,6 +165,15 @@ class AdaptiveSafetyManager:
                 log.warning(f"ADAPTIVE REGRESSION: Dropped to development phase (readiness: {readiness_score:.2f})")
                 self.meta_learner.update_parameter('position_size_base', -0.2)
 
+    def get_position_size(self) -> float:
+        """Return current adaptive position size based on phase"""
+        if self.current_phase == 'exploration':
+            return self.config.EXPLORATION_PHASE_SIZE
+        elif self.current_phase == 'development':
+            return self.config.DEVELOPMENT_PHASE_SIZE
+        else:
+            return self.config.PRODUCTION_PHASE_SIZE
+
 class PureBlackBoxSignalGenerator:
     """
     REFACTORED: Pure signal generation with NO position tracking

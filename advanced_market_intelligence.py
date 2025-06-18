@@ -619,35 +619,37 @@ class MetaLearningDirector:
         return final_signal, confidence
     
     def update_weights(self, subsystem_signals: Dict[str, float], outcome: float):
-        """Update subsystem weights based on performance (MISSING METHOD)"""
-        
-        learning_rate = 0.01
-        
+        """Update subsystem weights based on learned signal effectiveness"""
+        log.info(f"[MetaLearning] Updating weights with outcome: {outcome:.5f}")
+
+        # Calculate total signal energy to scale learning naturally
+        signal_magnitude = sum(abs(s) for s in subsystem_signals.values()) or 1.0
+        normalized_outcome = outcome / max(0.001, abs(outcome))  # Sign only
+
+        # Update weights adaptively based on agreement with direction
         for system, signal in subsystem_signals.items():
-            if system in self.subsystem_weights:
-                # Reward systems that agreed with successful outcome
-                if (signal > 0 and outcome > 0) or (signal < 0 and outcome < 0):
-                    self.subsystem_weights[system] += learning_rate * abs(outcome)
-                else:
-                    self.subsystem_weights[system] -= learning_rate * abs(outcome)
-        
-        # Normalize weights
+            if system not in self.subsystem_weights:
+                continue
+
+            direction_agreement = np.sign(signal) == np.sign(outcome)
+            signal_strength = abs(signal) / signal_magnitude
+
+            # Meta-learned adjustment signal (no fixed learning rate)
+            adjustment = signal_strength * abs(outcome)
+
+            if direction_agreement:
+                self.subsystem_weights[system] += adjustment
+            else:
+                self.subsystem_weights[system] -= adjustment
+
+        # Soft normalization — allow natural drift but preserve balance
         total_weight = sum(self.subsystem_weights.values())
         if total_weight > 0:
             for system in self.subsystem_weights:
                 self.subsystem_weights[system] /= total_weight
-        
-        # Ensure minimum weight (prevent any system from being completely ignored)
-        min_weight = 0.1
-        for system in self.subsystem_weights:
-            if self.subsystem_weights[system] < min_weight:
-                self.subsystem_weights[system] = min_weight
-        
-        # Re-normalize after minimum weight adjustment
-        total_weight = sum(self.subsystem_weights.values())
-        if total_weight > 0:
-            for system in self.subsystem_weights:
-                self.subsystem_weights[system] /= total_weight
+
+        log.info("[MetaLearning] Subsystem weights updated: " +
+                ", ".join(f"{k.upper()}={v:.3f}" for k, v in self.subsystem_weights.items()))
     
     def record_disagreement(self, signals: Dict[str, float], scores: Dict[str, float]):
         """Record patterns when subsystems disagree"""
@@ -859,17 +861,14 @@ class AdvancedMarketIntelligence:
         return result
     
     def generate_action(self, signal: float, confidence: float) -> str:
-        """Generate trading action from signal"""
-        min_confidence = 0.3
-        min_signal_strength = 0.2
-        
-        if confidence < min_confidence:
-            return "HOLD"
-        
-        if signal > min_signal_strength:
-            return "BUY"
-        elif signal < -min_signal_strength:
-            return "SELL"
+        # Use normalized soft decision surface
+        certainty = abs(signal) * confidence
+
+        # Let action emerge from confidence × strength
+        if certainty > 0.6:
+            return "BUY" if signal > 0 else "SELL"
+        elif certainty > 0.3:
+            return "BUY" if signal > 0 else "SELL" if signal < 0 else "HOLD"
         else:
             return "HOLD"
     

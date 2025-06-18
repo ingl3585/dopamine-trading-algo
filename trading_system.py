@@ -101,16 +101,17 @@ class PureBlackBoxTradingSystem:
         # Enhance with adaptive callbacks
         original_send_signal = bridge.send_signal
         
-        def adaptive_send_signal(action, confidence, quality, stop_price=0.0, target_price=0.0):
+        def adaptive_send_signal(action, confidence, quality, position_size, stop_price=0.0, target_price=0.0):
             # Track signal sending for meta-learning
             self.adaptive_stats['total_market_updates'] += 1
-            
+
             # Log adaptive signal details
             if stop_price > 0 or target_price > 0:
                 log.info(f"ADAPTIVE SIGNAL: AI chose stop=${stop_price:.2f}, target=${target_price:.2f}")
                 log.info(f"   These were LEARNED by AI, not hardcoded!")
-            
-            return original_send_signal(action, confidence, quality, stop_price, target_price)
+
+            return original_send_signal(action, confidence, quality, stop_price, target_price, position_size)
+
         
         bridge.send_signal = adaptive_send_signal
         return bridge
