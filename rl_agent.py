@@ -1,4 +1,4 @@
-# rl_agent.py - FIXED: Added missing step_count attribute
+# rl_agent.py - FIXED: Ensured step_count attribute is properly initialized
 
 import threading
 import time
@@ -243,6 +243,9 @@ class PureBlackBoxStrategicAgent:
     """
     
     def __init__(self, market_obs_size: int = 15, subsystem_features_size: int = 16):
+        # CRITICAL FIX: Initialize step_count FIRST to prevent attribute errors
+        self.step_count = 0
+        
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         # Initialize meta-learning system
@@ -280,8 +283,7 @@ class PureBlackBoxStrategicAgent:
         self.epsilon = 0.9  # Start high, will adapt
         self._update_exploration_parameters()
         
-        # Learning state - FIXED: Added missing step_count
-        self.step_count = 0  # This was missing!
+        # Additional learning state
         self.network_rebuilds = 0
         self.last_optimizer_update = 0
         
@@ -504,7 +506,8 @@ class PureBlackBoxStrategicAgent:
         self._update_exploration_parameters()
         self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
         
-        self.step_count += 1  # FIXED: Now properly increment step_count
+        # INCREMENT STEP COUNT - This is essential for proper tracking
+        self.step_count += 1
         
         # Update optimizers periodically with new learning rates
         if self.step_count - self.last_optimizer_update >= 100:

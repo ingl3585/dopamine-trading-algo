@@ -1,4 +1,4 @@
-# meta_learner.py - Core Meta-Learning System for Pure Black Box
+# meta_learner.py - FIXED: Added missing get_learning_efficiency method
 
 import torch
 import torch.nn as nn
@@ -291,6 +291,12 @@ class PureMetaLearner:
                     if 'learning_rate' in name:
                         self.update_parameter(name, -0.1)  # Reduce learning rates
     
+    def get_learning_efficiency(self) -> float:
+        """Get current learning efficiency"""
+        if len(self.learning_efficiency_history) > 0:
+            return float(np.mean(list(self.learning_efficiency_history)[-10:]))
+        return 0.0
+    
     def get_network_architecture(self) -> Dict[str, int]:
         """Get current optimal network architecture"""
         base_hidden = 64
@@ -411,11 +417,13 @@ class PureMetaLearner:
     def get_adaptation_report(self) -> str:
         """Generate detailed adaptation report"""
         
+        recent_efficiency = self.get_learning_efficiency()
+        
         report = f"""
 === PURE BLACK BOX META-LEARNING REPORT ===
 
 Total Parameter Updates: {self.total_updates}
-Learning Efficiency: {np.mean(list(self.learning_efficiency_history)[-10:]):.3f} (recent)
+Learning Efficiency: {recent_efficiency:.3f} (recent)
 
 RISK MANAGEMENT (Self-Optimized):
 """
@@ -685,7 +693,13 @@ class AdaptiveRewardLearner:
             analysis += f"\nRecent Performance:\n"
             analysis += f"  Average Reward: {np.mean(recent_rewards):.3f}\n"
             analysis += f"  Average PnL: ${np.mean(recent_pnls):.2f}\n"
-            analysis += f"  Reward-PnL Correlation: {np.corrcoef(recent_rewards, recent_pnls)[0,1]:.3f}\n"
+            if len(set(recent_rewards)) > 1 and len(set(recent_pnls)) > 1:
+                try:
+                    correlation = np.corrcoef(recent_rewards, recent_pnls)[0, 1]
+                    if not np.isnan(correlation):
+                        analysis += f"  Reward-PnL Correlation: {correlation:.3f}\n"
+                except:
+                    pass
         
         analysis += f"\nReward system learning what actually drives trading success!"
         
