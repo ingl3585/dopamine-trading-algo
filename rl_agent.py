@@ -702,7 +702,7 @@ Reward structure discovering what actually drives success!
         }
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        torch.save(checkpoint, f"pure_blackbox_agent_{timestamp}.pt")
+        torch.save(checkpoint, f"models/pure_blackbox_agent_{timestamp}.pt")
         
         log.info("PURE BLACK BOX: All learning progress saved")
 

@@ -77,3 +77,9 @@ backtest_results/
 
 # Databases
 *.db
+
+# Folders
+data/
+meta_learning/
+patterns/
+reports/

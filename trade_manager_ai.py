@@ -467,6 +467,9 @@ class PureBlackBoxTradeManager:
             if decision['use_target']:
                 log.info(f"   Adaptive Target: ${decision['target_price']:.2f} ({decision['target_distance_pct']:.1f}%)")
 
+            log.info(f"DEBUG DECISION KEYS: {list(decision.keys())}")
+            log.info(f"DEBUG PRIMARY TOOL: {decision.get('primary_tool', 'NOT_FOUND')}")
+
     def extract_adaptive_subsystem_features(self, intelligence_result: Dict) -> np.ndarray:
         """Extract features with adaptive normalization"""
         features = []

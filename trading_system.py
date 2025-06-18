@@ -438,7 +438,7 @@ class PureBlackBoxTradingSystem:
                 self.intelligence_engine.memory_db.save_dna_pattern(pattern)
             
             # Export comprehensive knowledge base
-            knowledge_file = f"adaptive_blackbox_knowledge_{timestamp}.json"
+            knowledge_file = f"data/adaptive_blackbox_knowledge_{timestamp}.json"
             self.intelligence_engine.export_knowledge_base(knowledge_file)
             
             log.info(f"AUTO-SAVE: All adaptive learning progress saved")
@@ -494,7 +494,7 @@ class PureBlackBoxTradingSystem:
             
             # Export final knowledge base
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            final_knowledge_file = f"final_adaptive_state_{timestamp}.json"
+            final_knowledge_file = f"patterns/final_adaptive_state_{timestamp}.json"
             self.intelligence_engine.export_knowledge_base(final_knowledge_file)
             
             log.info(f"CRITICAL SAVE COMPLETE: All learning preserved")
@@ -581,7 +581,7 @@ class PureBlackBoxTradingSystem:
         log.info("="*80 + "\n")
 
 # Factory function for easy initialization
-def create_pure_blackbox_system(meta_db_path: str = "meta_parameters.db") -> PureBlackBoxTradingSystem:
+def create_pure_blackbox_system(meta_db_path: str = "data/meta_parameters.db") -> PureBlackBoxTradingSystem:
     """Create a complete pure black box trading system"""
     
     system = PureBlackBoxTradingSystem(meta_db_path)

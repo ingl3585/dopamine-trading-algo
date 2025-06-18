@@ -1020,6 +1020,7 @@ class AdvancedMarketIntelligence:
             }
         }
         
+        filepath = f"data/{os.path.basename(filepath)}"
         with open(filepath, 'w') as f:
             json.dump(knowledge, f, indent=2)
         

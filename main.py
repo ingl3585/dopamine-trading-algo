@@ -12,7 +12,7 @@ logging.basicConfig(
     level=logging.INFO, 
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(f'pure_blackbox_{datetime.now().strftime("%Y%m%d")}.log'),
+        logging.FileHandler(f'logs/pure_blackbox_{datetime.now().strftime("%Y%m%d")}.log'),
         logging.StreamHandler()
     ]
 )
