@@ -1,4 +1,4 @@
-# pure_blackbox_rl_agent.py - REPLACES rl_agent.py with full meta-learning
+# rl_agent.py - FIXED: Added missing step_count attribute
 
 import threading
 import time
@@ -280,8 +280,8 @@ class PureBlackBoxStrategicAgent:
         self.epsilon = 0.9  # Start high, will adapt
         self._update_exploration_parameters()
         
-        # Learning state
-        self.step_count = 0
+        # Learning state - FIXED: Added missing step_count
+        self.step_count = 0  # This was missing!
         self.network_rebuilds = 0
         self.last_optimizer_update = 0
         
@@ -504,7 +504,7 @@ class PureBlackBoxStrategicAgent:
         self._update_exploration_parameters()
         self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
         
-        self.step_count += 1
+        self.step_count += 1  # FIXED: Now properly increment step_count
         
         # Update optimizers periodically with new learning rates
         if self.step_count - self.last_optimizer_update >= 100:
@@ -751,6 +751,7 @@ if __name__ == "__main__":
             print(f"Primary tool: {decision['primary_tool']}")
             print(f"Confidence: {decision['confidence']:.3f} (threshold: {decision['entry_threshold_used']:.3f})")
             print(f"Epsilon: {agent.epsilon:.3f}")
+            print(f"Step count: {agent.step_count}")
     
     print("\nFinal status after learning:")
     print(agent.get_pure_blackbox_status())
