@@ -39,16 +39,18 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             switch (State)
             {
-                case State.SetDefaults:
-                    Description = "Adaptive AI Trading Strategy with Historical Bootstrapping";
-                    Name = "ResearchStrategy";
-                    Calculate = Calculate.OnBarClose;
-                    BarsRequiredToTrade = 1;
-                    
-                    AddDataSeries(BarsPeriodType.Minute, 15);
-                    AddDataSeries(BarsPeriodType.Minute, 5);
-                    AddDataSeries(BarsPeriodType.Minute, 1);
-                    break;
+				case State.SetDefaults:
+				    Description = "Adaptive AI Trading Strategy with Historical Bootstrapping";
+				    Name = "ResearchStrategy";
+				    Calculate = Calculate.OnBarClose;
+				    BarsRequiredToTrade = 1;
+				    break;
+				
+				case State.Configure:
+				    AddDataSeries(BarsPeriodType.Minute, 15);
+				    AddDataSeries(BarsPeriodType.Minute, 5);
+				    AddDataSeries(BarsPeriodType.Minute, 1);
+				    break;
                     
                 case State.Realtime:
                     ConnectToPython();

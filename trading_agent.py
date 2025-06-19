@@ -86,7 +86,7 @@ class TradingAgent:
         
         # Learning rate scheduler
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode='max', factor=0.8, patience=50, verbose=False
+            self.optimizer, mode='max', factor=0.8, patience=50
         )
         
         # Enhanced experience replay with prioritization
@@ -801,7 +801,7 @@ class TradingAgent:
         
         # Update scheduler
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode='max', factor=0.8, patience=50, verbose=False
+            self.optimizer, mode='max', factor=0.8, patience=50
         )
         
         logger.info(f"Architecture evolved to: {new_sizes}")
