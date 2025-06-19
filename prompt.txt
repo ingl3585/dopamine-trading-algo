@@ -42,6 +42,8 @@ Use a self-evolving neural network architecture (e.g. attention + LSTM) that reb
 
 Manage all reward design through an adaptive reward engine that discovers what success looks like (P&L, drawdown, hold time, tool effectiveness, etc.)
 
+Get Account related information from NinjaTrader in order to stay in sync and use that information on the Python side
+
 No hardcoded fallback values
 
 Log only what’s necessary — avoid log spam

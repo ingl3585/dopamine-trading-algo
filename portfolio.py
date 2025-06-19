@@ -27,6 +27,11 @@ class Trade:
     stop_used: bool = False
     target_used: bool = False
     state_features: Optional[List] = None
+    # Enhanced account tracking
+    entry_account_balance: float = 0.0
+    exit_account_balance: float = 0.0
+    margin_used: float = 0.0
+    account_risk_pct: float = 0.0
 
 
 class Portfolio:
@@ -40,10 +45,21 @@ class Portfolio:
         self.consecutive_losses = 0
         self.last_trade_time = 0.0
         
+        # Enhanced account tracking
+        self.session_start_balance = 0.0
+        self.peak_balance = 0.0
+        self.max_drawdown = 0.0
+        self.current_margin_usage = 0.0
+        self.account_balance_history = deque(maxlen=100)
+        
     def add_pending_order(self, order: Order):
         # Use timestamp as key
         key = str(order.timestamp)
         self.pending_orders[key] = order
+        
+        # Track account state at order entry
+        if hasattr(order, 'market_data') and order.market_data:
+            self._update_account_metrics(order.market_data)
         
     def complete_trade(self, completion_data: Dict) -> Optional[Trade]:
         pnl = completion_data.get('final_pnl', 0.0)
@@ -54,6 +70,14 @@ class Portfolio:
         matching_order = self._find_matching_order(completion_data)
         if not matching_order:
             return None
+        
+        # Enhanced trade creation with account data
+        entry_balance = 0.0
+        margin_used = 0.0
+        
+        if hasattr(matching_order, 'market_data') and matching_order.market_data:
+            entry_balance = matching_order.market_data.account_balance
+            margin_used = matching_order.market_data.margin_used
             
         trade = Trade(
             entry_time=matching_order.timestamp,
@@ -71,7 +95,12 @@ class Portfolio:
             stop_used=exit_reason in ['stop_hit', 'stop_loss'],
             target_used=exit_reason in ['target_hit', 'profit_target'],
             state_features=matching_order.decision_data.get('state_features') 
-                         if hasattr(matching_order, 'decision_data') and matching_order.decision_data else None
+                         if hasattr(matching_order, 'decision_data') and matching_order.decision_data else None,
+            # Enhanced account data
+            entry_account_balance=entry_balance,
+            exit_account_balance=entry_balance + pnl,  # Estimated
+            margin_used=margin_used,
+            account_risk_pct=abs(pnl) / max(entry_balance, 1000) if entry_balance > 0 else 0.0
         )
         
         self._update_stats(trade)
@@ -96,12 +125,44 @@ class Portfolio:
         self.total_pnl += trade.pnl
         self.daily_pnl += trade.pnl
         
+        # Update account balance tracking
+        if trade.exit_account_balance > 0:
+            self.account_balance_history.append({
+                'timestamp': trade.exit_time,
+                'balance': trade.exit_account_balance,
+                'pnl': trade.pnl
+            })
+            
+            # Update peak and drawdown
+            if trade.exit_account_balance > self.peak_balance:
+                self.peak_balance = trade.exit_account_balance
+            
+            current_drawdown = (self.peak_balance - trade.exit_account_balance) / self.peak_balance
+            if current_drawdown > self.max_drawdown:
+                self.max_drawdown = current_drawdown
+        
         if trade.pnl > 0:
             self.winning_trades += 1
             self.consecutive_losses = 0
         else:
             self.losing_trades += 1
             self.consecutive_losses += 1
+    
+    def _update_account_metrics(self, market_data):
+        """Update account metrics from current market data"""
+        if hasattr(market_data, 'account_balance'):
+            self.account_balance_history.append({
+                'timestamp': time.time(),
+                'balance': market_data.account_balance,
+                'pnl': 0.0
+            })
+            
+            if self.session_start_balance == 0.0:
+                self.session_start_balance = market_data.account_balance
+                self.peak_balance = market_data.account_balance
+        
+        if hasattr(market_data, 'margin_used'):
+            self.current_margin_usage = market_data.margin_used
     
     def get_win_rate(self) -> float:
         total = self.winning_trades + self.losing_trades
@@ -118,10 +179,47 @@ class Portfolio:
         return sum(1 for trade in self.completed_trades 
                   if trade.entry_time > cutoff_time)
     
-    def get_summary(self) -> Dict:
-        total_trades = len(self.completed_trades)
+    def get_account_performance(self) -> Dict:
+        """Get account-specific performance metrics"""
+        if not self.account_balance_history:
+            return {}
+        
+        recent_balance = self.account_balance_history[-1]['balance'] if self.account_balance_history else 0
+        
+        # Calculate various account metrics
+        session_return = 0.0
+        if self.session_start_balance > 0:
+            session_return = (recent_balance - self.session_start_balance) / self.session_start_balance
+        
+        # Risk-adjusted metrics
+        avg_risk_per_trade = 0.0
+        if self.completed_trades:
+            total_risk = sum(trade.account_risk_pct for trade in self.completed_trades)
+            avg_risk_per_trade = total_risk / len(self.completed_trades)
+        
+        # Profit factor
+        gross_profit = sum(trade.pnl for trade in self.completed_trades if trade.pnl > 0)
+        gross_loss = abs(sum(trade.pnl for trade in self.completed_trades if trade.pnl < 0))
+        profit_factor = gross_profit / max(gross_loss, 1.0)
         
         return {
+            'current_balance': recent_balance,
+            'session_start_balance': self.session_start_balance,
+            'session_return_pct': session_return * 100,
+            'peak_balance': self.peak_balance,
+            'max_drawdown_pct': self.max_drawdown * 100,
+            'current_margin_usage': self.current_margin_usage,
+            'avg_risk_per_trade_pct': avg_risk_per_trade * 100,
+            'profit_factor': profit_factor,
+            'gross_profit': gross_profit,
+            'gross_loss': gross_loss
+        }
+    
+    def get_summary(self) -> Dict:
+        total_trades = len(self.completed_trades)
+        account_perf = self.get_account_performance()
+        
+        summary = {
             'total_trades': total_trades,
             'winning_trades': self.winning_trades,
             'losing_trades': self.losing_trades,
@@ -132,6 +230,11 @@ class Portfolio:
             'consecutive_losses': self.consecutive_losses,
             'pending_orders': len(self.pending_orders)
         }
+        
+        # Add account performance metrics
+        summary.update(account_perf)
+        
+        return summary
     
     def save_state(self, filepath: str):
         # Convert trades to serializable format
@@ -150,6 +253,12 @@ class Portfolio:
             'winning_trades': self.winning_trades,
             'losing_trades': self.losing_trades,
             'consecutive_losses': self.consecutive_losses,
+            # Enhanced account data
+            'session_start_balance': self.session_start_balance,
+            'peak_balance': self.peak_balance,
+            'max_drawdown': self.max_drawdown,
+            'current_margin_usage': self.current_margin_usage,
+            'account_balance_history': list(self.account_balance_history),
             'saved_at': datetime.now().isoformat()
         }
         
@@ -167,6 +276,16 @@ class Portfolio:
             self.winning_trades = data.get('winning_trades', 0)
             self.losing_trades = data.get('losing_trades', 0)
             self.consecutive_losses = data.get('consecutive_losses', 0)
+            
+            # Restore enhanced account data
+            self.session_start_balance = data.get('session_start_balance', 0.0)
+            self.peak_balance = data.get('peak_balance', 0.0)
+            self.max_drawdown = data.get('max_drawdown', 0.0)
+            self.current_margin_usage = data.get('current_margin_usage', 0.0)
+            
+            # Restore account history
+            history_data = data.get('account_balance_history', [])
+            self.account_balance_history = deque(history_data, maxlen=100)
             
             # Restore recent trades (for statistics)
             trades_data = data.get('completed_trades', [])

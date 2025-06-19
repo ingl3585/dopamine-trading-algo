@@ -83,19 +83,21 @@ class RewardEngine:
             'drawdown_penalty': MetaParameter(0.5, (0.0, 2.0)),
             'hold_time_factor': MetaParameter(0.1, (0.0, 0.5)),
             'win_rate_bonus': MetaParameter(0.3, (0.0, 1.0)),
-            'subsystem_consistency': MetaParameter(0.2, (0.0, 1.0))
+            'subsystem_consistency': MetaParameter(0.2, (0.0, 1.0)),
+            'account_preservation': MetaParameter(0.4, (0.0, 1.0))  # New component
         }
         
         self.outcome_history = deque(maxlen=200)
     
     def compute_reward(self, trade_data: Dict[str, Any]) -> float:
         pnl = trade_data.get('pnl', 0.0)
+        account_balance = trade_data.get('account_balance', 25000)
         hold_time = trade_data.get('hold_time', 1.0)
         was_winner = pnl > 0
         subsystem_agreement = trade_data.get('subsystem_agreement', 0.5)
         
-        # Normalized PnL component
-        pnl_norm = np.tanh(pnl / 50.0)
+        # Account-normalized PnL component
+        pnl_norm = np.tanh(pnl / (account_balance * 0.01))  # Normalize by 1% of account
         
         # Hold time penalty for overly long trades
         hold_penalty = max(0, (hold_time - 3600) / 3600) * 0.1
@@ -107,11 +109,16 @@ class RewardEngine:
         # Subsystem consistency bonus
         consistency_bonus = (subsystem_agreement - 0.5) * 0.1
         
+        # Account preservation bonus (reward smaller risks on smaller accounts)
+        risk_pct = abs(pnl) / account_balance
+        preservation_bonus = max(0, 0.02 - risk_pct) * 5.0  # Bonus for risks < 2%
+        
         reward = (
             self.components['pnl_weight'].value * pnl_norm +
             self.components['hold_time_factor'].value * (-hold_penalty) +
             self.components['win_rate_bonus'].value * win_rate_bonus +
-            self.components['subsystem_consistency'].value * consistency_bonus
+            self.components['subsystem_consistency'].value * consistency_bonus +
+            self.components['account_preservation'].value * preservation_bonus
         )
         
         self.outcome_history.append(reward)
@@ -167,27 +174,31 @@ class MetaLearner:
     def __init__(self, state_dim: int = 20):
         self.state_dim = state_dim
         
-        # Only basic constraints - everything else learned
+        # Account-aware parameters with dynamic bounds
         self.parameters = {
-            # Trading frequency (learned)
-            'trade_frequency_base': MetaParameter(5.0, (1.0, 20.0)),  # trades per hour
+            # Trading frequency (account-aware)
+            'trade_frequency_base': MetaParameter(5.0, (1.0, 20.0)),
             
-            # Position sizing (completely learned from account data)
-            'position_size_factor': MetaParameter(0.1, (0.01, 1.0)),  # fraction of available margin
-            'max_position_factor': MetaParameter(0.5, (0.1, 0.9)),   # max fraction of account
+            # Position sizing (completely account-driven)
+            'position_size_factor': MetaParameter(0.1, (0.01, 0.5)),  # More conservative upper bound
+            'max_position_factor': MetaParameter(0.3, (0.1, 0.7)),   # More conservative for smaller accounts
             
             # Confidence thresholds (learned)
             'confidence_threshold': MetaParameter(0.3, (0.05, 0.9)),
             
-            # Risk preferences (learned from outcomes)
-            'stop_preference': MetaParameter(0.5, (0.0, 1.0)),      # 0=no stops, 1=always stops
-            'target_preference': MetaParameter(0.5, (0.0, 1.0)),    # 0=no targets, 1=always targets
-            'stop_distance_factor': MetaParameter(0.02, (0.005, 0.1)),
-            'target_distance_factor': MetaParameter(0.04, (0.01, 0.2)),
+            # Risk preferences (account-aware)
+            'stop_preference': MetaParameter(0.5, (0.0, 1.0)),
+            'target_preference': MetaParameter(0.5, (0.0, 1.0)),
+            'stop_distance_factor': MetaParameter(0.015, (0.005, 0.05)),  # Tighter stops for MNQ
+            'target_distance_factor': MetaParameter(0.03, (0.01, 0.1)),   # Reasonable targets for MNQ
             
-            # Loss tolerance (learned)
-            'loss_tolerance_factor': MetaParameter(0.05, (0.01, 0.2)),  # fraction of account
+            # Account protection (adaptive based on account size)
+            'loss_tolerance_factor': MetaParameter(0.03, (0.01, 0.1)),    # Max 3% daily loss initially
             'consecutive_loss_tolerance': MetaParameter(5.0, (2.0, 15.0)),
+            
+            # New: Account size awareness
+            'small_account_mode': MetaParameter(0.0, (0.0, 1.0)),        # 0=normal, 1=small account mode
+            'margin_utilization_limit': MetaParameter(0.7, (0.3, 0.9))   # Max margin usage
         }
         
         # Adaptive components
@@ -200,6 +211,39 @@ class MetaLearner:
         self.total_updates = 0
         self.successful_adaptations = 0
         
+        # Account adaptation tracking
+        self.last_account_balance = 25000
+        self.account_adaptation_count = 0
+        
+    def adapt_to_account_size(self, account_balance: float):
+        """Dynamically adjust parameters based on account size"""
+        if abs(account_balance - self.last_account_balance) > self.last_account_balance * 0.1:
+            self.account_adaptation_count += 1
+            
+            # Small account adjustments (< $10k)
+            if account_balance < 10000:
+                # More conservative for small accounts
+                self.parameters['position_size_factor'].bounds = (0.01, 0.3)
+                self.parameters['max_position_factor'].bounds = (0.05, 0.5)
+                self.parameters['loss_tolerance_factor'].bounds = (0.005, 0.05)
+                self.parameters['small_account_mode'].value = 1.0
+                
+            # Medium accounts ($10k - $50k)
+            elif account_balance < 50000:
+                self.parameters['position_size_factor'].bounds = (0.02, 0.4)
+                self.parameters['max_position_factor'].bounds = (0.1, 0.6)
+                self.parameters['loss_tolerance_factor'].bounds = (0.01, 0.08)
+                self.parameters['small_account_mode'].value = 0.5
+                
+            # Larger accounts (> $50k)
+            else:
+                self.parameters['position_size_factor'].bounds = (0.05, 0.5)
+                self.parameters['max_position_factor'].bounds = (0.1, 0.7)
+                self.parameters['loss_tolerance_factor'].bounds = (0.02, 0.1)
+                self.parameters['small_account_mode'].value = 0.0
+            
+            self.last_account_balance = account_balance
+    
     def get_parameter(self, name: str) -> float:
         return self.parameters[name].value
     
@@ -226,9 +270,12 @@ class MetaLearner:
     def learn_from_outcome(self, trade_data: Dict[str, Any]):
         self.total_updates += 1
         
-        outcome = trade_data.get('pnl', 0.0)
+        # Adapt to account size changes
         account_balance = trade_data.get('account_balance', 25000)
-        normalized_outcome = np.tanh(outcome / (account_balance * 0.01))  # Normalize by 1% of account
+        self.adapt_to_account_size(account_balance)
+        
+        outcome = trade_data.get('pnl', 0.0)
+        normalized_outcome = np.tanh(outcome / (account_balance * 0.01))
         
         # Update all parameters
         old_values = {name: param.value for name, param in self.parameters.items()}
@@ -278,7 +325,9 @@ class MetaLearner:
             'exploration_strategy': self.exploration_strategy.state_dict(),
             'architecture_sizes': self.architecture_evolver.current_sizes,
             'total_updates': self.total_updates,
-            'successful_adaptations': self.successful_adaptations
+            'successful_adaptations': self.successful_adaptations,
+            'last_account_balance': self.last_account_balance,
+            'account_adaptation_count': self.account_adaptation_count
         }, filepath)
     
     def load_state(self, filepath: str):
@@ -300,6 +349,8 @@ class MetaLearner:
             
             self.total_updates = checkpoint.get('total_updates', 0)
             self.successful_adaptations = checkpoint.get('successful_adaptations', 0)
+            self.last_account_balance = checkpoint.get('last_account_balance', 25000)
+            self.account_adaptation_count = checkpoint.get('account_adaptation_count', 0)
             
         except FileNotFoundError:
             pass
