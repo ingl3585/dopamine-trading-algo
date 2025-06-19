@@ -39,7 +39,7 @@ class IntelligenceEngine:
         self.patterns = defaultdict(list)
         self.recent_outcomes = deque(maxlen=100)
         
-        self.load_patterns()
+        self.load_patterns(self.memory_file)
         
     def extract_features(self, data: MarketData) -> Features:
         if len(data.prices_1m) < 20:

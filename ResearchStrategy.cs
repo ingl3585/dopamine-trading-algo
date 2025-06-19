@@ -9,7 +9,7 @@ using NinjaTrader.Cbi;
 using NinjaTrader.Data;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.Strategies;
-using Newtonsoft.Json;
+using System.Globalization;
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
@@ -114,21 +114,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 
             try
             {
-                var data = new
-                {
-                    price_1m = prices1m,
-                    price_5m = prices5m,
-                    price_15m = prices15m,
-                    volume_1m = volumes1m,
-                    volume_5m = volumes5m,
-                    volume_15m = volumes15m,
-                    account_balance = Account.Get(AccountItem.CashValue, Currency.UsDollar),
-                    buying_power = Account.Get(AccountItem.BuyingPower, Currency.UsDollar),
-                    daily_pnl = Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar),
-                    timestamp = DateTime.Now.Ticks
-                };
+                // Build JSON manually to avoid Newtonsoft dependency
+                var json = BuildMarketDataJson();
                 
-                string json = Newtonsoft.Json.JsonConvert.SerializeObject(data);
                 byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
                 byte[] header = BitConverter.GetBytes(jsonBytes.Length);
                 
@@ -141,6 +129,48 @@ namespace NinjaTrader.NinjaScript.Strategies
                 Print($"Data send error: {ex.Message}");
                 isConnected = false;
             }
+        }
+        
+        private string BuildMarketDataJson()
+        {
+            var sb = new StringBuilder();
+            sb.Append("{");
+            
+            // Add price arrays
+            sb.Append($"\"price_1m\":{SerializeDoubleArray(prices1m)},");
+            sb.Append($"\"price_5m\":{SerializeDoubleArray(prices5m)},");
+            sb.Append($"\"price_15m\":{SerializeDoubleArray(prices15m)},");
+            
+            // Add volume arrays
+            sb.Append($"\"volume_1m\":{SerializeDoubleArray(volumes1m)},");
+            sb.Append($"\"volume_5m\":{SerializeDoubleArray(volumes5m)},");
+            sb.Append($"\"volume_15m\":{SerializeDoubleArray(volumes15m)},");
+            
+            // Add account data
+            sb.Append($"\"account_balance\":{Account.Get(AccountItem.CashValue, Currency.UsDollar).ToString(CultureInfo.InvariantCulture)},");
+            sb.Append($"\"buying_power\":{Account.Get(AccountItem.BuyingPower, Currency.UsDollar).ToString(CultureInfo.InvariantCulture)},");
+            sb.Append($"\"daily_pnl\":{Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar).ToString(CultureInfo.InvariantCulture)},");
+            sb.Append($"\"timestamp\":{DateTime.Now.Ticks}");
+            
+            sb.Append("}");
+            return sb.ToString();
+        }
+        
+        private string SerializeDoubleArray(List<double> array)
+        {
+            if (array.Count == 0) return "[]";
+            
+            var sb = new StringBuilder();
+            sb.Append("[");
+            
+            for (int i = 0; i < array.Count; i++)
+            {
+                if (i > 0) sb.Append(",");
+                sb.Append(array[i].ToString(CultureInfo.InvariantCulture));
+            }
+            
+            sb.Append("]");
+            return sb.ToString();
         }
         
         private void StartSignalReceiver()
@@ -190,11 +220,16 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             try
             {
-                dynamic signal = Newtonsoft.Json.JsonConvert.DeserializeObject(json);
+                // Parse JSON manually to avoid Newtonsoft dependency
+                var signal = ParseSignalJson(json);
                 
-                int action = signal.action;
-                double confidence = signal.confidence;
-                int size = (int)signal.position_size;
+                int action = signal.Item1;
+                double confidence = signal.Item2;
+                int size = signal.Item3;
+                bool useStop = signal.Item4;
+                double stopPrice = signal.Item5;
+                bool useTarget = signal.Item6;
+                double targetPrice = signal.Item7;
                 
                 string entryName = $"AI_{DateTime.Now:HHmmss}";
                 
@@ -214,11 +249,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
                 
                 // Set stops and targets if provided
-                if (signal.use_stop && signal.stop_price > 0)
-                    SetStopLoss(entryName, CalculationMode.Price, (double)signal.stop_price, false);
+                if (useStop && stopPrice > 0)
+                    SetStopLoss(entryName, CalculationMode.Price, stopPrice, false);
                     
-                if (signal.use_target && signal.target_price > 0)
-                    SetProfitTarget(entryName, CalculationMode.Price, (double)signal.target_price);
+                if (useTarget && targetPrice > 0)
+                    SetProfitTarget(entryName, CalculationMode.Price, targetPrice);
                 
                 Print($"Signal executed: {(action == 1 ? "BUY" : "SELL")} {size} contracts");
             }
@@ -226,6 +261,100 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 Print($"Signal processing error: {ex.Message}");
             }
+        }
+        
+        private Tuple<int, double, int, bool, double, bool, double> ParseSignalJson(string json)
+        {
+            // Simple JSON parsing for known structure
+            int action = 0;
+            double confidence = 0.0;
+            int size = 1;
+            bool useStop = false;
+            double stopPrice = 0.0;
+            bool useTarget = false;
+            double targetPrice = 0.0;
+            
+            try
+            {
+                action = ExtractIntValue(json, "action");
+                confidence = ExtractDoubleValue(json, "confidence");
+                size = ExtractIntValue(json, "position_size");
+                useStop = ExtractBoolValue(json, "use_stop");
+                stopPrice = ExtractDoubleValue(json, "stop_price");
+                useTarget = ExtractBoolValue(json, "use_target");
+                targetPrice = ExtractDoubleValue(json, "target_price");
+            }
+            catch (Exception ex)
+            {
+                Print($"JSON parsing error: {ex.Message}");
+            }
+            
+            return new Tuple<int, double, int, bool, double, bool, double>(
+                action, confidence, size, useStop, stopPrice, useTarget, targetPrice);
+        }
+        
+        private int ExtractIntValue(string json, string key)
+        {
+            string pattern = $"\"{key}\"";
+            int keyIndex = json.IndexOf(pattern);
+            if (keyIndex == -1) return 0;
+            
+            int colonIndex = json.IndexOf(":", keyIndex);
+            if (colonIndex == -1) return 0;
+            
+            int startIndex = colonIndex + 1;
+            while (startIndex < json.Length && (json[startIndex] == ' ' || json[startIndex] == '\t'))
+                startIndex++;
+            
+            int endIndex = startIndex;
+            while (endIndex < json.Length && char.IsDigit(json[endIndex]))
+                endIndex++;
+            
+            if (endIndex > startIndex && int.TryParse(json.Substring(startIndex, endIndex - startIndex), out int result))
+                return result;
+            
+            return 0;
+        }
+        
+        private double ExtractDoubleValue(string json, string key)
+        {
+            string pattern = $"\"{key}\"";
+            int keyIndex = json.IndexOf(pattern);
+            if (keyIndex == -1) return 0.0;
+            
+            int colonIndex = json.IndexOf(":", keyIndex);
+            if (colonIndex == -1) return 0.0;
+            
+            int startIndex = colonIndex + 1;
+            while (startIndex < json.Length && (json[startIndex] == ' ' || json[startIndex] == '\t'))
+                startIndex++;
+            
+            int endIndex = startIndex;
+            while (endIndex < json.Length && (char.IsDigit(json[endIndex]) || json[endIndex] == '.' || json[endIndex] == '-'))
+                endIndex++;
+            
+            if (endIndex > startIndex && double.TryParse(json.Substring(startIndex, endIndex - startIndex), NumberStyles.Float, CultureInfo.InvariantCulture, out double result))
+                return result;
+            
+            return 0.0;
+        }
+        
+        private bool ExtractBoolValue(string json, string key)
+        {
+            string pattern = $"\"{key}\"";
+            int keyIndex = json.IndexOf(pattern);
+            if (keyIndex == -1) return false;
+            
+            int colonIndex = json.IndexOf(":", keyIndex);
+            if (colonIndex == -1) return false;
+            
+            int trueIndex = json.IndexOf("true", colonIndex);
+            int falseIndex = json.IndexOf("false", colonIndex);
+            
+            if (trueIndex != -1 && (falseIndex == -1 || trueIndex < falseIndex))
+                return true;
+            
+            return false;
         }
         
         protected override void OnExecutionUpdate(Execution execution, string executionId, 
@@ -252,17 +381,18 @@ namespace NinjaTrader.NinjaScript.Strategies
                     pnl = lastTrade.ProfitCurrency;
                 }
                 
-                var completion = new
-                {
-                    type = "trade_completion",
-                    final_pnl = pnl,
-                    exit_price = exitPrice,
-                    exit_reason = execution.Order.Name.Contains("Stop") ? "stop_hit" : 
-                                 execution.Order.Name.Contains("Target") ? "target_hit" : "ai_exit",
-                    timestamp = DateTime.Now.Ticks
-                };
+                string exitReason = execution.Order.Name.Contains("Stop") ? "stop_hit" : 
+                                   execution.Order.Name.Contains("Target") ? "target_hit" : "ai_exit";
                 
-                string json = Newtonsoft.Json.JsonConvert.SerializeObject(completion);
+                // Build completion JSON manually
+                var json = $"{{" +
+                          $"\"type\":\"trade_completion\"," +
+                          $"\"final_pnl\":{pnl.ToString(CultureInfo.InvariantCulture)}," +
+                          $"\"exit_price\":{exitPrice.ToString(CultureInfo.InvariantCulture)}," +
+                          $"\"exit_reason\":\"{exitReason}\"," +
+                          $"\"timestamp\":{DateTime.Now.Ticks}" +
+                          $"}}";
+                
                 byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
                 byte[] header = BitConverter.GetBytes(jsonBytes.Length);
                 
