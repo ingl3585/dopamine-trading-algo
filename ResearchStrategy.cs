@@ -518,7 +518,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    }
 		}
         
-		private void SendTradeCompletionToPython(double exitPrice, string orderName)
+		private void SendTradeCompletionToPython(double exitPrice, string orderName, double manualPnl = 0.0)
 		{
 		    if (featureClient?.Connected != true || string.IsNullOrEmpty(currentTradeId))
 		        return;
@@ -532,14 +532,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 		            exitReason = "target_hit";
 		        else if (orderName.Contains("Exit"))
 		            exitReason = "ai_exit";
+		        else if (orderName == "signal_reversal")
+		            exitReason = "signal_reversal";
 		        else
 		            exitReason = "manual_close";
 		        
 		        int durationMinutes = (int)(DateTime.Now - positionEntryTime).TotalMinutes;
 		        
-		        // Get real account data
-		        double realizedPnl = SystemPerformance.AllTrades.Count > 0 ? 
-		            SystemPerformance.AllTrades[SystemPerformance.AllTrades.Count - 1].ProfitCurrency : 0.0;
+		        // FIXED: Use manual P&L for reversals, system P&L for natural closes
+		        double realizedPnl = manualPnl != 0.0 ? manualPnl : 
+		            (SystemPerformance.AllTrades.Count > 0 ? 
+		             SystemPerformance.AllTrades[SystemPerformance.AllTrades.Count - 1].ProfitCurrency : 0.0);
 		        
 		        var completionData = new StringBuilder();
 		        completionData.Append("{");
@@ -782,42 +785,34 @@ namespace NinjaTrader.NinjaScript.Strategies
 		
 		        // ensure every entry gets a fresh tag
 		        entryTagCounter++;
-		        string tag = $"{prefix}_{dirTag}_{entryTagCounter}";
+		        string tag = $"AI_{signal.tool_used}_{dirTag}_{entryTagCounter}";
 		
 		        switch (signal.action)
 		        {
 		            case 1:  // BUY
 		                if (Position.MarketPosition == MarketPosition.Short)
 		                {
+		                    // COMPLETE CURRENT TRADE BEFORE REVERSAL
+		                    CompleteCurrentTrade(GetLastPrice(), "signal_reversal");
+		                    
 		                    Print("Reversal: exiting short then entering long");
 		                    ExitShort("AI_Reverse");
 		                }
 		                EnterLong(sz, tag);
-		
-		                if (signal.use_stop)
-		                    SetStopLoss(tag, CalculationMode.Price, signal.stop_price, false);
-		                if (signal.use_target)
-		                    SetProfitTarget(tag, CalculationMode.Price, signal.target_price);
-		
-		                Print($"AI Signal BUY  | size={sz} conf={signal.confidence:F3} tag={tag}");
 		                break;
 		
 		            case 2:  // SELL
 		                if (Position.MarketPosition == MarketPosition.Long)
 		                {
+		                    // COMPLETE CURRENT TRADE BEFORE REVERSAL  
+		                    CompleteCurrentTrade(GetLastPrice(), "signal_reversal");
+		                    
 		                    Print("Reversal: exiting long then entering short");
 		                    ExitLong("AI_Reverse");
 		                }
 		                EnterShort(sz, tag);
-		
-		                if (signal.use_stop)
-		                    SetStopLoss(tag, CalculationMode.Price, signal.stop_price, false);
-		                if (signal.use_target)
-		                    SetProfitTarget(tag, CalculationMode.Price, signal.target_price);
-		
-		                Print($"AI Signal SELL | size={sz} conf={signal.confidence:F3} tag={tag}");
 		                break;
-		
+
 		            case 0:  // EXIT
 		                if (Position.MarketPosition == MarketPosition.Long)
 		                    ExitLong($"{prefix}_Exit");
@@ -831,6 +826,37 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    {
 		        Print($"Signal execution error: {ex.Message}");
 		    }
+		}
+		
+		private void CompleteCurrentTrade(double exitPrice, string exitReason)
+		{
+		    if (!string.IsNullOrEmpty(currentTradeId))
+		    {
+		        // Calculate P&L manually since trade isn't closed yet
+		        double pnl = 0.0;
+		        if (Position.MarketPosition == MarketPosition.Long)
+		        {
+		            pnl = (exitPrice - positionEntryPrice) * Position.Quantity * 2.0; // MNQ point value
+		        }
+		        else if (Position.MarketPosition == MarketPosition.Short)
+		        {
+		            pnl = (positionEntryPrice - exitPrice) * Position.Quantity * 2.0;
+		        }
+		        
+		        int duration = (int)(DateTime.Now - positionEntryTime).TotalMinutes;
+		        
+		        SendTradeCompletionToPython(exitPrice, exitReason, pnl);
+		        Print($"AI Trade completed (reversal): {currentTradeId}, Exit: ${exitPrice:F2}, P&L: ${pnl:F2}");
+		        
+		        // Reset for next trade
+		        currentTradeId = "";
+		        lastToolUsed = "";
+		    }
+		}
+		
+		private double GetLastPrice()
+		{
+		    return Closes[0][0]; // Current close price
 		}
         
         #endregion
