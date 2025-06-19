@@ -350,7 +350,7 @@ class PureBlackBoxSignalGenerator:
             traceback.print_exc()
 
     def _generate_clean_signal(self, decision: Dict, current_price: float, intelligence_result: Dict):
-        """FIXED: Generate signal with proper account-based position sizing"""
+        """FIXED: Generate signal with proper account-based position sizing and tool_name"""
         
         action = decision['action']
         confidence = decision['confidence']
@@ -379,7 +379,7 @@ class PureBlackBoxSignalGenerator:
 
         log.info(f"Position size from Python: {ai_position_size}")
         
-        # Send to NinjaTrader with AI position size
+        # FIXED: Send to NinjaTrader with AI position size and tool_name
         success = self.tcp_bridge.send_signal(
             action=action,
             confidence=confidence,
@@ -387,6 +387,7 @@ class PureBlackBoxSignalGenerator:
             stop_price=decision.get('stop_price', 0.0),
             target_price=decision.get('target_price', 0.0),
             position_size=ai_position_size,
+            tool_name=tool_name,  # FIXED: Pass tool_name parameter
             meta_learner=self.meta_learner
         )
         

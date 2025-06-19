@@ -148,9 +148,9 @@ class TCPBridge:
 
     def send_signal(self, action: int, confidence: float, quality: str,
                 stop_price: float = 0.0, target_price: float = 0.0, 
-                position_size: float = 1.0, meta_learner=None):
+                position_size: float = 1.0, tool_name: str = "unknown", meta_learner=None):
         """
-        FIXED: Enhanced signal sending with better correlation tracking
+        FIXED: Enhanced signal sending with tool_name parameter and tool_used field
         """
         
         if not self.connected:
@@ -176,6 +176,7 @@ class TCPBridge:
                 "action": int(action),
                 "confidence": float(confidence),
                 "quality": str(quality),
+                "tool_used": str(tool_name),  # FIXED: Add tool_used field
                 "position_size": float(position_size),
                 "use_stop": use_stop,
                 "stop_price": float(stop_price),
@@ -202,6 +203,7 @@ class TCPBridge:
                 'action': action,
                 'confidence': confidence,
                 'quality': quality,
+                'tool_name': tool_name,  # Track tool name
                 'position_size': position_size,
                 'timestamp': unix_timestamp,
                 'net_ticks': net_ticks,
@@ -216,7 +218,7 @@ class TCPBridge:
             
             # Enhanced logging
             action_name = ['EXIT', 'BUY', 'SELL'][action]
-            log.info(f"Enhanced AI Signal #{self.signals_sent}: {action_name} (conf: {confidence:.3f}, size: {position_size:.2f})")
+            log.info(f"Enhanced AI Signal #{self.signals_sent}: {action_name} (conf: {confidence:.3f}, size: {position_size:.2f}, tool: {tool_name})")
             
             # Log AI's risk management decisions with correlation ID
             risk_decisions = []
@@ -237,6 +239,11 @@ class TCPBridge:
                 log.info(f"AI Learning Progress: {self.signals_sent} signals sent with enhanced correlation tracking")
             
             return True
+            
+        except Exception as e:
+            log.error(f"Signal send error: {e}")
+            self.connected = False
+            return False
             
         except Exception as e:
             log.error(f"Signal send error: {e}")

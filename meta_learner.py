@@ -125,7 +125,7 @@ class PureMetaLearner:
             'position_size_base': {'initial': 1.0, 'bounds': (0.1, 5.0), 'lr': 1e-4},
             'stop_loss_max_pct': {'initial': 0.02, 'bounds': (0.005, 0.08), 'lr': 1e-5},
             'take_profit_max_pct': {'initial': 0.04, 'bounds': (0.01, 0.15), 'lr': 1e-5},
-            'risk_per_trade_pct': {'initial': 0.02, 'bounds': (0.005, 0.1), 'lr': 1e-5},
+            'risk_per_trade_pct': {'initial': 0.02, 'bounds': (0.005, 0.5), 'lr': 1e-5},
             
             # Learning Rates
             'policy_learning_rate': {'initial': 1e-4, 'bounds': (1e-6, 1e-2), 'lr': 1e-6},
