@@ -6,6 +6,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
 import time
+
 from collections import deque
 from dataclasses import dataclass
 from typing import List, Dict, Any
@@ -74,7 +75,7 @@ class TradingAgent:
             self._evolve_architecture()
         
         # Create comprehensive state representation
-        meta_context = self._get_meta_context()
+        meta_context = self._get_meta_context(market_data)
         raw_state = self.state_encoder.create_full_state(market_data, features, meta_context)
         
         # Learn features and get final state
@@ -91,8 +92,8 @@ class TradingAgent:
         subsystem_weights = self.meta_learner.get_subsystem_weights()
         weighted_signal = torch.sum(subsystem_signals * subsystem_weights)
         
-        # Check basic trading constraints
-        if not self._should_consider_trading(features, market_data, meta_context):
+        # Basic trading constraints (only very basic ones, everything else learned)
+        if not self._should_consider_trading(market_data, meta_context):
             return Decision('hold', 0, 0)
         
         # Neural network decision
@@ -123,7 +124,7 @@ class TradingAgent:
                 action_idx = np.argmax(action_probs)
                 exploration = False
             
-            # Apply confidence threshold
+            # Apply learned confidence threshold
             confidence_threshold = self.meta_learner.get_parameter('confidence_threshold')
             if confidence < confidence_threshold and not exploration:
                 action_idx = 0
@@ -135,10 +136,6 @@ class TradingAgent:
             use_target = float(outputs['use_target'].cpu().numpy()[0]) > 0.5
             target_distance = float(outputs['target_distance'].cpu().numpy()[0])
         
-        # Apply meta-learned position sizing
-        position_size *= self.meta_learner.get_parameter('position_size_base')
-        position_size = max(0.5, min(self.meta_learner.get_parameter('max_position_count'), position_size))
-        
         # Convert to decision
         actions = ['hold', 'buy', 'sell']
         action = actions[action_idx]
@@ -146,26 +143,26 @@ class TradingAgent:
         if action == 'hold':
             return Decision('hold', confidence, 0)
         
-        # Calculate stop and target prices using meta-learned parameters
+        # Calculate stop and target prices based on learned preferences
         stop_price = 0
         target_price = 0
         
-        base_stop_pct = self.meta_learner.get_parameter('stop_loss_base')
-        base_target_pct = self.meta_learner.get_parameter('take_profit_base')
+        stop_distance_factor = self.meta_learner.get_parameter('stop_distance_factor')
+        target_distance_factor = self.meta_learner.get_parameter('target_distance_factor')
         
         if use_stop:
-            stop_pct = base_stop_pct * (1 + stop_distance)
+            adjusted_distance = stop_distance_factor * (1 + stop_distance)
             if action == 'buy':
-                stop_price = market_data.price * (1 - stop_pct)
+                stop_price = market_data.price * (1 - adjusted_distance)
             else:
-                stop_price = market_data.price * (1 + stop_pct)
+                stop_price = market_data.price * (1 + adjusted_distance)
         
         if use_target:
-            target_pct = base_target_pct * (1 + target_distance)
+            adjusted_distance = target_distance_factor * (1 + target_distance)
             if action == 'buy':
-                target_price = market_data.price * (1 + target_pct)
+                target_price = market_data.price * (1 + adjusted_distance)
             else:
-                target_price = market_data.price * (1 - target_pct)
+                target_price = market_data.price * (1 - adjusted_distance)
         
         # Determine primary tool
         primary_tool = self._get_primary_tool(subsystem_signals, subsystem_weights)
@@ -204,6 +201,7 @@ class TradingAgent:
         # Prepare comprehensive trade data for meta-learning
         trade_data = {
             'pnl': trade.pnl,
+            'account_balance': getattr(trade.market_data, 'account_balance', 25000),
             'hold_time': trade.exit_time - trade.entry_time,
             'was_exploration': getattr(trade, 'exploration', False),
             'subsystem_contributions': torch.tensor(trade.intelligence_data.get('subsystem_signals', [0,0,0,0])),
@@ -240,40 +238,33 @@ class TradingAgent:
         if self.total_decisions % 50 == 0:
             self.meta_learner.adapt_parameters()
     
-    def _should_consider_trading(self, features: Features, market_data: MarketData, 
-                               meta_context: Dict) -> bool:
-        # Daily loss limit
-        max_daily_loss = self.meta_learner.get_parameter('max_daily_loss')
-        if market_data.daily_pnl <= -max_daily_loss:
+    def _should_consider_trading(self, market_data: MarketData, meta_context: Dict) -> bool:
+        # Only very basic constraints - everything else learned by meta-learner
+        
+        # Learned loss tolerance
+        loss_tolerance = self.meta_learner.get_parameter('loss_tolerance_factor')
+        max_loss = market_data.account_balance * loss_tolerance
+        if market_data.daily_pnl <= -max_loss:
             return False
         
-        # Consecutive loss limit
-        consecutive_limit = self.meta_learner.get_parameter('consecutive_loss_limit')
+        # Learned consecutive loss limit
+        consecutive_limit = self.meta_learner.get_parameter('consecutive_loss_tolerance')
         if meta_context['consecutive_losses'] >= consecutive_limit:
             return False
         
-        # Position count limit
-        max_positions = self.meta_learner.get_parameter('max_position_count')
-        if meta_context['position_count'] >= max_positions:
-            return False
-        
-        # Frequency limit
-        frequency_limit = self.meta_learner.get_parameter('trade_frequency_limit')
+        # Learned frequency limit
+        frequency_limit = self.meta_learner.get_parameter('trade_frequency_base')
         time_since_last = market_data.timestamp - self.last_trade_time
-        if time_since_last < (3600 / frequency_limit):  # Convert to seconds
-            return False
-        
-        # Minimum signal strength
-        if features.confidence < 0.1:
+        if time_since_last < (3600 / frequency_limit):
             return False
         
         return True
     
-    def _get_meta_context(self) -> Dict[str, float]:
+    def _get_meta_context(self, market_data: MarketData) -> Dict[str, float]:
         portfolio_summary = self.portfolio.get_summary()
         
         return {
-            'recent_performance': np.tanh(portfolio_summary.get('daily_pnl', 0) / 200),
+            'recent_performance': np.tanh(portfolio_summary.get('daily_pnl', 0) / (market_data.account_balance * 0.01)),
             'consecutive_losses': portfolio_summary.get('consecutive_losses', 0),
             'position_count': portfolio_summary.get('pending_orders', 0),
             'trades_today': portfolio_summary.get('total_trades', 0),
@@ -422,7 +413,9 @@ class TradingAgent:
             'subsystem_weights': self.meta_learner.get_subsystem_weights().detach().cpu().numpy().tolist(),
             'key_parameters': {
                 'confidence_threshold': self.meta_learner.get_parameter('confidence_threshold'),
-                'position_size_base': self.meta_learner.get_parameter('position_size_base'),
-                'max_daily_loss': self.meta_learner.get_parameter('max_daily_loss')
+                'position_size_factor': self.meta_learner.get_parameter('position_size_factor'),
+                'loss_tolerance_factor': self.meta_learner.get_parameter('loss_tolerance_factor'),
+                'stop_preference': self.meta_learner.get_parameter('stop_preference'),
+                'target_preference': self.meta_learner.get_parameter('target_preference')
             }
         }

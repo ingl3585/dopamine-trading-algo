@@ -167,34 +167,27 @@ class MetaLearner:
     def __init__(self, state_dim: int = 20):
         self.state_dim = state_dim
         
-        # Core parameters
+        # Only basic constraints - everything else learned
         self.parameters = {
-            # Trading decision parameters
-            'confidence_threshold': MetaParameter(0.6, (0.1, 0.9)),
-            'position_size_base': MetaParameter(1.5, (0.5, 3.0)),
-            'max_daily_loss': MetaParameter(500.0, (100.0, 1000.0)),
-            'max_position_count': MetaParameter(2.0, (1.0, 5.0)),
-            'trade_frequency_limit': MetaParameter(3.0, (1.0, 10.0)),
-            'stop_loss_base': MetaParameter(0.015, (0.005, 0.05)),
-            'take_profit_base': MetaParameter(0.03, (0.01, 0.1)),
-            'consecutive_loss_limit': MetaParameter(4.0, (2.0, 8.0)),
+            # Trading frequency (learned)
+            'trade_frequency_base': MetaParameter(5.0, (1.0, 20.0)),  # trades per hour
             
-            # Risk management parameters (no more hardcoded values)
-            'margin_per_contract': MetaParameter(500.0, (200.0, 1000.0)),
-            'buying_power_usage': MetaParameter(0.8, (0.5, 0.95)),
-            'risk_per_trade': MetaParameter(0.02, (0.005, 0.05)),
-            'point_value': MetaParameter(2.0, (1.0, 5.0)),
-            'estimated_stop_points': MetaParameter(20.0, (5.0, 50.0)),
-            'stop_min_multiplier': MetaParameter(0.5, (0.1, 1.0)),
-            'stop_max_multiplier': MetaParameter(3.0, (1.5, 5.0)),
-            'target_min_multiplier': MetaParameter(0.5, (0.1, 1.0)),
-            'target_max_multiplier': MetaParameter(4.0, (2.0, 8.0)),
+            # Position sizing (completely learned from account data)
+            'position_size_factor': MetaParameter(0.1, (0.01, 1.0)),  # fraction of available margin
+            'max_position_factor': MetaParameter(0.5, (0.1, 0.9)),   # max fraction of account
             
-            # Intelligence subsystem parameters  
-            'pattern_memory_size': MetaParameter(1000.0, (500.0, 5000.0)),
-            'recent_outcomes_window': MetaParameter(100.0, (50.0, 500.0)),
-            'learning_rate_base': MetaParameter(0.1, (0.01, 0.5)),
-            'sequence_similarity_threshold': MetaParameter(0.7, (0.5, 0.9))
+            # Confidence thresholds (learned)
+            'confidence_threshold': MetaParameter(0.3, (0.05, 0.9)),
+            
+            # Risk preferences (learned from outcomes)
+            'stop_preference': MetaParameter(0.5, (0.0, 1.0)),      # 0=no stops, 1=always stops
+            'target_preference': MetaParameter(0.5, (0.0, 1.0)),    # 0=no targets, 1=always targets
+            'stop_distance_factor': MetaParameter(0.02, (0.005, 0.1)),
+            'target_distance_factor': MetaParameter(0.04, (0.01, 0.2)),
+            
+            # Loss tolerance (learned)
+            'loss_tolerance_factor': MetaParameter(0.05, (0.01, 0.2)),  # fraction of account
+            'consecutive_loss_tolerance': MetaParameter(5.0, (2.0, 15.0)),
         }
         
         # Adaptive components
@@ -234,7 +227,8 @@ class MetaLearner:
         self.total_updates += 1
         
         outcome = trade_data.get('pnl', 0.0)
-        normalized_outcome = np.tanh(outcome / 50.0)
+        account_balance = trade_data.get('account_balance', 25000)
+        normalized_outcome = np.tanh(outcome / (account_balance * 0.01))  # Normalize by 1% of account
         
         # Update all parameters
         old_values = {name: param.value for name, param in self.parameters.items()}

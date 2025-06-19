@@ -30,23 +30,24 @@ class RiskManager:
         if decision.action == 'hold':
             return None
         
-        # All limits from meta-learner - no hardcoded values
-        max_daily_loss = self.meta_learner.get_parameter('max_daily_loss')
-        if market_data.daily_pnl <= -max_daily_loss:
+        # Check learned loss tolerance
+        loss_tolerance = self.meta_learner.get_parameter('loss_tolerance_factor')
+        max_loss = market_data.account_balance * loss_tolerance
+        if market_data.daily_pnl <= -max_loss:
             return None
         
-        consecutive_limit = self.meta_learner.get_parameter('consecutive_loss_limit')
-        if self.portfolio.get_consecutive_losses() >= consecutive_limit:
+        # Check learned consecutive loss tolerance
+        consecutive_tolerance = self.meta_learner.get_parameter('consecutive_loss_tolerance')
+        if self.portfolio.get_consecutive_losses() >= consecutive_tolerance:
             return None
         
-        # Position size calculation using only meta-learned parameters
-        size = self._calculate_position_size(decision, market_data)
+        # Calculate position size based on available margin and learned preferences
+        size = self._calculate_adaptive_position_size(decision, market_data)
         if size == 0:
             return None
         
-        # Validate prices using meta-learned bounds
-        stop_price = self._validate_stop_price(decision.stop_price, market_data.price, decision.action)
-        target_price = self._validate_target_price(decision.target_price, market_data.price, decision.action)
+        # Apply learned stop/target preferences
+        stop_price, target_price = self._calculate_adaptive_levels(decision, market_data)
         
         return Order(
             action=decision.action,
@@ -58,75 +59,68 @@ class RiskManager:
             confidence=decision.confidence
         )
     
-    def _calculate_position_size(self, decision: Decision, market_data: MarketData) -> int:
-        base_size = decision.size
+    def _calculate_adaptive_position_size(self, decision: Decision, market_data: MarketData) -> int:
+        # Use actual account data from NinjaTrader
+        available_margin = market_data.buying_power
         
-        # Get meta-learned parameters for all calculations
-        margin_per_contract = self.meta_learner.get_parameter('margin_per_contract')
-        buying_power_usage = self.meta_learner.get_parameter('buying_power_usage')
-        risk_per_trade = self.meta_learner.get_parameter('risk_per_trade')
-        point_value = self.meta_learner.get_parameter('point_value')
-        estimated_stop_points = self.meta_learner.get_parameter('estimated_stop_points')
-        max_position_size = self.meta_learner.get_parameter('max_position_count')
+        # Learned position sizing factors
+        position_factor = self.meta_learner.get_parameter('position_size_factor')
+        max_position_factor = self.meta_learner.get_parameter('max_position_factor')
         
-        # Account-based limits
-        max_by_margin = int(market_data.buying_power * buying_power_usage / margin_per_contract)
+        # Calculate based on confidence and available capital
+        confidence_multiplier = decision.confidence
         
-        # Risk-based limits using meta-learned parameters
-        risk_amount = market_data.account_balance * risk_per_trade
-        estimated_stop_distance = estimated_stop_points * point_value
-        max_by_risk = int(risk_amount / estimated_stop_distance) if estimated_stop_distance > 0 else 1
+        # Base size from available margin
+        base_size = available_margin * position_factor * confidence_multiplier
         
-        # Apply all limits
-        max_size = min(max_by_margin, max_by_risk, int(max_position_size))
-        final_size = min(int(base_size), max_size)
+        # Convert to contracts (assuming $500 margin per contract as typical for MNQ)
+        estimated_margin_per_contract = 500
+        max_contracts_by_margin = int(base_size / estimated_margin_per_contract)
+        
+        # Apply maximum position factor
+        max_contracts_by_account = int(market_data.account_balance * max_position_factor / estimated_margin_per_contract)
+        
+        # Final size
+        final_size = min(max_contracts_by_margin, max_contracts_by_account, int(decision.size))
         
         return max(0, final_size)
     
-    def _validate_stop_price(self, stop_price: float, current_price: float, action: str) -> float:
-        if stop_price <= 0:
-            return 0
+    def _calculate_adaptive_levels(self, decision: Decision, market_data: MarketData) -> tuple:
+        # Learned preferences for stops and targets
+        stop_preference = self.meta_learner.get_parameter('stop_preference')
+        target_preference = self.meta_learner.get_parameter('target_preference')
         
-        # Ensure stop is in correct direction
-        if action == 'buy' and stop_price >= current_price:
-            return 0
-        elif action == 'sell' and stop_price <= current_price:
-            return 0
+        stop_distance_factor = self.meta_learner.get_parameter('stop_distance_factor')
+        target_distance_factor = self.meta_learner.get_parameter('target_distance_factor')
         
-        # Use meta-learned bounds for stop distance
-        stop_loss_base = self.meta_learner.get_parameter('stop_loss_base')
-        stop_min_multiplier = self.meta_learner.get_parameter('stop_min_multiplier')
-        stop_max_multiplier = self.meta_learner.get_parameter('stop_max_multiplier')
+        stop_price = 0.0
+        target_price = 0.0
         
-        min_stop = stop_loss_base * stop_min_multiplier
-        max_stop = stop_loss_base * stop_max_multiplier
+        # Apply learned stop preference
+        if decision.stop_price > 0 and stop_preference > 0.3:  # Some threshold for using stops
+            if decision.action == 'buy' and decision.stop_price < market_data.price:
+                stop_price = decision.stop_price
+            elif decision.action == 'sell' and decision.stop_price > market_data.price:
+                stop_price = decision.stop_price
         
-        distance = abs(stop_price - current_price) / current_price
-        if distance < min_stop or distance > max_stop:
-            return 0
+        # Apply learned target preference  
+        if decision.target_price > 0 and target_preference > 0.3:  # Some threshold for using targets
+            if decision.action == 'buy' and decision.target_price > market_data.price:
+                target_price = decision.target_price
+            elif decision.action == 'sell' and decision.target_price < market_data.price:
+                target_price = decision.target_price
         
-        return stop_price
-    
-    def _validate_target_price(self, target_price: float, current_price: float, action: str) -> float:
-        if target_price <= 0:
-            return 0
+        # If no specific levels provided, use learned distance factors
+        if stop_price == 0 and stop_preference > 0.5:
+            if decision.action == 'buy':
+                stop_price = market_data.price * (1 - stop_distance_factor)
+            else:
+                stop_price = market_data.price * (1 + stop_distance_factor)
         
-        # Ensure target is in correct direction
-        if action == 'buy' and target_price <= current_price:
-            return 0
-        elif action == 'sell' and target_price >= current_price:
-            return 0
+        if target_price == 0 and target_preference > 0.5:
+            if decision.action == 'buy':
+                target_price = market_data.price * (1 + target_distance_factor)
+            else:
+                target_price = market_data.price * (1 - target_distance_factor)
         
-        # Use meta-learned bounds for target distance
-        take_profit_base = self.meta_learner.get_parameter('take_profit_base')
-        target_min_multiplier = self.meta_learner.get_parameter('target_min_multiplier')
-        target_max_multiplier = self.meta_learner.get_parameter('target_max_multiplier')
-        
-        min_target = take_profit_base * target_min_multiplier
-        max_target = take_profit_base * target_max_multiplier
-        
-        distance = abs(target_price - current_price) / current_price
-        if distance < min_target or distance > max_target:
-            return 0
-        
-        return target_price
+        return stop_price, target_price
