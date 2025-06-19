@@ -23,8 +23,7 @@ def handle_shutdown(signum, frame):
     log.info("Shutdown signal received")
     if 'trading_system' in globals():
         try:
-            trading_system.meta_learner.force_save()
-            trading_system.trade_manager.force_save_all_adaptive_learning()
+            trading_system.shutdown_and_save()
             log.info("Emergency save completed")
         except Exception as e:
             log.error(f"Emergency save failed: {e}")

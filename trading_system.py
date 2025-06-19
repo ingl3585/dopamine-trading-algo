@@ -186,35 +186,25 @@ class PureBlackBoxTradingSystem:
     
     def start(self):
         """FIXED: Start the enhanced pure black box system"""
-        
-        # Setup graceful shutdown
+
+        # Setup graceful shutdown via OS signals only
         def signal_handler(signum, frame):
             log.info("Shutdown signal received - saving all adaptive learning including account data")
             self.shutdown_and_save()
             sys.exit(0)
-        
+
         signal.signal(signal.SIGINT, signal_handler)
         signal.signal(signal.SIGTERM, signal_handler)
-        
-        try:
-            self.tcp_bridge.start()
-            
-            log.info("Enhanced trading system started with account data integration")
-            log.info("AI will use real account/margin data for position sizing")
-            log.info("Press Ctrl+C to stop and save learned knowledge")
-            
-            # Main run loop - pure black box operation
-            while True:
-                time.sleep(1)
-                
-                # The system is now completely autonomous with account data integration
-                
-        except KeyboardInterrupt:
-            log.info("Shutdown requested by user")
-        except Exception as e:
-            log.error(f"System error: {e}")
-        finally:
-            self.shutdown_and_save()
+
+        # Kick off the TCP bridge and then run forever; only the signal handler can exit
+        self.tcp_bridge.start()
+
+        log.info("Enhanced trading system started with account data integration")
+        log.info("AI will use real account/margin data for position sizing")
+        log.info("Press Ctrl+C to stop and save learned knowledge")
+
+        while True:
+            time.sleep(1)
     
     def bootstrap_pure_learning(self, price_15m, volume_15m, price_5m, volume_5m, price_1m, volume_1m):
         """FIXED: Bootstrap with ZERO knowledge - pure neutral pattern creation"""
