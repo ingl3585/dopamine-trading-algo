@@ -1,11 +1,10 @@
-# trade_manager_ai.py - SIMPLIFIED
+# trade_manager_ai.py
 
 import logging
 import time
 import numpy as np
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional
-from collections import deque
+from datetime import datetime
+from typing import Dict, Optional
 
 log = logging.getLogger(__name__)
 

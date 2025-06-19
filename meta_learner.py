@@ -1,12 +1,11 @@
-# meta_learner.py - SIMPLIFIED
+# meta_learner.py
 
-import json
 import logging
 import sqlite3
 import numpy as np
 from datetime import datetime
 from collections import deque
-from typing import Dict, List
+from typing import Dict
 
 log = logging.getLogger(__name__)
 

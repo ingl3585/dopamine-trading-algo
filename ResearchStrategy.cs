@@ -1,4 +1,4 @@
-// ResearchStrategy.cs - SIMPLIFIED for Black Box Trading System
+// ResearchStrategy.cs
 
 using System;
 using System.Collections.Generic;

@@ -1,4 +1,4 @@
-# config.py - SIMPLIFIED but still adaptive
+# config.py
 
 import os
 import json

@@ -1,12 +1,11 @@
-# intelligence_engine.py - SIMPLIFIED
+# intelligence_engine.py
 
 import json
 import logging
-import hashlib
 import numpy as np
-from datetime import datetime, timedelta
-from collections import defaultdict, deque
-from typing import Dict, List, Tuple
+from datetime import datetime
+from collections import defaultdict
+from typing import Dict, List
 
 log = logging.getLogger(__name__)
 

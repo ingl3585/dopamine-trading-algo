@@ -1,4 +1,4 @@
-# rl_agent.py - SIMPLIFIED
+# rl_agent.py
 
 import torch
 import torch.nn as nn
@@ -8,7 +8,7 @@ import numpy as np
 import logging
 import random
 from collections import deque
-from typing import Dict, Tuple
+from typing import Dict
 
 log = logging.getLogger(__name__)
 

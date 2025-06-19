@@ -1,4 +1,4 @@
-# tcp_bridge.py - SIMPLIFIED
+# tcp_bridge.py
 
 import socket
 import struct
@@ -6,7 +6,7 @@ import json
 import threading
 import time
 import logging
-from typing import Callable, Optional, Dict
+from typing import Callable, Optional
 
 log = logging.getLogger(__name__)
 

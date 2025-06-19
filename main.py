@@ -1,4 +1,4 @@
-# main.py - SIMPLIFIED
+# main.py
 
 import argparse
 import logging
