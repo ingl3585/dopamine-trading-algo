@@ -35,6 +35,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private string currentTradeId = "";
         private int tradeIdCounter = 0;
         private string lastToolUsed = "";
+		private int entryTagCounter = 0;
         
         // Enhanced tracking from original version
         private int signalCount;
@@ -93,8 +94,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                         TimeInForce = TimeInForce.Gtc;
                         TraceOrders = false;
                         RealtimeErrorHandling = RealtimeErrorHandling.StopCancelClose;
-                        StopTargetHandling = StopTargetHandling.PerEntryExecution;
+                        StopTargetHandling  = StopTargetHandling.PerEntryExecution;
                         BarsRequiredToTrade = 1;
+						EntriesPerDirection = 10; 
+						
                         break;
                         
                     case State.Configure:
@@ -773,61 +776,54 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    try
 		    {
 		        signalCount++;
-		        int sz        = Math.Max(1, (int)Math.Round(signal.position_size));
+		        int    sz     = Math.Max(1, (int)Math.Round(signal.position_size));
 		        string prefix = $"AI_{signal.tool_used}";
+		        string dirTag = signal.action == 1 ? "Long" : "Short";
+		
+		        // ensure every entry gets a fresh tag
+		        entryTagCounter++;
+		        string tag = $"{prefix}_{dirTag}_{entryTagCounter}";
 		
 		        switch (signal.action)
 		        {
-		            case 1: // BUY
+		            case 1:  // BUY
 		                if (Position.MarketPosition == MarketPosition.Short)
 		                {
-		                    // reverse
 		                    Print("Reversal: exiting short then entering long");
 		                    ExitShort("AI_Reverse");
-		                    EnterLong(sz, $"{prefix}_Long");
 		                }
-		                else
-		                {
-		                    // flat OR already long -> pyramid/add
-		                    EnterLong(sz, $"{prefix}_Long");
-		                }
+		                EnterLong(sz, tag);
 		
 		                if (signal.use_stop)
-		                    SetStopLoss($"{prefix}_Long", CalculationMode.Price, signal.stop_price, false);
+		                    SetStopLoss(tag, CalculationMode.Price, signal.stop_price, false);
 		                if (signal.use_target)
-		                    SetProfitTarget($"{prefix}_Long", CalculationMode.Price, signal.target_price);
+		                    SetProfitTarget(tag, CalculationMode.Price, signal.target_price);
 		
-		                Print($"AI Signal: BUY size={sz}, conf={signal.confidence:F3}");
+		                Print($"AI Signal BUY  | size={sz} conf={signal.confidence:F3} tag={tag}");
 		                break;
 		
-		            case 2: // SELL
+		            case 2:  // SELL
 		                if (Position.MarketPosition == MarketPosition.Long)
 		                {
-		                    // reverse
 		                    Print("Reversal: exiting long then entering short");
 		                    ExitLong("AI_Reverse");
-		                    EnterShort(sz, $"{prefix}_Short");
 		                }
-		                else
-		                {
-		                    // flat OR already short -> pyramid/add
-		                    EnterShort(sz, $"{prefix}_Short");
-		                }
+		                EnterShort(sz, tag);
 		
 		                if (signal.use_stop)
-		                    SetStopLoss($"{prefix}_Short", CalculationMode.Price, signal.stop_price, false);
+		                    SetStopLoss(tag, CalculationMode.Price, signal.stop_price, false);
 		                if (signal.use_target)
-		                    SetProfitTarget($"{prefix}_Short", CalculationMode.Price, signal.target_price);
+		                    SetProfitTarget(tag, CalculationMode.Price, signal.target_price);
 		
-		                Print($"AI Signal: SELL size={sz}, conf={signal.confidence:F3}");
+		                Print($"AI Signal SELL | size={sz} conf={signal.confidence:F3} tag={tag}");
 		                break;
 		
-		            case 0: // EXIT
+		            case 0:  // EXIT
 		                if (Position.MarketPosition == MarketPosition.Long)
 		                    ExitLong($"{prefix}_Exit");
 		                else if (Position.MarketPosition == MarketPosition.Short)
 		                    ExitShort($"{prefix}_Exit");
-		                Print("AI Signal: EXIT");
+		                Print("AI Signal EXIT");
 		                break;
 		        }
 		    }
