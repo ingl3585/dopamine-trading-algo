@@ -1,16 +1,18 @@
+# trading_agent.py
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
-import random
+import random # should not use random numbers
+
 from collections import deque
 from dataclasses import dataclass
 from typing import List, Dict
 
 from intelligence_engine import Features
 from data_processor import MarketData
-
 
 @dataclass
 class Decision:
@@ -168,7 +170,7 @@ class TradingAgent:
             action_probs = F.softmax(outputs['action_logits'], dim=-1).cpu().numpy()[0]
             confidence = float(outputs['confidence'].cpu().numpy()[0])
             
-            # Exploration vs exploitation
+            # Exploration vs exploitation (should not use random numbers...)
             if random.random() < self.epsilon:
                 action_idx = random.choice([0, 1, 2])  # Random action
                 exploration = True

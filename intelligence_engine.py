@@ -1,12 +1,14 @@
+# intelligence_engine.py
+
 import json
 import numpy as np
+
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List
 
 from data_processor import MarketData
-
 
 @dataclass
 class Features:
@@ -17,13 +19,11 @@ class Features:
     time_of_day: float
     pattern_score: float
     confidence: float
-    # Subsystem signals
     dna_signal: float
     micro_signal: float
     temporal_signal: float
     immune_signal: float
     overall_signal: float
-
 
 class IntelligenceEngine:
     def __init__(self, memory_file="data/intelligence_memory.json"):

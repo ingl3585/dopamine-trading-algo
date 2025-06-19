@@ -1,9 +1,10 @@
+# risk_manager.py
+
 from dataclasses import dataclass
 from typing import Optional, Dict
 
 from trading_agent import Decision
 from data_processor import MarketData
-
 
 @dataclass
 class Order:

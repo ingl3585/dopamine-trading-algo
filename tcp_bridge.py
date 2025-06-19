@@ -1,15 +1,17 @@
+# tcp_bridge.py
+
 import json
 import logging
 import socket
 import struct
 import threading
 import time
+
 from typing import Callable, Optional
 
 from risk_manager import Order
 
 logger = logging.getLogger(__name__)
-
 
 class TCPServer:
     def __init__(self, data_port=5556, signal_port=5557):

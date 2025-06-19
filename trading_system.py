@@ -1,3 +1,5 @@
+# trading_system.py
+
 import logging
 import time
 
@@ -10,7 +12,6 @@ from portfolio import Portfolio
 from config import Config
 
 logger = logging.getLogger(__name__)
-
 
 class TradingSystem:
     def __init__(self):

@@ -1,6 +1,8 @@
-import json
-from pathlib import Path
+# config.py
 
+import json
+
+from pathlib import Path
 
 class Config:
     def __init__(self, config_file="config.json"):

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+# main.py
 
 import argparse
 import logging
@@ -8,7 +8,6 @@ import sys
 from pathlib import Path
 
 from trading_system import TradingSystem
-
 
 def setup_logging():
     logging.basicConfig(
@@ -20,7 +19,6 @@ def setup_logging():
         ]
     )
 
-
 def reset_workspace():
     dirs = ["models", "data", "logs"]
     for d in dirs:
@@ -28,7 +26,6 @@ def reset_workspace():
         if path.exists():
             shutil.rmtree(path)
         path.mkdir(parents=True, exist_ok=True)
-
 
 def main():
     parser = argparse.ArgumentParser(description="Black Box Trading System")
@@ -60,7 +57,6 @@ def main():
     except Exception as e:
         logging.error(f"System failed: {e}")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()
