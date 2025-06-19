@@ -769,137 +769,85 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    return true;
 		}
         
-        private void ExecuteAISignal(SignalData signal)
-        {
-            try
-            {
-                if (!IsValidSignal(signal)) return;
-                
-                signalCount++;
-                
-                string toolUsed = "unknown";
-				if (!string.IsNullOrEmpty(signal.quality))
-				{
-				    // Extract tool name from quality field like "dna_tool" or "immune_tool"
-				    if (signal.quality.Contains("dna"))
-				        toolUsed = "dna";
-				    else if (signal.quality.Contains("micro"))
-				        toolUsed = "micro";
-				    else if (signal.quality.Contains("temporal"))
-				        toolUsed = "temporal";
-				    else if (signal.quality.Contains("immune"))
-				        toolUsed = "immune";
-				    else
-				        toolUsed = signal.quality.Split('_')[0]; // First part before underscore
-				}
-				// Store for execution tracking
-				lastToolUsed = toolUsed;
-                
-                switch (signal.action)
-                {
-                    case 1: // Buy
-                        if (Position.MarketPosition != MarketPosition.Long)
-                        {
-                            if (Position.MarketPosition == MarketPosition.Short)
-                                ExitShort("AI_Exit");
-                            
-                            // Use AI calculated position size
-                            int aiPositionSize = Math.Max(1, (int)Math.Round(signal.position_size));
-                            
-                            string longOrderName = $"AI_{toolUsed}_Long";
-                            EnterLong(aiPositionSize, longOrderName);
-                            
-                            // Use AI's risk management decisions
-                            if (signal.use_stop && signal.stop_price > 0)
-                            {
-                                SetStopLoss(longOrderName, CalculationMode.Price, signal.stop_price, false);
-                                Print($"  AI Stop Loss: ${signal.stop_price:F2}");
-                            }
-                            else
-                            {
-                                Print("  AI chose NO stop loss");
-                            }
-                            
-                            if (signal.use_target && signal.target_price > 0)
-                            {
-                                SetProfitTarget(longOrderName, CalculationMode.Price, signal.target_price);
-                                Print($"  AI Take Profit: ${signal.target_price:F2}");
-                            }
-                            else
-                            {
-                                Print("  AI chose NO take profit target");
-                            }
-                            
-                            Print($"AI Signal: BUY using {lastToolUsed} tool, AI Size: {aiPositionSize}, Confidence: {signal.confidence:F3}");
-                            
-                            Print($"Intelligence Signal #{signalCount}: Action=BUY, " +
-                                  $"Confidence={signal.confidence:F3}, Quality={signal.quality ?? "unknown"}");
-                            Print($"BLACK BOX LONG using {lastToolUsed} TOOL: conf={signal.confidence:F3}");
-                        }
-                        break;
-                        
-                    case 2: // Sell
-                        if (Position.MarketPosition != MarketPosition.Short)
-                        {
-                            if (Position.MarketPosition == MarketPosition.Long)
-                                ExitLong("AI_Exit");
-                            
-                            // Use AI calculated position size
-                            int aiPositionSize = Math.Max(1, (int)Math.Round(signal.position_size));
-                            
-                            string shortOrderName = $"AI_{toolUsed}_Short";
-                            EnterShort(aiPositionSize, shortOrderName);
-                            
-                            if (signal.use_stop && signal.stop_price > 0)
-                            {
-                                SetStopLoss(shortOrderName, CalculationMode.Price, signal.stop_price, false);
-                                Print($"  AI Stop Loss: ${signal.stop_price:F2}");
-                            }
-                            else
-                            {
-                                Print("  AI chose NO stop loss");
-                            }
-                            
-                            if (signal.use_target && signal.target_price > 0)
-                            {
-                                SetProfitTarget(shortOrderName, CalculationMode.Price, signal.target_price);
-                                Print($"  AI Take Profit: ${signal.target_price:F2}");
-                            }
-                            else
-                            {
-                                Print("  AI chose NO take profit target");
-                            }
-                            
-                            Print($"AI Signal: SELL using {toolUsed} tool, AI Size: {aiPositionSize}, Confidence: {signal.confidence:F3}");
-                            
-                            Print($"Intelligence Signal #{signalCount}: Action=SELL, " +
-                                  $"Confidence={signal.confidence:F3}, Quality={signal.quality ?? "unknown"}");
-                            Print($"BLACK BOX SHORT using {toolUsed} TOOL: conf={signal.confidence:F3}");
-                        }
-                        break;
-                        
-                    case 0: // Exit
-                        if (Position.MarketPosition != MarketPosition.Flat)
-                        {
-                            if (Position.MarketPosition == MarketPosition.Long)
-                                ExitLong($"AI_{toolUsed}_Exit");
-                            else if (Position.MarketPosition == MarketPosition.Short)
-                                ExitShort($"AI_{toolUsed}_Exit");
-                            
-                            Print($"AI Signal: EXIT using {toolUsed} tool");
-                            
-                            Print($"Intelligence Signal #{signalCount}: Action=EXIT, " +
-                                  $"Confidence={signal.confidence:F3}, Quality={signal.quality ?? "unknown"}");
-                            Print($"BLACK BOX EXIT using {toolUsed} TOOL");
-                        }
-                        break;
-                }
-            }
-            catch (Exception ex)
-            {
-                Print($"Signal execution error: {ex.Message}");
-            }
-        }
+		private void ExecuteAISignal(SignalData signal)
+		{
+		    try
+		    {
+		        signalCount++;
+		
+		        // If you’re short and get a BUY, reverse in one shot
+		        if (signal.action == 1 && Position.MarketPosition == MarketPosition.Short)
+		        {
+		            Print("Reversal: exiting short then entering long");
+		            ExitShort("AI_Reverse");
+		            
+		            // immediately queue the new long
+		            int sz = Math.Max(1, (int)Math.Round(signal.position_size));
+		            string name = $"AI_{signal.tool_used}_Long";
+		            EnterLong(sz, name);
+		            
+		            // apply your stops/targets exactly as usual...
+		            if (signal.use_stop)   SetStopLoss(name, CalculationMode.Price, signal.stop_price,  false);
+		            if (signal.use_target) SetProfitTarget(name, CalculationMode.Price, signal.target_price);
+		            return;
+		        }
+		
+		        // ─── 2) If you’re long and get a SELL, reverse in one shot ─────────────
+		        if (signal.action == 2 && Position.MarketPosition == MarketPosition.Long)
+		        {
+		            Print("Reversal: exiting long then entering short");
+		            ExitLong("AI_Reverse");
+		            
+		            int sz = Math.Max(1, (int)Math.Round(signal.position_size));
+		            string name = $"AI_{signal.tool_used}_Short";
+		            EnterShort(sz, name);
+		            
+		            if (signal.use_stop)   SetStopLoss(name, CalculationMode.Price, signal.stop_price,  false);
+		            if (signal.use_target) SetProfitTarget(name, CalculationMode.Price, signal.target_price);
+		            return;
+		        }
+		
+		        // ─── 3) Otherwise, you’re flat, so just follow your normal BUY/SELL/EXIT logic ───
+		        switch (signal.action)
+		        {
+		            case 1: // BUY
+		                if (Position.MarketPosition == MarketPosition.Flat)
+		                {
+		                    int sz = Math.Max(1, (int)Math.Round(signal.position_size));
+		                    string name = $"AI_{signal.tool_used}_Long";
+		                    EnterLong(sz, name);
+		                    if (signal.use_stop)   SetStopLoss(name, CalculationMode.Price, signal.stop_price,  false);
+		                    if (signal.use_target) SetProfitTarget(name, CalculationMode.Price, signal.target_price);
+		                    Print($"AI Signal: BUY size={sz}, conf={signal.confidence:F3}");
+		                }
+		                break;
+		                
+		            case 2: // SELL
+		                if (Position.MarketPosition == MarketPosition.Flat)
+		                {
+		                    int sz = Math.Max(1, (int)Math.Round(signal.position_size));
+		                    string name = $"AI_{signal.tool_used}_Short";
+		                    EnterShort(sz, name);
+		                    if (signal.use_stop)   SetStopLoss(name, CalculationMode.Price, signal.stop_price,  false);
+		                    if (signal.use_target) SetProfitTarget(name, CalculationMode.Price, signal.target_price);
+		                    Print($"AI Signal: SELL size={sz}, conf={signal.confidence:F3}");
+		                }
+		                break;
+		                
+		            case 0: // EXIT
+		                if (Position.MarketPosition == MarketPosition.Long)
+		                    ExitLong($"AI_{signal.tool_used}_Exit");
+		                else if (Position.MarketPosition == MarketPosition.Short)
+		                    ExitShort($"AI_{signal.tool_used}_Exit");
+		                Print("AI Signal: EXIT");
+		                break;
+		        }
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Signal execution error: {ex.Message}");
+		    }
+		}
         
         #endregion
         
