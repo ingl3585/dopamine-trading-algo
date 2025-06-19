@@ -5,18 +5,19 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
-import random # should not use random numbers
-
+import time
 from collections import deque
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import List, Dict, Any
 
 from intelligence_engine import Features
 from data_processor import MarketData
+from meta_learner import MetaLearner
+from adaptive_network import AdaptiveTradingNetwork, FeatureLearner, StateEncoder
 
 @dataclass
 class Decision:
-    action: str  # 'buy', 'sell', 'hold'
+    action: str
     confidence: float
     size: float
     stop_price: float = 0.0
@@ -27,216 +28,157 @@ class Decision:
     state_features: List = None
 
 
-class TradingNetwork(nn.Module):
-    def __init__(self, input_size=20, hidden_size=64):
-        super().__init__()
-        
-        self.network = nn.Sequential(
-            nn.Linear(input_size, hidden_size),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(hidden_size, 32),
-            nn.ReLU(),
-        )
-        
-        # Output heads
-        self.action_head = nn.Linear(32, 3)  # Buy, Sell, Hold
-        self.confidence_head = nn.Linear(32, 1)  # Confidence
-        self.position_size_head = nn.Linear(32, 1)  # Position size
-        self.risk_head = nn.Linear(32, 4)  # use_stop, stop_dist, use_target, target_dist
-    
-    def forward(self, x):
-        features = self.network(x)
-        
-        action_logits = self.action_head(features)
-        confidence = torch.sigmoid(self.confidence_head(features))
-        position_size = torch.sigmoid(self.position_size_head(features)) * 3.0 + 0.5  # 0.5 to 3.5
-        risk_outputs = torch.sigmoid(self.risk_head(features))
-        
-        return {
-            'action_logits': action_logits,
-            'confidence': confidence,
-            'position_size': position_size,
-            'use_stop': risk_outputs[:, 0:1],
-            'stop_distance': risk_outputs[:, 1:2] * 0.05,  # Max 5%
-            'use_target': risk_outputs[:, 2:3], 
-            'target_distance': risk_outputs[:, 3:4] * 0.1,  # Max 10%
-        }
-
-
-class SimplifiedMetaLearner:
-    """Simplified meta-learner for parameter adaptation"""
-    
-    def __init__(self):
-        self.parameters = {
-            'confidence_threshold': 0.6,
-            'position_size_multiplier': 1.0,
-            'stop_loss_pct': 0.015,
-            'take_profit_pct': 0.03,
-            'exploration_rate': 0.15,
-        }
-        
-        self.outcomes = {name: deque(maxlen=50) for name in self.parameters}
-        self.total_updates = 0
-        self.successful_adaptations = 0
-    
-    def get_parameter(self, name):
-        return self.parameters.get(name, 0.5)
-    
-    def update_parameter(self, name, outcome):
-        if name not in self.parameters:
-            return
-            
-        self.outcomes[name].append(outcome)
-        self.total_updates += 1
-        
-        if len(self.outcomes[name]) < 10:
-            return
-        
-        recent_outcomes = list(self.outcomes[name])[-20:]
-        avg_outcome = np.mean(recent_outcomes)
-        old_value = self.parameters[name]
-        
-        if avg_outcome > 0.05:  # Good performance
-            if name == 'confidence_threshold':
-                self.parameters[name] = max(0.3, old_value - 0.01)
-            elif name == 'position_size_multiplier':
-                self.parameters[name] = min(2.0, old_value + 0.05)
-            elif name in ['stop_loss_pct', 'take_profit_pct']:
-                self.parameters[name] = min(0.1, old_value + 0.001)
-        
-        elif avg_outcome < -0.05:  # Poor performance
-            if name == 'confidence_threshold':
-                self.parameters[name] = min(0.9, old_value + 0.01)
-            elif name == 'position_size_multiplier':
-                self.parameters[name] = max(0.5, old_value - 0.05)
-            elif name in ['stop_loss_pct', 'take_profit_pct']:
-                self.parameters[name] = max(0.005, old_value - 0.001)
-        
-        if abs(self.parameters[name] - old_value) > old_value * 0.05:
-            self.successful_adaptations += 1
-    
-    def get_learning_efficiency(self):
-        if self.total_updates == 0:
-            return 0.0
-        return self.successful_adaptations / self.total_updates
-
-
 class TradingAgent:
     def __init__(self, intelligence, portfolio):
         self.intelligence = intelligence
         self.portfolio = portfolio
         
-        # Meta-learner for parameter adaptation
-        self.meta_learner = SimplifiedMetaLearner()
-        
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.network = TradingNetwork().to(self.device)
-        self.target_network = TradingNetwork().to(self.device)
+        
+        # Meta-learning system
+        self.meta_learner = MetaLearner(state_dim=20)
+        
+        # Adaptive neural components
+        initial_sizes = self.meta_learner.architecture_evolver.current_sizes
+        self.network = AdaptiveTradingNetwork(input_size=20, hidden_sizes=initial_sizes).to(self.device)
+        self.target_network = AdaptiveTradingNetwork(input_size=20, hidden_sizes=initial_sizes).to(self.device)
         self.target_network.load_state_dict(self.network.state_dict())
         
-        self.optimizer = optim.Adam(self.network.parameters(), lr=0.001)
+        # Feature learning
+        self.feature_learner = FeatureLearner(raw_feature_dim=50, learned_feature_dim=20).to(self.device)
+        self.state_encoder = StateEncoder()
+        
+        # Optimizer
+        self.optimizer = optim.Adam(
+            list(self.network.parameters()) + 
+            list(self.feature_learner.parameters()) + 
+            list(self.meta_learner.subsystem_weights.parameters()) +
+            list(self.meta_learner.exploration_strategy.parameters()),
+            lr=0.001
+        )
         
         # Experience replay
         self.experience_buffer = deque(maxlen=10000)
-        
-        # Exploration
-        self.epsilon = 0.3
-        self.epsilon_decay = 0.995
-        self.epsilon_min = 0.05
         
         # Statistics
         self.total_decisions = 0
         self.successful_trades = 0
         self.total_pnl = 0.0
-        
+        self.last_trade_time = 0.0
+    
     def decide(self, features: Features, market_data: MarketData) -> Decision:
         self.total_decisions += 1
         
-        # Skip if insufficient confidence or too frequent trading
-        if features.confidence < 0.3 or self._too_frequent():
+        # Check architecture evolution
+        if self.meta_learner.should_evolve_architecture():
+            self._evolve_architecture()
+        
+        # Create comprehensive state representation
+        meta_context = self._get_meta_context()
+        raw_state = self.state_encoder.create_full_state(market_data, features, meta_context)
+        
+        # Learn features and get final state
+        learned_state = self.feature_learner(raw_state.unsqueeze(0).to(self.device))
+        
+        # Get subsystem contributions with adaptive weighting
+        subsystem_signals = torch.tensor([
+            features.dna_signal,
+            features.micro_signal,
+            features.temporal_signal,
+            features.immune_signal
+        ], device=self.device)
+        
+        subsystem_weights = self.meta_learner.get_subsystem_weights()
+        weighted_signal = torch.sum(subsystem_signals * subsystem_weights)
+        
+        # Check basic trading constraints
+        if not self._should_consider_trading(features, market_data, meta_context):
             return Decision('hold', 0, 0)
         
-        # Prepare comprehensive input features
-        input_tensor = self._prepare_features(features, market_data)
-        
+        # Neural network decision
         with torch.no_grad():
-            outputs = self.network(input_tensor)
+            outputs = self.network(learned_state)
             
             # Get action probabilities
             action_probs = F.softmax(outputs['action_logits'], dim=-1).cpu().numpy()[0]
             confidence = float(outputs['confidence'].cpu().numpy()[0])
             
-            # Exploration vs exploitation (should not use random numbers...)
-            if random.random() < self.epsilon:
-                action_idx = random.choice([0, 1, 2])  # Random action
+            # Learned exploration decision
+            should_explore = self.meta_learner.should_explore(
+                learned_state.squeeze(), 
+                meta_context
+            )
+            
+            if should_explore:
+                # Exploration: use subsystem signal for action selection
+                if weighted_signal > 0.1:
+                    action_idx = 1  # Buy
+                elif weighted_signal < -0.1:
+                    action_idx = 2  # Sell
+                else:
+                    action_idx = 0  # Hold
                 exploration = True
             else:
-                action_idx = np.argmax(action_probs)  # Best action
+                # Exploitation: use network's best prediction
+                action_idx = np.argmax(action_probs)
                 exploration = False
             
-            # Check confidence threshold
+            # Apply confidence threshold
             confidence_threshold = self.meta_learner.get_parameter('confidence_threshold')
             if confidence < confidence_threshold and not exploration:
-                action_idx = 0  # Hold if not confident
+                action_idx = 0
             
-            # Get other outputs
+            # Get sizing and risk parameters
             position_size = float(outputs['position_size'].cpu().numpy()[0])
             use_stop = float(outputs['use_stop'].cpu().numpy()[0]) > 0.5
             stop_distance = float(outputs['stop_distance'].cpu().numpy()[0])
             use_target = float(outputs['use_target'].cpu().numpy()[0]) > 0.5
             target_distance = float(outputs['target_distance'].cpu().numpy()[0])
-            
-            # Apply meta-learner multipliers
-            position_size *= self.meta_learner.get_parameter('position_size_multiplier')
-            position_size = max(0.5, min(3.0, position_size))  # Clamp
         
-        # Decay exploration
-        self.epsilon = max(self.epsilon_min, self.epsilon * self.epsilon_decay)
+        # Apply meta-learned position sizing
+        position_size *= self.meta_learner.get_parameter('position_size_base')
+        position_size = max(0.5, min(self.meta_learner.get_parameter('max_position_count'), position_size))
         
         # Convert to decision
         actions = ['hold', 'buy', 'sell']
         action = actions[action_idx]
         
-        if action == 'hold' or confidence < 0.4:
+        if action == 'hold':
             return Decision('hold', confidence, 0)
         
-        # Calculate stop and target prices
+        # Calculate stop and target prices using meta-learned parameters
         stop_price = 0
         target_price = 0
         
+        base_stop_pct = self.meta_learner.get_parameter('stop_loss_base')
+        base_target_pct = self.meta_learner.get_parameter('take_profit_base')
+        
         if use_stop:
+            stop_pct = base_stop_pct * (1 + stop_distance)
             if action == 'buy':
-                stop_price = market_data.price * (1 - stop_distance)
-            else:  # sell
-                stop_price = market_data.price * (1 + stop_distance)
+                stop_price = market_data.price * (1 - stop_pct)
+            else:
+                stop_price = market_data.price * (1 + stop_pct)
         
         if use_target:
+            target_pct = base_target_pct * (1 + target_distance)
             if action == 'buy':
-                target_price = market_data.price * (1 + target_distance)
-            else:  # sell
-                target_price = market_data.price * (1 - target_distance)
+                target_price = market_data.price * (1 + target_pct)
+            else:
+                target_price = market_data.price * (1 - target_pct)
         
-        # Determine primary tool from subsystem signals
-        primary_tool = self._get_primary_tool(features)
+        # Determine primary tool
+        primary_tool = self._get_primary_tool(subsystem_signals, subsystem_weights)
         
-        # Prepare intelligence data for learning
+        # Store intelligence data for learning
         intelligence_data = {
-            'subsystem_signals': {
-                'dna': features.dna_signal,
-                'micro': features.micro_signal,
-                'temporal': features.temporal_signal,
-                'immune': features.immune_signal
-            },
-            'overall_signal': features.overall_signal,
-            'current_patterns': {}  # Will be filled by intelligence engine
+            'subsystem_signals': subsystem_signals.cpu().numpy().tolist(),
+            'subsystem_weights': subsystem_weights.cpu().numpy().tolist(),
+            'weighted_signal': float(weighted_signal),
+            'current_patterns': getattr(features, 'current_patterns', {})
         }
         
-        # Store state features for learning
-        state_features = input_tensor.squeeze().cpu().numpy().tolist()
+        self.last_trade_time = market_data.timestamp
         
         return Decision(
             action=action,
@@ -247,132 +189,148 @@ class TradingAgent:
             primary_tool=primary_tool,
             exploration=exploration,
             intelligence_data=intelligence_data,
-            state_features=state_features
+            state_features=learned_state.squeeze().cpu().numpy().tolist()
         )
     
     def learn_from_trade(self, trade):
-        if not hasattr(trade, 'features') or not hasattr(trade, 'decision_data'):
+        if not hasattr(trade, 'intelligence_data'):
             return
-            
+        
         # Update statistics
         if trade.pnl > 0:
             self.successful_trades += 1
         self.total_pnl += trade.pnl
         
-        # Normalize outcome for learning
-        normalized_outcome = np.tanh(trade.pnl / 50.0)  # Normalize to [-1, 1]
+        # Prepare comprehensive trade data for meta-learning
+        trade_data = {
+            'pnl': trade.pnl,
+            'hold_time': trade.exit_time - trade.entry_time,
+            'was_exploration': getattr(trade, 'exploration', False),
+            'subsystem_contributions': torch.tensor(trade.intelligence_data.get('subsystem_signals', [0,0,0,0])),
+            'subsystem_agreement': self._calculate_subsystem_agreement(trade.intelligence_data),
+            'confidence': getattr(trade, 'confidence', 0.5),
+            'primary_tool': getattr(trade, 'primary_tool', 'unknown'),
+            'stop_used': getattr(trade, 'stop_used', False),
+            'target_used': getattr(trade, 'target_used', False)
+        }
+        
+        # Compute reward using adaptive reward engine
+        reward = self.meta_learner.compute_reward(trade_data)
         
         # Store experience for neural network training
-        if hasattr(trade, 'state_features'):
+        if hasattr(trade, 'state_features') and trade.state_features:
             experience = {
                 'state_features': trade.state_features,
                 'action': ['hold', 'buy', 'sell'].index(trade.action),
-                'reward': normalized_outcome,
+                'reward': reward,
                 'done': True,
-                'confidence': getattr(trade, 'confidence', 0.5),
-                'position_size': getattr(trade, 'size', 1.0)
+                'trade_data': trade_data
             }
             
             self.experience_buffer.append(experience)
         
-        # Update meta-learner
-        self.meta_learner.update_parameter('confidence_threshold', normalized_outcome)
-        self.meta_learner.update_parameter('position_size_multiplier', normalized_outcome)
+        # Meta-learning update
+        self.meta_learner.learn_from_outcome(trade_data)
         
-        if hasattr(trade, 'stop_used') and trade.stop_used:
-            self.meta_learner.update_parameter('stop_loss_pct', normalized_outcome)
-        if hasattr(trade, 'target_used') and trade.target_used:
-            self.meta_learner.update_parameter('take_profit_pct', normalized_outcome)
-        
-        # Train network if enough experience
+        # Train networks if enough experience
         if len(self.experience_buffer) >= 64:
-            self._train_network()
+            self._train_networks()
+        
+        # Periodic parameter adaptation
+        if self.total_decisions % 50 == 0:
+            self.meta_learner.adapt_parameters()
     
-    def _prepare_features(self, features: Features, market_data: MarketData) -> torch.Tensor:
-        """Prepare comprehensive input features for neural network"""
-        input_data = []
+    def _should_consider_trading(self, features: Features, market_data: MarketData, 
+                               meta_context: Dict) -> bool:
+        # Daily loss limit
+        max_daily_loss = self.meta_learner.get_parameter('max_daily_loss')
+        if market_data.daily_pnl <= -max_daily_loss:
+            return False
         
-        # Market features (price changes)
-        prices = market_data.prices_1m[-10:] if len(market_data.prices_1m) >= 10 else [market_data.price]
-        if len(prices) >= 2:
-            price_changes = [(prices[i] - prices[i-1]) / prices[i-1] for i in range(1, len(prices))]
-            input_data.extend(price_changes[-5:])  # Last 5 price changes
-        else:
-            input_data.extend([0.0] * 5)
+        # Consecutive loss limit
+        consecutive_limit = self.meta_learner.get_parameter('consecutive_loss_limit')
+        if meta_context['consecutive_losses'] >= consecutive_limit:
+            return False
         
-        # Pad to exactly 5 features
-        while len(input_data) < 5:
-            input_data.append(0.0)
-        input_data = input_data[:5]
+        # Position count limit
+        max_positions = self.meta_learner.get_parameter('max_position_count')
+        if meta_context['position_count'] >= max_positions:
+            return False
         
-        # Intelligence subsystem signals
-        input_data.extend([
-            features.dna_signal,
-            features.micro_signal,
-            features.temporal_signal,
-            features.immune_signal
-        ])
+        # Frequency limit
+        frequency_limit = self.meta_learner.get_parameter('trade_frequency_limit')
+        time_since_last = market_data.timestamp - self.last_trade_time
+        if time_since_last < (3600 / frequency_limit):  # Convert to seconds
+            return False
         
-        # Overall intelligence signal and confidence
-        input_data.extend([
-            features.overall_signal,
-            features.confidence
-        ])
+        # Minimum signal strength
+        if features.confidence < 0.1:
+            return False
         
-        # Basic features
-        input_data.extend([
-            features.price_momentum,
-            features.volume_momentum,
-            features.price_position,
-            features.volatility,
-            features.time_of_day,
-            features.pattern_score
-        ])
-        
-        # Account features
-        input_data.extend([
-            min(1.0, market_data.account_balance / 50000),  # Normalized balance
-            min(1.0, market_data.buying_power / 50000),  # Normalized buying power
-            np.tanh(market_data.daily_pnl / 1000),  # Normalized daily P&L
-        ])
-        
-        # Meta-learning features
-        input_data.extend([
-            self.epsilon,  # Current exploration rate
-            self.meta_learner.get_learning_efficiency(),  # Learning efficiency
-        ])
-        
-        # Pad or truncate to exactly 20 features
-        while len(input_data) < 20:
-            input_data.append(0.0)
-        input_data = input_data[:20]
-        
-        return torch.tensor(input_data, dtype=torch.float32, device=self.device).unsqueeze(0)
+        return True
     
-    def _get_primary_tool(self, features: Features) -> str:
-        """Determine primary tool from subsystem signals"""
-        signals = {
-            'dna': abs(features.dna_signal),
-            'micro': abs(features.micro_signal), 
-            'temporal': abs(features.temporal_signal),
-            'immune': abs(features.immune_signal)
+    def _get_meta_context(self) -> Dict[str, float]:
+        portfolio_summary = self.portfolio.get_summary()
+        
+        return {
+            'recent_performance': np.tanh(portfolio_summary.get('daily_pnl', 0) / 200),
+            'consecutive_losses': portfolio_summary.get('consecutive_losses', 0),
+            'position_count': portfolio_summary.get('pending_orders', 0),
+            'trades_today': portfolio_summary.get('total_trades', 0),
+            'time_since_last_trade': 0.0 if self.last_trade_time == 0 else (np.log(1 + (time.time() - self.last_trade_time) / 3600)),
+            'learning_efficiency': self.meta_learner.get_learning_efficiency(),
+            'architecture_generation': self.meta_learner.architecture_evolver.generations
         }
+    
+    def _get_primary_tool(self, signals: torch.Tensor, weights: torch.Tensor) -> str:
+        weighted_signals = torch.abs(signals * weights)
+        tool_names = ['dna', 'micro', 'temporal', 'immune']
         
-        if not any(signals.values()):
+        if torch.sum(weighted_signals) == 0:
             return 'basic'
-            
-        return max(signals.items(), key=lambda x: x[1])[0]
+        
+        primary_idx = torch.argmax(weighted_signals)
+        return tool_names[primary_idx]
     
-    def _too_frequent(self) -> bool:
-        recent_trades = self.portfolio.get_recent_trade_count(minutes=15)
-        return recent_trades >= 3  # Max 3 trades per 15 minutes
+    def _calculate_subsystem_agreement(self, intelligence_data: Dict) -> float:
+        signals = intelligence_data.get('subsystem_signals', [0, 0, 0, 0])
+        
+        if not signals or all(s == 0 for s in signals):
+            return 0.5
+        
+        # Calculate how much subsystems agree on direction
+        positive_signals = sum(1 for s in signals if s > 0.1)
+        negative_signals = sum(1 for s in signals if s < -0.1)
+        total_signals = len([s for s in signals if abs(s) > 0.1])
+        
+        if total_signals == 0:
+            return 0.5
+        
+        agreement = max(positive_signals, negative_signals) / total_signals
+        return agreement
     
-    def _train_network(self):
-        """Train the neural network on experiences"""
+    def _evolve_architecture(self):
+        new_sizes = self.meta_learner.evolve_architecture()
+        
+        # Evolve main network
+        self.network.evolve_architecture(new_sizes)
+        self.target_network.evolve_architecture(new_sizes)
+        
+        # Update optimizer with new parameters
+        self.optimizer = optim.Adam(
+            list(self.network.parameters()) + 
+            list(self.feature_learner.parameters()) + 
+            list(self.meta_learner.subsystem_weights.parameters()) +
+            list(self.meta_learner.exploration_strategy.parameters()),
+            lr=0.001
+        )
+    
+    def _train_networks(self):
         if len(self.experience_buffer) < 32:
             return
         
         # Sample batch
+        import random
         batch = random.sample(list(self.experience_buffer), 32)
         
         # Prepare tensors
@@ -385,29 +343,34 @@ class TradingAgent:
         
         # Forward pass
         outputs = self.network(states)
+        
+        # Policy loss
         action_logits = outputs['action_logits']
-        
-        # Calculate loss (simple policy gradient)
         action_probs = F.log_softmax(action_logits, dim=-1)
-        selected_action_probs = action_probs.gather(1, actions.unsqueeze(1)).squeeze(1)
+        selected_probs = action_probs.gather(1, actions.unsqueeze(1)).squeeze(1)
+        policy_loss = -(selected_probs * rewards).mean()
         
-        # Policy loss (maximize reward-weighted log probabilities)
-        policy_loss = -(selected_action_probs * rewards).mean()
-        
-        # Confidence loss (predict absolute reward as confidence target)
+        # Value losses
         confidence_target = torch.abs(rewards).unsqueeze(1)
         confidence_loss = F.mse_loss(outputs['confidence'], confidence_target)
         
+        # Position size loss (reward-weighted)
+        size_target = torch.clamp(torch.abs(rewards) * 2.0, 0.5, 3.0).unsqueeze(1)
+        size_loss = F.mse_loss(outputs['position_size'], size_target)
+        
         # Total loss
-        total_loss = policy_loss + 0.1 * confidence_loss
+        total_loss = policy_loss + 0.1 * confidence_loss + 0.05 * size_loss
         
         # Backward pass
         self.optimizer.zero_grad()
         total_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.network.parameters(), 1.0)
+        torch.nn.utils.clip_grad_norm_(
+            list(self.network.parameters()) + list(self.feature_learner.parameters()), 
+            1.0
+        )
         self.optimizer.step()
         
-        # Update target network occasionally
+        # Update target network
         if self.total_decisions % 100 == 0:
             self.target_network.load_state_dict(self.network.state_dict())
     
@@ -415,30 +378,36 @@ class TradingAgent:
         torch.save({
             'network_state': self.network.state_dict(),
             'target_network_state': self.target_network.state_dict(),
+            'feature_learner_state': self.feature_learner.state_dict(),
             'optimizer_state': self.optimizer.state_dict(),
-            'epsilon': self.epsilon,
             'total_decisions': self.total_decisions,
             'successful_trades': self.successful_trades,
             'total_pnl': self.total_pnl,
-            'meta_learner_params': self.meta_learner.parameters
+            'last_trade_time': self.last_trade_time
         }, filepath)
+        
+        # Save meta-learner separately
+        self.meta_learner.save_state(filepath.replace('.pt', '_meta.pt'))
     
     def load_model(self, filepath: str):
         try:
             checkpoint = torch.load(filepath, map_location=self.device)
+            
             self.network.load_state_dict(checkpoint['network_state'])
             self.target_network.load_state_dict(checkpoint['target_network_state'])
+            self.feature_learner.load_state_dict(checkpoint['feature_learner_state'])
             self.optimizer.load_state_dict(checkpoint['optimizer_state'])
-            self.epsilon = checkpoint.get('epsilon', 0.3)
+            
             self.total_decisions = checkpoint.get('total_decisions', 0)
             self.successful_trades = checkpoint.get('successful_trades', 0)
             self.total_pnl = checkpoint.get('total_pnl', 0.0)
+            self.last_trade_time = checkpoint.get('last_trade_time', 0.0)
             
-            # Load meta-learner parameters
-            if 'meta_learner_params' in checkpoint:
-                self.meta_learner.parameters.update(checkpoint['meta_learner_params'])
+            # Load meta-learner
+            self.meta_learner.load_state(filepath.replace('.pt', '_meta.pt'))
+            
         except FileNotFoundError:
-            pass  # Start fresh
+            pass
     
     def get_stats(self) -> dict:
         return {
@@ -446,9 +415,14 @@ class TradingAgent:
             'successful_trades': self.successful_trades,
             'success_rate': self.successful_trades / max(1, self.total_decisions),
             'total_pnl': self.total_pnl,
-            'epsilon': self.epsilon,
             'experience_size': len(self.experience_buffer),
-            'meta_learner_efficiency': self.meta_learner.get_learning_efficiency(),
-            'confidence_threshold': self.meta_learner.get_parameter('confidence_threshold'),
-            'position_multiplier': self.meta_learner.get_parameter('position_size_multiplier')
+            'learning_efficiency': self.meta_learner.get_learning_efficiency(),
+            'architecture_generation': self.meta_learner.architecture_evolver.generations,
+            'current_sizes': self.meta_learner.architecture_evolver.current_sizes,
+            'subsystem_weights': self.meta_learner.get_subsystem_weights().detach().cpu().numpy().tolist(),
+            'key_parameters': {
+                'confidence_threshold': self.meta_learner.get_parameter('confidence_threshold'),
+                'position_size_base': self.meta_learner.get_parameter('position_size_base'),
+                'max_daily_loss': self.meta_learner.get_parameter('max_daily_loss')
+            }
         }

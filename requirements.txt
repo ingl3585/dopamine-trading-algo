@@ -3,3 +3,6 @@
 # Core ML and Data Science
 numpy>=1.21.0
 torch>=1.9.0
+
+# Additional dependencies for meta-learning
+scipy>=1.7.0

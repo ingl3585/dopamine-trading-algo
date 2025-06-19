@@ -22,7 +22,7 @@ class TradingSystem:
         self.data_processor = DataProcessor()
         self.intelligence = IntelligenceEngine()
         self.agent = TradingAgent(self.intelligence, self.portfolio)
-        self.risk_manager = RiskManager(self.portfolio, self.config)
+        self.risk_manager = RiskManager(self.portfolio, self.config, self.agent.meta_learner)
         
         self.tcp_server = TCPServer()
         self.tcp_server.on_market_data = self._process_market_data
@@ -30,6 +30,9 @@ class TradingSystem:
         
         self.running = False
         self.last_save = time.time()
+        
+        # Load previous state if available
+        self._load_state()
 
     def start(self):
         logger.info("Starting trading system")
@@ -102,6 +105,15 @@ class TradingSystem:
             
         except Exception as e:
             logger.error(f"Error saving state: {e}")
+    
+    def _load_state(self):
+        try:
+            self.agent.load_model('models/agent.pt')
+            self.intelligence.load_patterns('data/patterns.json')
+            self.portfolio.load_state('data/portfolio.json')
+            
+        except Exception as e:
+            logger.info("Starting with fresh state")
 
     def shutdown(self):
         logger.info("Shutting down trading system")

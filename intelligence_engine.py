@@ -72,9 +72,10 @@ class IntelligenceEngine:
         # Basic pattern score
         pattern_score = self._recognize_patterns(prices, volumes)
         
-        # Overall confidence
-        confidence = min(1.0, abs(price_momentum) + abs(volume_momentum) + 
-                        abs(subsystem_result['overall_signal']))
+        # Overall confidence based on signal strength and consistency
+        signal_strength = abs(subsystem_result['overall_signal'])
+        momentum_strength = abs(price_momentum) + abs(volume_momentum)
+        confidence = min(1.0, signal_strength + momentum_strength * 0.5)
         
         return Features(
             price_momentum=price_momentum,
@@ -103,7 +104,7 @@ class IntelligenceEngine:
         temporal_signal = self._process_temporal(timestamp)
         immune_signal = self._process_immune(prices, volumes, timestamp)
         
-        # Combine signals
+        # Combine signals (weights will be applied externally by meta-learner)
         subsystem_signals = {
             'dna': dna_signal,
             'micro': micro_signal, 
@@ -111,10 +112,9 @@ class IntelligenceEngine:
             'immune': immune_signal
         }
         
-        # Calculate overall signal
-        weights = [0.3, 0.3, 0.2, 0.2]  # DNA, Micro, Temporal, Immune
+        # Calculate raw overall signal (unweighted average for internal use)
         signals = list(subsystem_signals.values())
-        overall_signal = sum(w * s for w, s in zip(weights, signals))
+        overall_signal = sum(signals) / len(signals) if signals else 0.0
         
         return {
             'overall_signal': overall_signal,
