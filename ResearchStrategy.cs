@@ -9,6 +9,7 @@ using NinjaTrader.Cbi;
 using NinjaTrader.Data;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.Strategies;
+using Newtonsoft.Json;
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
