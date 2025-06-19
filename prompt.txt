@@ -229,6 +229,6 @@ The enhanced system should demonstrate:
 
 ## The Ultimate Goal
 
-Create a system that exhibits genuine market intelligence - one that doesn't just recognize patterns but truly understands market dynamics at a deep, almost biological level. The system should start with minimal assumptions, bootstrap its knowledge from historical data, and evolve into something that demonstrates creativity and intuition in its trading decisions.
+Create a system that exhibits genuine market intelligence - one that doesn't just recognize patterns but truly understands market dynamics at a deep, almost biological level without overengineering. The system should start with minimal assumptions, bootstrap its knowledge from historical data, and evolve into something that demonstrates creativity and intuition in its trading decisions.
 
 This is not just pattern matching or curve fitting - this is artificial intelligence that develops genuine market expertise through experience, maintains that knowledge across sessions, and continuously evolves to stay ahead of changing market conditions.
