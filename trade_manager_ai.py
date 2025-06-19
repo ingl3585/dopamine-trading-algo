@@ -376,6 +376,8 @@ class PureBlackBoxSignalGenerator:
             "timestamp": datetime.now().timestamp(),
             "account_data_used": self.current_account_data.copy()  # FIXED: Track account data usage
         }
+
+        log.info(f"Position size from Python: {ai_position_size}")
         
         # Send to NinjaTrader with AI position size
         success = self.tcp_bridge.send_signal(
