@@ -1,6 +1,6 @@
 # Build a Fully Autonomous, Self-Evolving Black-Box Trading Algorithm for MNQ Futures
 
-Create a true black-box trading system centered around a reinforcement learning (RL) agent that dynamically adapts to market conditions without any hardcoded logic, thresholds, or fixed decision rules.
+Using the current codebase and functions, create a true black-box trading system centered around a reinforcement learning (RL) agent that dynamically adapts to market conditions without any hardcoded logic, thresholds, or fixed decision rules.
 
 ## Core Agent Responsibilities
 
