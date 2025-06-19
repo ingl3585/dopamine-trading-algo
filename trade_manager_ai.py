@@ -128,28 +128,28 @@ class AdaptiveSafetyManager:
             self.meta_learner.update_parameter('position_size_base', normalized_outcome)
     
     def get_position_size(self, account_data: Dict = None, current_price: float = 4000.0) -> float:
-        # Check if account data has actual values (not zeros)
-        if (account_data and 'buying_power' in account_data and 
-            account_data['buying_power'] > 0):
+        """FIXED: Use actual NinjaTrader account data properly"""
+        
+        # ALWAYS try to use NinjaTrader account data first
+        if account_data:
+            log.info(f"Using NinjaTrader account data: {account_data}")
             return self.calculate_account_based_position_size(
                 account_data, current_price, self.current_phase
             )
         else:
-            log.warning("Using fallback position sizing - no valid account data")
-        
-        # Fallback to phase-based sizing with adaptive multipliers
-        base_sizes = {
-            'exploration': self.config.EXPLORATION_PHASE_SIZE,
-            'development': self.config.DEVELOPMENT_PHASE_SIZE,
-            'production': self.config.PRODUCTION_PHASE_SIZE
-        }
-        
-        base_size = base_sizes.get(self.current_phase, 1.0)
-        
-        # Apply adaptive multiplier
-        adaptive_multiplier = self.meta_learner.get_parameter('position_size_base')
-        
-        return max(1.0, base_size * adaptive_multiplier)
+            log.warning("No account data provided - using phase-based fallback")
+            
+            # Fallback to phase-based sizing
+            base_sizes = {
+                'exploration': self.config.EXPLORATION_PHASE_SIZE,
+                'development': self.config.DEVELOPMENT_PHASE_SIZE,
+                'production': self.config.PRODUCTION_PHASE_SIZE
+            }
+            
+            base_size = base_sizes.get(self.current_phase, 1.0)
+            adaptive_multiplier = self.meta_learner.get_parameter('position_size_base')
+            
+            return max(1.0, base_size * adaptive_multiplier)
 
     def calculate_account_based_position_size(self, account_data: Dict, current_price: float, 
                                             current_phase: str) -> float:
