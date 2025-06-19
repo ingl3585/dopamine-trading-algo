@@ -42,7 +42,13 @@ Use a self-evolving neural network architecture (e.g. attention + LSTM) that reb
 
 Manage all reward design through an adaptive reward engine that discovers what success looks like (P&L, drawdown, hold time, tool effectiveness, etc.)
 
+No hardcoded fallback values
+
 Log only what’s necessary — avoid log spam
+
+Keep all comments short and only comment when it's necessary
+
+Avoid overengineering
 
 Be able to start fresh or resume from a saved meta-parameter and model state
 
