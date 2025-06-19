@@ -1,68 +1,66 @@
-# main.py
+#!/usr/bin/env python3
 
 import argparse
 import logging
-import os
 import shutil
 import signal
 import sys
-from datetime import datetime
+from pathlib import Path
 
-def reset_workspace():
-    """Reset workspace directories"""
-    dirs = ["models", "patterns", "meta_learning", "data", "logs"]
-    for d in dirs:
-        if os.path.exists(d):
-            try:
-                shutil.rmtree(d)
-                print(f"Removed {d}/")
-            except:
-                print(f"Couldn't remove {d}/")
-        os.makedirs(d, exist_ok=True)
+from trading_system import TradingSystem
+
 
 def setup_logging():
-    """Simple logging setup"""
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         handlers=[
-            logging.FileHandler(f'logs/blackbox_{datetime.now().strftime("%Y%m%d")}.log'),
+            logging.FileHandler('logs/trading.log'),
             logging.StreamHandler()
         ]
     )
 
+
+def reset_workspace():
+    dirs = ["models", "data", "logs"]
+    for d in dirs:
+        path = Path(d)
+        if path.exists():
+            shutil.rmtree(path)
+        path.mkdir(parents=True, exist_ok=True)
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Pure Black-Box Trading System")
+    parser = argparse.ArgumentParser(description="Black Box Trading System")
     parser.add_argument("--reset", action="store_true", help="Reset workspace")
     args = parser.parse_args()
 
     if args.reset:
-        print("Resetting workspace...")
         reset_workspace()
-        print("✅ Reset complete")
-    
-    setup_logging()
-    log = logging.getLogger(__name__)
+        print("Workspace reset complete")
+        return
 
-    # Import here to avoid circular imports
-    from trading_system import BlackBoxTradingSystem
+    # Ensure directories exist
+    for d in ["models", "data", "logs"]:
+        Path(d).mkdir(parents=True, exist_ok=True)
+
+    setup_logging()
+    
+    system = TradingSystem()
     
     def shutdown_handler(signum, frame):
-        log.info("Shutdown signal received")
-        if 'system' in globals():
-            system.shutdown()
+        system.shutdown()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, shutdown_handler)
     signal.signal(signal.SIGTERM, shutdown_handler)
 
     try:
-        log.info("Starting Black Box Trading System")
-        system = BlackBoxTradingSystem()
         system.start()
     except Exception as e:
-        log.error(f"Fatal error: {e}")
+        logging.error(f"System failed: {e}")
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()

@@ -1,23 +1,31 @@
-# intelligence_engine.py
-
 import json
-import logging
 import numpy as np
+from collections import defaultdict, deque
+from dataclasses import dataclass
 from datetime import datetime
-from collections import defaultdict
 from typing import Dict, List
 
-log = logging.getLogger(__name__)
+from data_processor import MarketData
 
-class SimpleIntelligenceEngine:
-    """
-    Simplified intelligence engine with 4 subsystems:
-    - DNA: Pattern sequences in price/volume
-    - Micro: Short-term patterns  
-    - Temporal: Time-based patterns
-    - Immune: Remember bad patterns
-    """
-    
+
+@dataclass
+class Features:
+    price_momentum: float
+    volume_momentum: float
+    price_position: float
+    volatility: float
+    time_of_day: float
+    pattern_score: float
+    confidence: float
+    # Subsystem signals
+    dna_signal: float
+    micro_signal: float
+    temporal_signal: float
+    immune_signal: float
+    overall_signal: float
+
+
+class IntelligenceEngine:
     def __init__(self, memory_file="data/intelligence_memory.json"):
         self.memory_file = memory_file
         
@@ -27,24 +35,67 @@ class SimpleIntelligenceEngine:
         self.temporal_patterns = {}  # time_key -> success_rate
         self.immune_patterns = set()  # patterns to avoid
         
-        # Simple statistics
-        self.pattern_outcomes = defaultdict(list)
+        # Legacy pattern storage for compatibility
+        self.patterns = defaultdict(list)
+        self.recent_outcomes = deque(maxlen=100)
         
-        # Load existing memory
-        self.load_memory()
+        self.load_patterns()
         
-        log.info(f"Intelligence engine loaded: {len(self.dna_patterns)} DNA patterns, "
-                f"{len(self.micro_patterns)} micro patterns, "
-                f"{len(self.temporal_patterns)} temporal patterns, "
-                f"{len(self.immune_patterns)} immune patterns")
+    def extract_features(self, data: MarketData) -> Features:
+        if len(data.prices_1m) < 20:
+            return self._default_features()
+            
+        prices = np.array(data.prices_1m[-20:])
+        volumes = np.array(data.volumes_1m[-20:]) if len(data.volumes_1m) >= 20 else np.ones(20)
+        
+        # Basic features
+        short_ma = np.mean(prices[-5:])
+        long_ma = np.mean(prices)
+        price_momentum = (short_ma - long_ma) / long_ma
+        
+        recent_vol = np.mean(volumes[-5:])
+        avg_vol = np.mean(volumes)
+        volume_momentum = (recent_vol - avg_vol) / avg_vol if avg_vol > 0 else 0
+        
+        high = np.max(prices)
+        low = np.min(prices)
+        price_position = (prices[-1] - low) / (high - low) if high > low else 0.5
+        
+        volatility = np.std(prices) / np.mean(prices) if np.mean(prices) > 0 else 0
+        
+        now = datetime.fromtimestamp(data.timestamp)
+        time_of_day = (now.hour * 60 + now.minute) / 1440
+        
+        # Process through subsystems
+        subsystem_result = self._process_subsystems(data.prices_1m, data.volumes_1m, now)
+        
+        # Basic pattern score
+        pattern_score = self._recognize_patterns(prices, volumes)
+        
+        # Overall confidence
+        confidence = min(1.0, abs(price_momentum) + abs(volume_momentum) + 
+                        abs(subsystem_result['overall_signal']))
+        
+        return Features(
+            price_momentum=price_momentum,
+            volume_momentum=volume_momentum,
+            price_position=price_position,
+            volatility=volatility,
+            time_of_day=time_of_day,
+            pattern_score=pattern_score,
+            confidence=confidence,
+            dna_signal=subsystem_result['subsystem_signals']['dna'],
+            micro_signal=subsystem_result['subsystem_signals']['micro'],
+            temporal_signal=subsystem_result['subsystem_signals']['temporal'],
+            immune_signal=subsystem_result['subsystem_signals']['immune'],
+            overall_signal=subsystem_result['overall_signal']
+        )
     
-    def process_market_data(self, prices: List[float], volumes: List[float], timestamp: datetime = None) -> Dict:
+    def _process_subsystems(self, prices: List[float], volumes: List[float], 
+                          timestamp: datetime) -> Dict:
         """Process market data through all subsystems"""
-        if timestamp is None:
-            timestamp = datetime.now()
-        
         if len(prices) < 10:
-            return self._empty_result()
+            return self._empty_subsystem_result()
         
         # Extract features from each subsystem
         dna_signal = self._process_dna(prices, volumes)
@@ -52,7 +103,7 @@ class SimpleIntelligenceEngine:
         temporal_signal = self._process_temporal(timestamp)
         immune_signal = self._process_immune(prices, volumes, timestamp)
         
-        # Combine signals (simple weighted average)
+        # Combine signals
         subsystem_signals = {
             'dna': dna_signal,
             'micro': micro_signal, 
@@ -77,10 +128,8 @@ class SimpleIntelligenceEngine:
         if len(prices) < 15:
             return 0.0
         
-        # Create DNA sequence
         sequence = self._create_dna_sequence(prices[-15:], volumes[-15:])
         
-        # Check for similar patterns
         best_match = None
         best_similarity = 0
         
@@ -94,18 +143,16 @@ class SimpleIntelligenceEngine:
             success_rate = self.dna_patterns[best_match]
             return (success_rate - 0.5) * 2  # Convert to -1 to +1 range
         
-        return 0.0  # No pattern found
+        return 0.0
     
     def _process_micro(self, prices: List[float], volumes: List[float]) -> float:
         """Micro subsystem - short-term patterns"""
         if len(prices) < 10:
             return 0.0
         
-        # Create micro pattern
         recent_prices = prices[-10:]
         price_changes = [recent_prices[i] - recent_prices[i-1] for i in range(1, len(recent_prices))]
         
-        # Simple pattern: direction and magnitude
         avg_change = np.mean(price_changes)
         volatility = np.std(price_changes)
         
@@ -131,14 +178,15 @@ class SimpleIntelligenceEngine:
         
         return 0.0
     
-    def _process_immune(self, prices: List[float], volumes: List[float], timestamp: datetime) -> float:
+    def _process_immune(self, prices: List[float], volumes: List[float], 
+                       timestamp: datetime) -> float:
         """Immune subsystem - avoid bad patterns"""
         current_pattern = self._create_immune_pattern(prices, volumes, timestamp)
         
         if current_pattern in self.immune_patterns:
             return -0.8  # Strong avoid signal
         
-        return 0.0  # Neutral
+        return 0.0
     
     def _create_dna_sequence(self, prices: List[float], volumes: List[float]) -> str:
         """Create DNA sequence from price/volume data"""
@@ -166,7 +214,8 @@ class SimpleIntelligenceEngine:
         
         return matches / max(len(seq1), len(seq2))
     
-    def _create_immune_pattern(self, prices: List[float], volumes: List[float], timestamp: datetime) -> str:
+    def _create_immune_pattern(self, prices: List[float], volumes: List[float], 
+                              timestamp: datetime) -> str:
         """Create pattern for immune system"""
         if len(prices) < 5:
             return ""
@@ -177,7 +226,8 @@ class SimpleIntelligenceEngine:
         
         return f"immune_{int(recent_change * 1000)}_{int(volatility * 1000)}_{hour}"
     
-    def _get_current_patterns(self, prices: List[float], volumes: List[float], timestamp: datetime) -> Dict:
+    def _get_current_patterns(self, prices: List[float], volumes: List[float], 
+                             timestamp: datetime) -> Dict:
         """Get current patterns for debugging"""
         return {
             'dna_sequence': self._create_dna_sequence(prices[-15:], volumes[-15:]) if len(prices) >= 15 else "",
@@ -186,17 +236,47 @@ class SimpleIntelligenceEngine:
             'immune_pattern': self._create_immune_pattern(prices, volumes, timestamp)
         }
     
-    def learn_from_outcome(self, signal_data: Dict, outcome: float):
-        """Learn from trading outcome"""
-        current_patterns = signal_data.get('current_patterns', {})
+    def _recognize_patterns(self, prices: np.ndarray, volumes: np.ndarray) -> float:
+        if len(prices) < 10:
+            return 0.0
+            
+        trend = (prices[-1] - prices[-10]) / prices[-10]
+        vol_trend = (volumes[-1] - np.mean(volumes[-5:])) / np.mean(volumes[-5:])
+        
+        if (trend > 0 and vol_trend > 0) or (trend < 0 and vol_trend < 0):
+            pattern_strength = abs(trend) * (1 + abs(vol_trend))
+        else:
+            pattern_strength = abs(trend) * 0.5
+            
+        return np.tanh(pattern_strength * 10)
+    
+    def learn_from_outcome(self, trade):
+        outcome = trade.pnl / abs(trade.entry_price * 0.01)
+        
+        # Learn subsystem patterns if available
+        if hasattr(trade, 'intelligence_data'):
+            self._learn_subsystem_patterns(trade.intelligence_data, outcome)
+        
+        # Legacy pattern learning
+        if hasattr(trade, 'features'):
+            pattern_id = self._create_pattern_id(trade.features)
+            self.patterns[pattern_id].append(outcome)
+            
+            if len(self.patterns[pattern_id]) > 20:
+                self.patterns[pattern_id] = self.patterns[pattern_id][-20:]
+        
+        self.recent_outcomes.append(outcome)
+    
+    def _learn_subsystem_patterns(self, intelligence_data: Dict, outcome: float):
+        """Learn from trading outcome for subsystems"""
+        current_patterns = intelligence_data.get('current_patterns', {})
         
         # Update DNA patterns
         dna_seq = current_patterns.get('dna_sequence', '')
         if dna_seq:
             if dna_seq not in self.dna_patterns:
-                self.dna_patterns[dna_seq] = 0.5  # Start neutral
+                self.dna_patterns[dna_seq] = 0.5
             
-            # Simple learning rule
             current_rate = self.dna_patterns[dna_seq]
             learning_rate = 0.1
             
@@ -229,29 +309,21 @@ class SimpleIntelligenceEngine:
             else:
                 self.temporal_patterns[temporal_key] = max(0.05, current_rate - 0.05)
         
-        # Update immune system (add bad patterns)
+        # Update immune system
         if outcome < -50:  # Bad outcome
             immune_pattern = current_patterns.get('immune_pattern', '')
             if immune_pattern:
                 self.immune_patterns.add(immune_pattern)
-                log.info(f"Added immune pattern: {immune_pattern}")
         
-        # Clean up old patterns periodically
         self._cleanup_patterns()
-        
-        log.info(f"Learning: outcome={outcome:.2f}, DNA={len(self.dna_patterns)}, "
-                f"Micro={len(self.micro_patterns)}, Temporal={len(self.temporal_patterns)}")
     
     def _cleanup_patterns(self):
         """Remove old or poor-performing patterns"""
-        # Limit pattern counts
         max_patterns = 1000
         
         if len(self.dna_patterns) > max_patterns:
-            # Remove worst performing patterns
             sorted_patterns = sorted(self.dna_patterns.items(), key=lambda x: abs(x[1] - 0.5))
-            keep_patterns = dict(sorted_patterns[-max_patterns//2:])
-            self.dna_patterns = keep_patterns
+            self.dna_patterns = dict(sorted_patterns[-max_patterns//2:])
         
         if len(self.micro_patterns) > max_patterns:
             sorted_patterns = sorted(self.micro_patterns.items(), key=lambda x: abs(x[1] - 0.5))
@@ -261,8 +333,7 @@ class SimpleIntelligenceEngine:
             sorted_patterns = sorted(self.temporal_patterns.items(), key=lambda x: abs(x[1] - 0.5))
             self.temporal_patterns = dict(sorted_patterns[-max_patterns//2:])
     
-    def _empty_result(self):
-        """Return empty result when insufficient data"""
+    def _empty_subsystem_result(self):
         return {
             'overall_signal': 0.0,
             'subsystem_signals': {'dna': 0.0, 'micro': 0.0, 'temporal': 0.0, 'immune': 0.0},
@@ -270,50 +341,52 @@ class SimpleIntelligenceEngine:
             'current_patterns': {}
         }
     
-    def save_memory(self):
-        """Save all patterns to file"""
-        try:
-            memory_data = {
-                'dna_patterns': self.dna_patterns,
-                'micro_patterns': self.micro_patterns,
-                'temporal_patterns': self.temporal_patterns,
-                'immune_patterns': list(self.immune_patterns),
-                'saved_at': datetime.now().isoformat()
-            }
-            
-            with open(self.memory_file, 'w') as f:
-                json.dump(memory_data, f, indent=2)
-            
-            log.info(f"Saved intelligence memory to {self.memory_file}")
-        except Exception as e:
-            log.error(f"Failed to save memory: {e}")
+    def _create_pattern_id(self, features: Features) -> str:
+        momentum_bucket = int(features.price_momentum * 5) + 5
+        position_bucket = int(features.price_position * 4)
+        vol_bucket = int(features.volatility * 100) // 10
+        
+        return f"p{momentum_bucket}_{position_bucket}_{vol_bucket}"
     
-    def load_memory(self):
-        """Load patterns from file"""
-        try:
-            with open(self.memory_file, 'r') as f:
-                memory_data = json.load(f)
-            
-            self.dna_patterns = memory_data.get('dna_patterns', {})
-            self.micro_patterns = memory_data.get('micro_patterns', {})
-            self.temporal_patterns = memory_data.get('temporal_patterns', {})
-            self.immune_patterns = set(memory_data.get('immune_patterns', []))
-            
-            log.info(f"Loaded intelligence memory from {self.memory_file}")
-        except Exception as e:
-            log.info(f"Starting with empty memory: {e}")
+    def _default_features(self) -> Features:
+        return Features(0, 0, 0.5, 0, 0.5, 0, 0, 0, 0, 0, 0, 0)
     
-    def get_status(self):
-        """Get current status"""
+    def save_patterns(self, filepath: str):
+        data = {
+            'dna_patterns': self.dna_patterns,
+            'micro_patterns': self.micro_patterns,
+            'temporal_patterns': self.temporal_patterns,
+            'immune_patterns': list(self.immune_patterns),
+            'patterns': dict(self.patterns),
+            'recent_outcomes': list(self.recent_outcomes),
+            'saved_at': datetime.now().isoformat()
+        }
+        
+        with open(filepath, 'w') as f:
+            json.dump(data, f)
+    
+    def load_patterns(self, filepath: str):
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+            
+            self.dna_patterns = data.get('dna_patterns', {})
+            self.micro_patterns = data.get('micro_patterns', {})
+            self.temporal_patterns = data.get('temporal_patterns', {})
+            self.immune_patterns = set(data.get('immune_patterns', []))
+            self.patterns = defaultdict(list, data.get('patterns', {}))
+            self.recent_outcomes = deque(data.get('recent_outcomes', []), maxlen=100)
+            
+        except FileNotFoundError:
+            pass
+    
+    def get_stats(self) -> Dict:
         return {
             'dna_patterns': len(self.dna_patterns),
             'micro_patterns': len(self.micro_patterns),
             'temporal_patterns': len(self.temporal_patterns),
             'immune_patterns': len(self.immune_patterns),
-            'top_dna_patterns': sorted(self.dna_patterns.items(), 
-                                     key=lambda x: abs(x[1] - 0.5), reverse=True)[:5]
+            'total_patterns': len(self.patterns),
+            'recent_performance': np.mean(self.recent_outcomes) if self.recent_outcomes else 0,
+            'pattern_count': sum(len(outcomes) for outcomes in self.patterns.values())
         }
-
-# Factory function
-def create_intelligence_engine():
-    return SimpleIntelligenceEngine()
