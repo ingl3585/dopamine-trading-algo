@@ -191,6 +191,8 @@ class TCPServer:
                 "use_target": order.target_price > 0,
                 "target_price": order.target_price if order.target_price > 0 else 0.0,
                 "tool_used": getattr(order, 'primary_tool', 'ai_agent'),
+                "risk_adjusted": True,  # Indicate this order went through advanced risk management
+                "kelly_optimized": True,  # Indicate Kelly optimization was applied
                 "timestamp": int(time.time() * 10000000 + 621355968000000000)  # .NET ticks
             }
             

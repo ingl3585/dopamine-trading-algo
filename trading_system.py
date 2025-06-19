@@ -147,11 +147,25 @@ class TradingSystem:
                 self.agent.learn_from_trade(trade)
                 self.intelligence.learn_from_outcome(trade)
                 
-                # Log trade with account impact
+                # Process trade outcome for advanced risk learning
+                trade_outcome = {
+                    'pnl': trade.pnl,
+                    'entry_price': trade.entry_price,
+                    'exit_price': trade.exit_price,
+                    'size': trade.size,
+                    'exit_reason': trade.exit_reason,
+                    'account_balance': trade.exit_account_balance
+                }
+                self.risk_manager.process_trade_outcome(trade_outcome)
+                
+                # Log trade with account impact and risk metrics
                 account_impact = trade.account_risk_pct * 100
+                risk_summary = self.risk_manager.get_risk_summary()
+                
                 logger.info(f"Trade completed: {trade.action.upper()} "
                           f"P&L: ${trade.pnl:.2f} ({account_impact:.2f}% of account) "
-                          f"Reason: {trade.exit_reason}")
+                          f"Reason: {trade.exit_reason} "
+                          f"Regime: {risk_summary.get('current_regime', 'unknown')}")
                 
                 # Check for significant account changes after trade
                 if hasattr(trade, 'exit_account_balance') and trade.exit_account_balance > 0:
@@ -246,6 +260,7 @@ class TradingSystem:
             portfolio_summary = self.portfolio.get_summary()
             agent_stats = self.agent.get_stats()
             intelligence_stats = self.intelligence.get_stats()
+            risk_summary = self.risk_manager.get_risk_summary()
             
             logger.info("=== Performance Summary ===")
             logger.info(f"Account Balance: ${portfolio_summary.get('current_balance', 0):.2f}")
@@ -261,6 +276,14 @@ class TradingSystem:
             logger.info(f"Intelligence Patterns: DNA={intelligence_stats['dna_patterns']}, "
                        f"Micro={intelligence_stats['micro_patterns']}, "
                        f"Temporal={intelligence_stats['temporal_patterns']}")
+            
+            # Advanced risk metrics
+            logger.info(f"Risk Regime: {risk_summary.get('current_regime', 'unknown')}")
+            logger.info(f"Portfolio Heat: {risk_summary.get('portfolio_heat', 0):.1%}")
+            tail_metrics = risk_summary.get('tail_risk_metrics', {})
+            if tail_metrics:
+                logger.info(f"VaR 95%: {tail_metrics.get('var_95', 0):.4f}")
+                logger.info(f"Black Swan Prob: {tail_metrics.get('black_swan_probability', 0):.4f}")
             
             if intelligence_stats['historical_processed']:
                 logger.info(f"Bootstrap Stats: {intelligence_stats['bootstrap_stats']['total_bars_processed']} bars processed")

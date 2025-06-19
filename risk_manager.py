@@ -6,6 +6,7 @@ import logging
 
 from trading_agent import Decision
 from data_processor import MarketData
+from advanced_risk import AdvancedRiskManager
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +29,14 @@ class RiskManager:
     def __init__(self, portfolio, meta_learner):
         self.portfolio = portfolio
         self.meta_learner = meta_learner
+        self.advanced_risk = AdvancedRiskManager(meta_learner)
         
     def validate_order(self, decision: Decision, market_data: MarketData) -> Optional[Order]:
         if decision.action == 'hold':
             return None
+        
+        # Update advanced risk metrics
+        self.advanced_risk.update_risk_metrics(market_data)
         
         # Check learned loss tolerance using actual account balance
         loss_tolerance = self.meta_learner.get_parameter('loss_tolerance_factor')
@@ -57,12 +62,30 @@ class RiskManager:
             logger.info("Position size calculated as 0")
             return None
         
+        # Apply advanced risk management - Kelly optimization and drawdown prevention
+        intelligence_data = getattr(decision, 'intelligence_data', {})
+        kelly_optimized_size = self.advanced_risk.optimize_kelly_position_size(
+            size, market_data, intelligence_data
+        )
+        
+        # Real-time drawdown prevention
+        approved, final_size, reason = self.advanced_risk.check_drawdown_prevention(
+            kelly_optimized_size, market_data
+        )
+        
+        if not approved:
+            logger.info(f"Order rejected by advanced risk management: {reason}")
+            return None
+        
+        if final_size != kelly_optimized_size:
+            logger.info(f"Position size adjusted by advanced risk: {kelly_optimized_size} -> {final_size} ({reason})")
+        
         # Apply learned stop/target preferences
         stop_price, target_price = self._calculate_adaptive_levels(decision, market_data)
         
         return Order(
             action=decision.action,
-            size=size,
+            size=final_size,
             price=market_data.price,
             stop_price=stop_price,
             target_price=target_price,
@@ -162,3 +185,41 @@ class RiskManager:
                 target_price = market_data.price * (1 - target_distance_factor)
         
         return stop_price, target_price
+    
+    def process_trade_outcome(self, trade_outcome: Dict):
+        """Process trade outcome for advanced risk learning"""
+        self.advanced_risk.update_risk_metrics(None, trade_outcome)
+    
+    def get_risk_summary(self) -> Dict:
+        """Get comprehensive risk summary including advanced metrics"""
+        basic_summary = {
+            'consecutive_losses': self.portfolio.get_consecutive_losses(),
+            'position_count': self.portfolio.get_position_count(),
+            'win_rate': self.portfolio.get_win_rate()
+        }
+        
+        advanced_summary = self.advanced_risk.get_risk_summary()
+        
+        return {**basic_summary, **advanced_summary}
+    
+    def run_monte_carlo_analysis(self, decision: Decision, market_data: MarketData) -> Dict:
+        """Run Monte Carlo analysis for position sizing"""
+        intelligence_data = getattr(decision, 'intelligence_data', {})
+        scenarios = self.advanced_risk.run_monte_carlo_simulation(
+            decision.size, market_data, intelligence_data
+        )
+        
+        return {
+            'scenarios': [
+                {
+                    'scenario_id': s.scenario_id,
+                    'probability': s.probability,
+                    'expected_pnl': s.expected_pnl,
+                    'var_95': s.var_95,
+                    'var_99': s.var_99,
+                    'stress_factor': s.stress_factor
+                }
+                for s in scenarios
+            ],
+            'recommended_action': 'proceed' if scenarios[0].expected_pnl > 0 else 'reduce_size'
+        }

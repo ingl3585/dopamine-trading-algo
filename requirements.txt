@@ -3,6 +3,8 @@
 # Core ML and Data Science
 numpy>=1.21.0
 torch>=1.9.0
-
-# Additional dependencies for meta-learning
 scipy>=1.7.0
+
+# Additional dependencies for advanced risk management and neural networks
+scikit-learn>=1.0.0
+pandas>=1.3.0

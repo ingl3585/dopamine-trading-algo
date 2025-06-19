@@ -512,25 +512,47 @@ namespace NinjaTrader.NinjaScript.Strategies
             try
             {
                 double pnl = 0.0;
+                double entryPrice = 0.0;
+                int quantity = 0;
+                DateTime entryTime = DateTime.Now;
+                
                 if (SystemPerformance.AllTrades.Count > 0)
                 {
                     var lastTrade = SystemPerformance.AllTrades[SystemPerformance.AllTrades.Count - 1];
                     pnl = lastTrade.ProfitCurrency;
+                    entryPrice = lastTrade.Entry.Price;
+                    quantity = lastTrade.Quantity;
+                    entryTime = lastTrade.Entry.Time;
                 }
                 
-                string exitReason = execution.Order.Name.Contains("Stop") ? "stop_hit" : 
+                string exitReason = execution.Order.Name.Contains("Stop") ? "stop_hit" :
                                    execution.Order.Name.Contains("Target") ? "target_hit" : "ai_exit";
+                
+                // Enhanced trade completion data for advanced risk analysis
+                double currentBalance = Account.Get(AccountItem.CashValue, Currency.UsDollar);
+                double netLiquidation = Account.Get(AccountItem.NetLiquidation, Currency.UsDollar);
+                double marginUsed = Account.Get(AccountItem.InitialMargin, Currency.UsDollar);
+                double totalPnL = Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
+                double dailyPnL = sessionStartSet ? (totalPnL - sessionStartPnL) : 0;
                 
                 var json = $"{{" +
                           $"\"type\":\"trade_completion\"," +
                           $"\"final_pnl\":{pnl.ToString(CultureInfo.InvariantCulture)}," +
                           $"\"exit_price\":{exitPrice.ToString(CultureInfo.InvariantCulture)}," +
+                          $"\"entry_price\":{entryPrice.ToString(CultureInfo.InvariantCulture)}," +
+                          $"\"quantity\":{quantity}," +
                           $"\"exit_reason\":\"{exitReason}\"," +
+                          $"\"entry_time\":{entryTime.Ticks}," +
+                          $"\"exit_time\":{DateTime.Now.Ticks}," +
+                          $"\"account_balance\":{currentBalance.ToString(CultureInfo.InvariantCulture)}," +
+                          $"\"net_liquidation\":{netLiquidation.ToString(CultureInfo.InvariantCulture)}," +
+                          $"\"margin_used\":{marginUsed.ToString(CultureInfo.InvariantCulture)}," +
+                          $"\"daily_pnl\":{dailyPnL.ToString(CultureInfo.InvariantCulture)}," +
                           $"\"timestamp\":{DateTime.Now.Ticks}" +
                           $"}}";
                 
                 SendJsonMessage(json);
-                Print($"Trade completed: P&L ${pnl:F2} ({exitReason})");
+                Print($"Trade completed: P&L ${pnl:F2} ({exitReason}) - Balance: ${currentBalance:F0}");
             }
             catch (Exception ex)
             {
