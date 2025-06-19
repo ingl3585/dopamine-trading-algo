@@ -22,7 +22,7 @@ def reset_workspace() -> None:
                 print(f"{d}/ couldn't be removed")
         
         os.makedirs(d, exist_ok=True)
-        print(f"✅ {d}/ ready")
+        print(f"{d}/ ready")
 
 def setup_logging_after_reset():
     """Setup logging AFTER reset to avoid file locking issues"""
