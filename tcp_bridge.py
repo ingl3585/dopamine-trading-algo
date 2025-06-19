@@ -47,14 +47,15 @@ class TCPBridge:
         log.info("Enhanced learning correlation system active")
 
     def start(self):
-        """Start TCP server and wait for connections"""
+        """Start TCP server with LONGER timeout for NinjaTrader"""
         log.info("Waiting for NinjaTrader connection...")
         
         try:
-            # Set socket timeout to avoid hanging indefinitely
-            self._feat_srv.settimeout(30.0)
-            self._sig_srv.settimeout(30.0)
+            # INCREASED timeout from 30 to 120 seconds
+            self._feat_srv.settimeout(120.0)  
+            self._sig_srv.settimeout(120.0)
             
+            log.info("Waiting up to 2 minutes for NinjaTrader to connect...")
             self.fsock, feat_addr = self._feat_srv.accept()
             log.info(f"Feature connection established from {feat_addr}")
             
@@ -66,10 +67,11 @@ class TCPBridge:
             self.ssock.settimeout(None)
             
             self.connected = True
-            log.info("NinjaTrader connected successfully - learning correlation active")
+            log.info("NinjaTrader connected successfully")
             
         except socket.timeout:
-            log.error("Connection timeout - NinjaTrader not responding")
+            log.error("Connection timeout after 2 minutes")
+            log.error("Make sure NinjaTrader is running with ResearchStrategy loaded")
             self.connected = False
             raise ConnectionError("NinjaTrader connection timeout")
         except Exception as e:
@@ -77,10 +79,10 @@ class TCPBridge:
             self.connected = False
             raise
 
-        # Start reader thread after connections established
+        # Start reader thread
         self.running = True
         threading.Thread(target=self._reader, daemon=True, name="TCPReader").start()
-        log.info("TCP reader thread started with enhanced correlation")
+        log.info("TCP reader thread started")
 
     def _reader(self):
         """Enhanced reader for market data and trade completions from NinjaTrader"""

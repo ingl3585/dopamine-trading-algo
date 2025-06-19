@@ -22,11 +22,13 @@ class SelfEvolvingPolicyNetwork(torch.nn.Module):
     Policy network that evolves its own architecture based on performance
     """
     
-    def __init__(self, meta_learner: PureMetaLearner, market_obs_size: int = 15, subsystem_features_size: int = 16):
+    def __init__(self, meta_learner: PureMetaLearner, market_obs_size: int = 15, 
+                 subsystem_features_size: int = 16, is_target_network: bool = False):
         super().__init__()
         self.meta_learner = meta_learner
         self.market_obs_size = market_obs_size
         self.subsystem_features_size = subsystem_features_size
+        self.is_target_network = is_target_network 
         
         # Build initial architecture
         self._build_network()
@@ -101,8 +103,9 @@ class SelfEvolvingPolicyNetwork(torch.nn.Module):
         
         # Value estimation for learning
         self.value_head = self._create_adaptive_head(decision_input_size, 1, "value")
-        
-        log.info(f"Built architecture with {self.hidden_size} hidden, {self.lstm_layers} LSTM layers, {arch['attention_layers']} attention heads")
+
+        if not self.is_target_network:
+            log.info(f"Built architecture with {self.hidden_size} hidden, {self.lstm_layers} LSTM layers, {arch['attention_layers']} attention heads")
     
     def _create_adaptive_head(self, input_size: int, output_size: int, head_type: str):
         """Create decision head with adaptive complexity"""
@@ -250,11 +253,13 @@ class PureBlackBoxStrategicAgent:
         
         # Self-evolving networks
         self.policy = SelfEvolvingPolicyNetwork(
-            self.meta_learner, market_obs_size, subsystem_features_size
+            self.meta_learner, market_obs_size, subsystem_features_size, 
+            is_target_network=False  # Main policy network
         ).to(self.device)
         
         self.target_policy = SelfEvolvingPolicyNetwork(
-            self.meta_learner, market_obs_size, subsystem_features_size
+            self.meta_learner, market_obs_size, subsystem_features_size,
+            is_target_network=True   # Target network - won't log
         ).to(self.device)
         
         # Copy initial weights

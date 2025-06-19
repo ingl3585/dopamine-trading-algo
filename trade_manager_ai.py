@@ -128,13 +128,14 @@ class AdaptiveSafetyManager:
             self.meta_learner.update_parameter('position_size_base', normalized_outcome)
     
     def get_position_size(self, account_data: Dict = None, current_price: float = 4000.0) -> float:
-        """FIXED: Calculate position size with proper account data integration"""
-        
-        # If account data is available, use account-based sizing (PROMPT REQUIREMENT)
-        if account_data and 'buying_power' in account_data:
+        # Check if account data has actual values (not zeros)
+        if (account_data and 'buying_power' in account_data and 
+            account_data['buying_power'] > 0):
             return self.calculate_account_based_position_size(
                 account_data, current_price, self.current_phase
             )
+        else:
+            log.warning("Using fallback position sizing - no valid account data")
         
         # Fallback to phase-based sizing with adaptive multipliers
         base_sizes = {
@@ -197,8 +198,9 @@ class AdaptiveSafetyManager:
         final_size = max(1, min(final_size, max_contracts_by_margin * 0.8))  # Never use more than 80% of margin
         final_size = min(final_size, 10)  # Absolute safety cap
         
-        log.info(f"Account-based position sizing: Available=${available_capital:.0f}, "
-                f"Risk=${risk_amount:.0f}, Contracts={final_size:.1f}")
+        log.info(f"Position calculation: Available=${available_capital:.0f}, "
+                f"Balance=${account_balance:.0f}, Risk=${risk_amount:.0f}, "
+                f"Final={final_size:.1f} contracts, Phase={current_phase}")
         
         return int(final_size)
 
@@ -302,14 +304,17 @@ class PureBlackBoxSignalGenerator:
             volumes = msg.get("volume_1m", [1000])
             
             # FIXED: Extract and store account data for position sizing
-            self.current_account_data = account_data or {
-                'buying_power': msg.get('buying_power', 25000),
-                'account_balance': msg.get('account_balance', 25000),
+            self.current_account_data = {
+                'buying_power': msg.get('buying_power', 0),
+                'account_balance': msg.get('account_balance', 0), 
                 'daily_pnl': msg.get('daily_pnl', 0.0),
-                'cash_value': msg.get('cash_value', 25000),
-                'excess_liquidity': msg.get('excess_liquidity', 25000),
-                'net_liquidation': msg.get('net_liquidation', 25000)
+                'cash_value': msg.get('cash_value', 0),
+                'excess_liquidity': msg.get('excess_liquidity', 0),
+                'net_liquidation': msg.get('net_liquidation', 0)
             }
+
+            log.info(f"Account data received: Balance=${self.current_account_data['account_balance']:.0f}, "
+            f"BP=${self.current_account_data['buying_power']:.0f}")
             
             # Store current price for calculations
             self.current_price = price
@@ -376,11 +381,11 @@ class PureBlackBoxSignalGenerator:
         success = self.tcp_bridge.send_signal(
             action=action,
             confidence=confidence,
-            quality=f"{tool_name}_adaptive",
+            quality=f"{tool_name}_tool",  # Simpler format for NinjaTrader parsing
             stop_price=decision.get('stop_price', 0.0),
             target_price=decision.get('target_price', 0.0),
             position_size=ai_position_size,
-            meta_learner=self.meta_learner  # FIXED: Pass meta_learner for adaptive timeouts
+            meta_learner=self.meta_learner
         )
         
         if success:

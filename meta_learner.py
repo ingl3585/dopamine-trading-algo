@@ -106,6 +106,10 @@ class PureMetaLearner:
     Pure meta-learner that optimizes ALL system parameters
     No hardcoded values - everything learned from experience
     """
+
+    # Class-level tracking to prevent duplicate background threads and logging
+    _background_saver_started = False
+    _logged_init = False
     
     def __init__(self, db_path: str = "data/meta_parameters.db"):
         self.db = MetaParameterDatabase(db_path)
@@ -176,13 +180,11 @@ class PureMetaLearner:
         
         for name, config in self.parameter_definitions.items():
             if name in saved_params:
-                # Load from database
                 saved = saved_params[name]
                 self.parameters[name] = saved['value']
                 self.parameter_gradients[name] = saved['gradient']
                 self.parameter_outcomes[name] = deque(saved['performance_history'], maxlen=200)
             else:
-                # Initialize fresh
                 self.parameters[name] = config['initial']
                 self.parameter_gradients[name] = 0.0
                 self.parameter_outcomes[name] = deque(maxlen=200)
@@ -193,11 +195,16 @@ class PureMetaLearner:
         self.last_save_time = datetime.now()
         self.total_updates = 0
         
-        # Background saving
-        self._start_background_saver()
+        # FIXED: Only start background saver ONCE across all instances
+        if not PureMetaLearner._background_saver_started:
+            self._start_background_saver()
+            PureMetaLearner._background_saver_started = True
         
-        log.info(f"Managing {len(self.parameters)} adaptive parameters")
-        self._log_parameter_summary()
+        # FIXED: Only log initialization ONCE
+        if not PureMetaLearner._logged_init:
+            log.info(f"Managing {len(self.parameters)} adaptive parameters")
+            self._log_parameter_summary()
+            PureMetaLearner._logged_init = True
 
     def get_parameter(self, name: str) -> float:
         """Get current value of meta-learned parameter"""
@@ -377,26 +384,25 @@ class PureMetaLearner:
         return False
 
     def _log_parameter_summary(self):
-        """Log current parameter state"""
+        """SIMPLIFIED parameter logging - only key parameters"""
         log.info("Current meta parameters:")
         
-        # Group parameters by category
-        categories = {
-            'Risk Management': ['max_daily_loss_pct', 'max_consecutive_losses', 'position_size_base'],
-            'Learning': ['policy_learning_rate', 'value_learning_rate', 'entry_confidence_threshold'],
-            'Architecture': ['hidden_layer_multiplier', 'lstm_layers', 'attention_weight'],
+        # Show only essential parameters to reduce spam
+        key_params = {
+            'Risk Management': ['max_daily_loss_pct', 'position_size_base'],
+            'Learning': ['entry_confidence_threshold'],
+            'Architecture': ['hidden_layer_multiplier']
         }
         
-        for category, param_names in categories.items():
+        for category, param_names in key_params.items():
             log.info(f"  {category}:")
             for name in param_names:
                 if name in self.parameters:
                     value = self.parameters[name]
-                    gradient = self.parameter_gradients[name]
-                    log.info(f"    {name}: {value:.6f} (grad: {gradient:.4f})")
+                    log.info(f"    {name}: {value:.6f}")
 
     def _start_background_saver(self):
-        """Start background thread to save parameters"""
+        """Start background thread to save parameters - ONLY ONCE"""
         def save_loop():
             while True:
                 try:
