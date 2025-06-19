@@ -152,16 +152,19 @@ class AdaptiveSafetyManager:
             return max(1.0, base_size * adaptive_multiplier)
 
     def calculate_account_based_position_size(self, account_data: Dict, current_price: float,
-                                            decision: Dict) -> float:
-        """Pure AI-driven position sizing with no artificial constraints."""
+                                            current_phase: str, decision: Dict) -> float:
+        """Calculate position size based on AI's stop or full exposure if none is provided."""
 
-        available_capital = account_data['buying_power']
+        available_capital = account_data.get('buying_power')
+        account_balance = account_data.get('account_balance')
+        daily_pnl = account_data.get('daily_pnl')
+
         risk_per_trade_pct = self.meta_learner.get_parameter('risk_per_trade_pct')
         position_size_base = self.meta_learner.get_parameter('position_size_base')
 
         risk_amount = available_capital * risk_per_trade_pct
-        point_value = 2.0  # MNQ = $2 per point
-        estimated_margin_per_contract = 500.0  # Could be fetched dynamically from NinjaTrader later
+        point_value = 2.0  # MNQ = $2 per point (get from NinjaTrader in the future)
+        estimated_margin_per_contract = 500.0 # MNQ intraday margin requirement (need to get from NinjaTrader in the future)
 
         use_stop = decision.get('use_stop')
         stop_price = decision.get('stop_price')
@@ -170,24 +173,34 @@ class AdaptiveSafetyManager:
             stop_distance = abs(current_price - stop_price)
             risk_per_contract = stop_distance * point_value
         else:
-            # No stop — treat full notional exposure as risk
+            # AI chose no stop — treat full notional exposure as risk per contract
             risk_per_contract = current_price * point_value
             log.info("AI chose no stop — sizing based on full notional exposure")
 
         if risk_per_contract <= 0:
-            log.warning("Invalid risk per contract — trade rejected.")
+            log.warning("Invalid risk per contract — skipping trade.")
             return 0
 
         base_contracts = (risk_amount / risk_per_contract) * position_size_base
         max_contracts_by_margin = available_capital / estimated_margin_per_contract
 
-        # Enforce only the real-world constraint
-        final_size = min(base_contracts, max_contracts_by_margin)
+        phase_multipliers = {
+            'exploration': 0.3,
+            'development': 0.6,
+            'production': 1.0
+        }
+        phase_multiplier = phase_multipliers.get(current_phase, 0.5)
 
-        log.info(f"[AI POS SIZE] Risk=${risk_amount:.2f}, RPC=${risk_per_contract:.2f}, "
-                f"Contracts={final_size:.2f}, StopUsed={use_stop}")
+        performance_factor = 1.0 + min(0.5, max(-0.5, daily_pnl / max(1, account_balance)))
 
-        return final_size
+        final_size = base_contracts * phase_multiplier * performance_factor
+        final_size = min(final_size, max_contracts_by_margin * 0.8)
+        final_size = min(final_size, 10)
+
+        log.info(f"AI Position Sizing: Risk=${risk_amount:.2f}, RPC=${risk_per_contract:.2f}, "
+                f"Final={final_size:.2f} contracts, StopUsed={use_stop}")
+
+        return int(final_size)
 
     def _adapt_learning_phase(self):
         """Adapt learning phase based on actual performance"""
