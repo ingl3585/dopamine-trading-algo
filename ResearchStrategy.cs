@@ -484,7 +484,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        jsonBuilder.Append("],");
 		        
 		        // CRITICAL FIX: Add account data for AI position sizing as required by prompt
-		        jsonBuilder.Append($"\"buying_power\":{Account.Get(AccountItem.BuyingPower, Currency.UsDollar):F2},");
+		        jsonBuilder.Append($"\"buying_power\":{Account.Get(AccountItem.ExcessIntradayMargin, Currency.UsDollar):F2},");
 		        jsonBuilder.Append($"\"account_balance\":{Account.Get(AccountItem.CashValue, Currency.UsDollar):F2},");
 		        jsonBuilder.Append($"\"daily_pnl\":{Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar):F2},");
 		        jsonBuilder.Append($"\"cash_value\":{Account.Get(AccountItem.CashValue, Currency.UsDollar):F2},");
@@ -556,7 +556,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        // Enhanced correlation data for better learning
 		        completionData.Append($"\"position_size\":{lastAIPositionSize:F2},");
 		        completionData.Append($"\"account_balance\":{Account.Get(AccountItem.CashValue, Currency.UsDollar):F2},");
-		        completionData.Append($"\"buying_power\":{Account.Get(AccountItem.BuyingPower, Currency.UsDollar):F2},");
+		        completionData.Append($"\"buying_power\":{Account.Get(AccountItem.ExcessIntradayMargin, Currency.UsDollar):F2},");
 		        completionData.Append($"\"daily_pnl\":{Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar):F2},");
 		        
 		        // Add AI learning correlation data
