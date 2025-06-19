@@ -1,140 +1,132 @@
+# config.py - SIMPLIFIED but still adaptive
+
 import os
-from datetime import datetime
-from meta_learner import PureMetaLearner
+import json
 import logging
+from datetime import datetime
+from collections import defaultdict, deque
 
 log = logging.getLogger(__name__)
 
-class AdaptiveConfig:
+class SimpleAdaptiveConfig:
     """
-    PURE BLACK BOX: All configuration parameters adapt through experience.
-    No static values. All behavior evolves from trading outcomes.
+    Simplified adaptive configuration - fewer parameters, easier to understand
     """
-
-    def __init__(self, db_path: str = "data/meta_parameters.db"):
-        self.meta_learner = PureMetaLearner(db_path)
-
-        # Network settings (fixed)
-        self.TCP_HOST = "localhost"
-        self.FEATURE_PORT = 5556
-        self.SIGNAL_PORT = 5557
-
-        # Ensure required directories exist
-        for directory in ['patterns', 'data', 'models', 'logs', 'meta_learning']:
+    
+    def __init__(self, config_file="data/adaptive_config.json"):
+        self.config_file = config_file
+        
+        # Core adaptive parameters - much fewer than before
+        self.parameters = {
+            # Risk Management
+            'position_size': 1.0,
+            'max_daily_loss': 500.0,
+            'max_consecutive_losses': 3,
+            
+            # Learning
+            'confidence_threshold': 0.6,
+            'learning_rate': 0.001,
+            'exploration_rate': 0.15,
+            
+            # Timeouts
+            'signal_timeout': 30.0,
+        }
+        
+        # Track performance for each parameter
+        self.parameter_performance = defaultdict(lambda: deque(maxlen=50))
+        
+        # Load existing config if available
+        self.load_config()
+        
+        # Ensure directories exist
+        for directory in ['data', 'models', 'patterns', 'logs']:
             os.makedirs(directory, exist_ok=True)
+    
+    def get_parameter(self, name, default=None):
+        """Get a parameter value"""
+        return self.parameters.get(name, default)
+    
+    def update_parameter(self, name, outcome):
+        """Update parameter based on outcome"""
+        if name not in self.parameters:
+            log.warning(f"Unknown parameter: {name}")
+            return
+        
+        # Simple adaptive update
+        self.parameter_performance[name].append(outcome)
+        
+        # Need at least 5 samples before adapting
+        if len(self.parameter_performance[name]) < 5:
+            return
+        
+        # Calculate recent performance
+        recent_performance = list(self.parameter_performance[name])[-10:]
+        avg_performance = sum(recent_performance) / len(recent_performance)
+        
+        # Adapt based on performance
+        if avg_performance > 0.1:  # Good performance
+            if name == 'confidence_threshold':
+                self.parameters[name] = max(0.3, self.parameters[name] - 0.02)
+            elif name == 'exploration_rate':
+                self.parameters[name] = max(0.05, self.parameters[name] - 0.01)
+            elif name == 'position_size':
+                self.parameters[name] = min(3.0, self.parameters[name] + 0.1)
+        
+        elif avg_performance < -0.1:  # Poor performance
+            if name == 'confidence_threshold':
+                self.parameters[name] = min(0.9, self.parameters[name] + 0.02)
+            elif name == 'exploration_rate':
+                self.parameters[name] = min(0.3, self.parameters[name] + 0.01)
+            elif name == 'position_size':
+                self.parameters[name] = max(0.5, self.parameters[name] - 0.1)
+        
+        log.info(f"Parameter {name} adapted to {self.parameters[name]:.3f} (performance: {avg_performance:.3f})")
+    
+    def load_config(self):
+        """Load configuration from file"""
+        try:
+            if os.path.exists(self.config_file):
+                with open(self.config_file, 'r') as f:
+                    saved_data = json.load(f)
+                    
+                self.parameters.update(saved_data.get('parameters', {}))
+                
+                # Load performance history
+                for name, history in saved_data.get('performance', {}).items():
+                    self.parameter_performance[name] = deque(history, maxlen=50)
+                
+                log.info(f"Loaded adaptive config from {self.config_file}")
+        except Exception as e:
+            log.info(f"Starting with default config: {e}")
+    
+    def save_config(self):
+        """Save configuration to file"""
+        try:
+            save_data = {
+                'parameters': self.parameters,
+                'performance': {name: list(history) for name, history in self.parameter_performance.items()},
+                'saved_at': datetime.now().isoformat()
+            }
+            
+            with open(self.config_file, 'w') as f:
+                json.dump(save_data, f, indent=2)
+                
+            log.info(f"Saved adaptive config to {self.config_file}")
+        except Exception as e:
+            log.error(f"Failed to save config: {e}")
+    
+    def get_status(self):
+        """Get current configuration status"""
+        return {
+            'parameters': self.parameters.copy(),
+            'total_adaptations': sum(len(history) for history in self.parameter_performance.values()),
+            'recent_performance': {
+                name: sum(list(history)[-5:]) / min(len(history), 5) 
+                for name, history in self.parameter_performance.items() 
+                if len(history) > 0
+            }
+        }
 
-    # === Risk Management ===
-    @property
-    def MAX_DAILY_LOSS(self):
-        return 10000 * self.meta_learner.get_parameter('max_daily_loss_pct')
-
-    @property
-    def MAX_CONSECUTIVE_LOSSES(self):
-        return int(self.meta_learner.get_parameter('max_consecutive_losses'))
-
-    @property
-    def STOP_LOSS_MAX_PERCENT(self):
-        return self.meta_learner.get_parameter('stop_loss_max_pct')
-
-    @property
-    def TAKE_PROFIT_MAX_PERCENT(self):
-        return self.meta_learner.get_parameter('take_profit_max_pct')
-
-    # === Position Sizing ===
-    @property
-    def PRODUCTION_PHASE_SIZE(self):
-        return self.meta_learner.get_parameter('position_size_base')
-
-    @property
-    def EXPLORATION_PHASE_SIZE(self):
-        return self.PRODUCTION_PHASE_SIZE * 0.2
-
-    @property
-    def DEVELOPMENT_PHASE_SIZE(self):
-        return self.PRODUCTION_PHASE_SIZE * 0.6
-
-    # === Trade Limits ===
-    def _scaled_trades(self, factor):
-        freq = self.meta_learner.get_parameter('scaling_frequency')
-        return max(1, int(factor * freq))
-
-    @property
-    def MAX_DAILY_TRADES_EXPLORATION(self):
-        return self._scaled_trades(20)
-
-    @property
-    def MAX_DAILY_TRADES_DEVELOPMENT(self):
-        return self._scaled_trades(15)
-
-    @property
-    def MAX_DAILY_TRADES_PRODUCTION(self):
-        return self._scaled_trades(25)
-
-    # === Learning Parameters ===
-    @property
-    def AI_MIN_CONFIDENCE(self):
-        return self.meta_learner.get_parameter('entry_confidence_threshold')
-
-    @property
-    def EXIT_CONFIDENCE_THRESHOLD(self):
-        return self.meta_learner.get_parameter('exit_confidence_threshold')
-
-    @property
-    def SCALING_CONFIDENCE_THRESHOLD(self):
-        return self.meta_learner.get_parameter('scaling_confidence_threshold')
-
-    @property
-    def AI_EXPLORATION_RATE(self):
-        return self.meta_learner.get_parameter('epsilon_min')
-
-    @property
-    def AI_LEARNING_RATE(self):
-        return self.meta_learner.get_parameter('policy_learning_rate')
-
-    @property
-    def AI_VALUE_LEARNING_RATE(self):
-        return self.meta_learner.get_parameter('value_learning_rate')
-
-    @property
-    def AI_MEMORY_SIZE(self):
-        return int(self.meta_learner.get_parameter('experience_buffer_size'))
-
-    # === Architecture + Memory ===
-    def get_network_architecture(self):
-        return self.meta_learner.get_network_architecture()
-
-    def get_batch_size(self):
-        base = 32
-        mult = self.meta_learner.get_parameter('batch_size_multiplier')
-        return max(16, int(base * mult))
-
-    @property
-    def MAX_PATTERN_HISTORY(self):
-        return self.AI_MEMORY_SIZE * 2
-
-    @property
-    def PATTERN_CLEANUP_DAYS(self):
-        rate = self.meta_learner.get_parameter('meta_learning_rate')
-        return max(30, int(90 * (1.0 - rate * 10000)))
-
-    # === Utils ===
-    def update_parameter_from_outcome(self, param_name, outcome, context=None):
-        self.meta_learner.update_parameter(param_name, outcome, context)
-
-    def get_learning_efficiency(self):
-        hist = self.meta_learner.learning_efficiency_history
-        return hist[-1] if hist else 0.0
-
-    def should_rebuild_network(self):
-        return self.meta_learner.should_rebuild_network()
-
-    def force_save_parameters(self):
-        self.meta_learner.force_save()
-
-    def get_meta_learner(self):
-        return self.meta_learner
-
-# Factory
-
-def create_adaptive_config(db_path="data/meta_parameters.db") -> AdaptiveConfig:
-    return AdaptiveConfig(db_path)
+# Factory function
+def create_config():
+    return SimpleAdaptiveConfig()

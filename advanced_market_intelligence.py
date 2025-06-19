@@ -1,1410 +1,320 @@
-# advanced_market_intelligence.py
+# intelligence_engine.py - SIMPLIFIED
 
-import numpy as np
-import logging
-from typing import Dict, List, Tuple, Optional, Any
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 import json
-import sqlite3
+import logging
 import hashlib
-from sklearn.neural_network import MLPClassifier
-from sklearn.preprocessing import StandardScaler
-import os
+import numpy as np
+from datetime import datetime, timedelta
 from collections import defaultdict, deque
-import threading
-import time
+from typing import Dict, List, Tuple
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 log = logging.getLogger(__name__)
 
-@dataclass
-class MarketPattern:
-    """Represents a market DNA pattern"""
-    sequence: str
-    success_rate: float
-    occurrences: int
-    last_seen: datetime
-    outcomes: List[float] = field(default_factory=list)
-    confidence: float = 0.0
+class SimpleIntelligenceEngine:
+    """
+    Simplified intelligence engine with 4 subsystems:
+    - DNA: Pattern sequences in price/volume
+    - Micro: Short-term patterns  
+    - Temporal: Time-based patterns
+    - Immune: Remember bad patterns
+    """
     
-    def update_outcome(self, outcome: float):
-        """Update pattern with new outcome"""
-        self.outcomes.append(outcome)
-        if len(self.outcomes) > 100:  # Keep last 100 outcomes
-            self.outcomes = self.outcomes[-100:]
-        self.success_rate = sum(1 for x in self.outcomes if x > 0) / len(self.outcomes)
-        self.occurrences = len(self.outcomes)
-        self.last_seen = datetime.now()
-        self.confidence = min(self.occurrences / 10, 1.0)  # Max confidence at 10+ occurrences
-
-@dataclass
-class MicroPattern:
-    """Micro-pattern from 5-15 minute windows"""
-    pattern_id: str
-    price_sequence: List[float]
-    volume_sequence: List[float]
-    timeframe: str
-    success_outcomes: List[float] = field(default_factory=list)
-    failure_outcomes: List[float] = field(default_factory=list)
+    def __init__(self, memory_file="data/intelligence_memory.json"):
+        self.memory_file = memory_file
+        
+        # Subsystem memories
+        self.dna_patterns = {}  # sequence -> success_rate
+        self.micro_patterns = {}  # pattern_id -> success_rate
+        self.temporal_patterns = {}  # time_key -> success_rate
+        self.immune_patterns = set()  # patterns to avoid
+        
+        # Simple statistics
+        self.pattern_outcomes = defaultdict(list)
+        
+        # Load existing memory
+        self.load_memory()
+        
+        log.info(f"Intelligence engine loaded: {len(self.dna_patterns)} DNA patterns, "
+                f"{len(self.micro_patterns)} micro patterns, "
+                f"{len(self.temporal_patterns)} temporal patterns, "
+                f"{len(self.immune_patterns)} immune patterns")
     
-    @property
-    def success_rate(self) -> float:
-        total = len(self.success_outcomes) + len(self.failure_outcomes)
-        return len(self.success_outcomes) / total if total > 0 else 0.0
-    
-    @property
-    def sample_size(self) -> int:
-        return len(self.success_outcomes) + len(self.failure_outcomes)
-
-@dataclass
-class TemporalPattern:
-    """Time-based pattern tracking"""
-    hour: int
-    minute: int
-    day_of_week: int
-    pattern_type: str
-    success_count: int = 0
-    failure_count: int = 0
-    last_updated: datetime = field(default_factory=datetime.now)
-    
-    @property
-    def success_rate(self) -> float:
-        total = self.success_count + self.failure_count
-        return self.success_count / total if total > 0 else 0.0
-    
-    @property
-    def confidence(self) -> float:
-        total = self.success_count + self.failure_count
-        return min(total / 20, 1.0)  # Max confidence at 20+ samples
-
-class PermanentMemoryDB:
-    """SQLite-based permanent memory system"""
-    
-    def __init__(self, db_path: str = "data/market_intelligence.db"):
-        self.db_path = db_path
-        self.init_database()
-    
-    def init_database(self):
-        """Initialize database tables"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+    def process_market_data(self, prices: List[float], volumes: List[float], timestamp: datetime = None) -> Dict:
+        """Process market data through all subsystems"""
+        if timestamp is None:
+            timestamp = datetime.now()
         
-        # Market DNA patterns
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS dna_patterns (
-                sequence TEXT PRIMARY KEY,
-                success_rate REAL,
-                occurrences INTEGER,
-                last_seen TEXT,
-                outcomes TEXT,
-                confidence REAL
-            )
-        ''')
+        if len(prices) < 10:
+            return self._empty_result()
         
-        # Micro patterns
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS micro_patterns (
-                pattern_id TEXT PRIMARY KEY,
-                price_sequence TEXT,
-                volume_sequence TEXT,
-                timeframe TEXT,
-                success_outcomes TEXT,
-                failure_outcomes TEXT,
-                created_at TEXT
-            )
-        ''')
+        # Extract features from each subsystem
+        dna_signal = self._process_dna(prices, volumes)
+        micro_signal = self._process_micro(prices, volumes)
+        temporal_signal = self._process_temporal(timestamp)
+        immune_signal = self._process_immune(prices, volumes, timestamp)
         
-        # Temporal patterns
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS temporal_patterns (
-                id TEXT PRIMARY KEY,
-                hour INTEGER,
-                minute INTEGER,
-                day_of_week INTEGER,
-                pattern_type TEXT,
-                success_count INTEGER,
-                failure_count INTEGER,
-                last_updated TEXT
-            )
-        ''')
-        
-        # Immune system (failed patterns)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS immune_patterns (
-                pattern_hash TEXT PRIMARY KEY,
-                pattern_data TEXT,
-                failure_count INTEGER,
-                last_failure TEXT,
-                pattern_type TEXT
-            )
-        ''')
-        
-        conn.commit()
-        conn.close()
-    
-    def save_dna_pattern(self, pattern: MarketPattern):
-        """Save DNA pattern to database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('''
-            INSERT OR REPLACE INTO dna_patterns 
-            (sequence, success_rate, occurrences, last_seen, outcomes, confidence)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (
-            pattern.sequence,
-            pattern.success_rate,
-            pattern.occurrences,
-            pattern.last_seen.isoformat(),
-            json.dumps(pattern.outcomes),
-            pattern.confidence
-        ))
-        
-        conn.commit()
-        conn.close()
-    
-    def load_dna_patterns(self) -> Dict[str, MarketPattern]:
-        """Load all DNA patterns from database"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        
-        cursor.execute('SELECT * FROM dna_patterns')
-        rows = cursor.fetchall()
-        
-        patterns = {}
-        for row in rows:
-            pattern = MarketPattern(
-                sequence=row[0],
-                success_rate=row[1],
-                occurrences=row[2],
-                last_seen=datetime.fromisoformat(row[3]),
-                outcomes=json.loads(row[4]),
-                confidence=row[5]
-            )
-            patterns[row[0]] = pattern
-        
-        conn.close()
-        return patterns
-
-class DNASequencingSystem:
-    """Encode price/volume patterns as genetic sequences"""
-    
-    def __init__(self, memory_db: PermanentMemoryDB, meta_learner=None):
-        self.memory_db = memory_db
-        self.meta_learner = meta_learner  # ADD THIS
-        self.dna_patterns = memory_db.load_dna_patterns()
-        self.base_mapping = {'A': 0, 'T': 1, 'G': 2, 'C': 3}
-        self.reverse_mapping = {0: 'A', 1: 'T', 2: 'G', 3: 'C'}
-        
-    def encode_price_movement(self, prices: List[float], window: int = 10) -> str:
-        """Encode price movements as DNA sequence"""
-        if len(prices) < window:
-            return ""
-        
-        sequence = ""
-        recent_prices = prices[-window:]
-        
-        for i in range(1, len(recent_prices)):
-            change = (recent_prices[i] - recent_prices[i-1]) / recent_prices[i-1]
-            
-            if change > 0.002:     # Strong up
-                sequence += 'A'
-            elif change > 0:       # Weak up
-                sequence += 'T'
-            elif change > -0.002:  # Weak down
-                sequence += 'G'
-            else:                  # Strong down
-                sequence += 'C'
-        
-        return sequence
-    
-    def encode_volume_pattern(self, volumes: List[float], prices: List[float], window: int = 10) -> str:
-        """Encode volume patterns relative to price movement"""
-        if len(volumes) < window or len(prices) < window:
-            return ""
-        
-        sequence = ""
-        recent_volumes = volumes[-window:]
-        recent_prices = prices[-window:]
-        avg_volume = np.mean(recent_volumes)
-        
-        for i in range(1, len(recent_volumes)):
-            vol_ratio = recent_volumes[i] / avg_volume if avg_volume > 0 else 1
-            price_change = (recent_prices[i] - recent_prices[i-1]) / recent_prices[i-1]
-            
-            # Combine volume and price direction
-            if vol_ratio > 1.5 and price_change > 0:      # High volume up
-                sequence += 'A'
-            elif vol_ratio > 1.5 and price_change < 0:    # High volume down
-                sequence += 'C'
-            elif vol_ratio < 0.7 and price_change > 0:    # Low volume up
-                sequence += 'T'
-            else:                                          # Low volume down or neutral
-                sequence += 'G'
-        
-        return sequence
-    
-    def create_dna_sequence(self, prices: List[float], volumes: List[float]) -> str:
-        """Create combined DNA sequence from price and volume"""
-        price_dna = self.encode_price_movement(prices)
-        volume_dna = self.encode_volume_pattern(volumes, prices)
-        
-        # Interleave sequences
-        combined = ""
-        max_len = max(len(price_dna), len(volume_dna))
-        
-        for i in range(max_len):
-            if i < len(price_dna):
-                combined += price_dna[i]
-            if i < len(volume_dna):
-                combined += volume_dna[i]
-        
-        return combined
-    
-    def find_similar_patterns(self, current_sequence: str, similarity_threshold: float = None) -> List[MarketPattern]:
-        """FIXED: Find similar DNA patterns using adaptive similarity threshold"""
-        similar_patterns = []
-        
-        # Get adaptive similarity threshold from meta-learner
-        if similarity_threshold is None:
-            # This was causing an AttributeError - need to get meta_learner reference
-            if hasattr(self, 'meta_learner'):
-                similarity_threshold = self.meta_learner.get_parameter('dna_similarity_threshold')
-            else:
-                similarity_threshold = 0.7  # Fallback default
-        
-        for seq, pattern in self.dna_patterns.items():
-            if len(seq) == 0 or len(current_sequence) == 0:
-                continue
-                
-            similarity = self.calculate_sequence_similarity(current_sequence, seq)
-            if similarity >= similarity_threshold:
-                similar_patterns.append(pattern)
-        
-        return sorted(similar_patterns, key=lambda x: x.confidence, reverse=True)
-    
-    def calculate_sequence_similarity(self, seq1: str, seq2: str) -> float:
-        """Calculate similarity between two DNA sequences"""
-        if not seq1 or not seq2:
-            return 0.0
-        
-        min_len = min(len(seq1), len(seq2))
-        max_len = max(len(seq1), len(seq2))
-        
-        if max_len == 0:
-            return 0.0
-        
-        matches = sum(1 for i in range(min_len) if seq1[i] == seq2[i])
-        return matches / max_len
-    
-    def update_pattern_outcome(self, sequence: str, outcome: float):
-        """Update pattern with trading outcome"""
-        if sequence in self.dna_patterns:
-            self.dna_patterns[sequence].update_outcome(outcome)
-        else:
-            pattern = MarketPattern(
-                sequence=sequence,
-                success_rate=1.0 if outcome > 0 else 0.0,
-                occurrences=1,
-                last_seen=datetime.now(),
-                outcomes=[outcome]
-            )
-            self.dna_patterns[sequence] = pattern
-        
-        # Save to permanent memory
-        self.memory_db.save_dna_pattern(self.dna_patterns[sequence])
-
-class MicroPatternNetwork:
-    """Neural network for detecting micro-patterns"""
-    
-    def __init__(self, memory_db: PermanentMemoryDB):
-        self.memory_db = memory_db
-        self.patterns: Dict[str, MicroPattern] = {}
-        self.neural_network = MLPClassifier(
-            hidden_layer_sizes=(50, 30),
-            max_iter=1000,
-            random_state=42
-        )
-        self.scaler = StandardScaler()
-        self.is_trained = False
-        
-    def extract_micro_pattern(self, prices: List[float], volumes: List[float], 
-                            window: int = 15) -> Optional[str]:
-        """Extract micro-pattern from recent data"""
-        if len(prices) < window or len(volumes) < window:
-            return None
-        
-        recent_prices = prices[-window:]
-        recent_volumes = volumes[-window:]
-        
-        # Normalize to relative changes
-        price_changes = [
-            (recent_prices[i] - recent_prices[i-1]) / recent_prices[i-1] 
-            for i in range(1, len(recent_prices))
-        ]
-        
-        volume_changes = [
-            (recent_volumes[i] - recent_volumes[i-1]) / recent_volumes[i-1] if recent_volumes[i-1] > 0 else 0
-            for i in range(1, len(recent_volumes))
-        ]
-        
-        # Create pattern signature
-        pattern_data = {
-            'price_trend': np.mean(price_changes),
-            'price_volatility': np.std(price_changes),
-            'volume_trend': np.mean(volume_changes),
-            'volume_spike': max(volume_changes) if volume_changes else 0,
-            'momentum': price_changes[-1] if price_changes else 0
+        # Combine signals (simple weighted average)
+        subsystem_signals = {
+            'dna': dna_signal,
+            'micro': micro_signal, 
+            'temporal': temporal_signal,
+            'immune': immune_signal
         }
         
-        # Hash pattern for unique ID
-        pattern_str = json.dumps(pattern_data, sort_keys=True)
-        pattern_id = hashlib.md5(pattern_str.encode()).hexdigest()[:16]
+        # Calculate overall signal
+        weights = [0.3, 0.3, 0.2, 0.2]  # DNA, Micro, Temporal, Immune
+        signals = list(subsystem_signals.values())
+        overall_signal = sum(w * s for w, s in zip(weights, signals))
         
-        return pattern_id
+        return {
+            'overall_signal': overall_signal,
+            'subsystem_signals': subsystem_signals,
+            'confidence': abs(overall_signal),
+            'current_patterns': self._get_current_patterns(prices, volumes, timestamp)
+        }
     
-    def record_pattern_outcome(self, pattern_id: str, outcome: float, 
-                             prices: List[float], volumes: List[float]):
-        """Record outcome for a micro-pattern"""
-        if pattern_id not in self.patterns:
-            self.patterns[pattern_id] = MicroPattern(
-                pattern_id=pattern_id,
-                price_sequence=prices[-15:] if len(prices) >= 15 else prices,
-                volume_sequence=volumes[-15:] if len(volumes) >= 15 else volumes,
-                timeframe="15m"
-            )
+    def _process_dna(self, prices: List[float], volumes: List[float]) -> float:
+        """DNA subsystem - encode price/volume as sequences"""
+        if len(prices) < 15:
+            return 0.0
         
-        pattern = self.patterns[pattern_id]
-        if outcome > 0:
-            pattern.success_outcomes.append(outcome)
-        else:
-            pattern.failure_outcomes.append(outcome)
+        # Create DNA sequence
+        sequence = self._create_dna_sequence(prices[-15:], volumes[-15:])
+        
+        # Check for similar patterns
+        best_match = None
+        best_similarity = 0
+        
+        for stored_seq in self.dna_patterns:
+            similarity = self._sequence_similarity(sequence, stored_seq)
+            if similarity > best_similarity and similarity > 0.7:
+                best_similarity = similarity
+                best_match = stored_seq
+        
+        if best_match:
+            success_rate = self.dna_patterns[best_match]
+            return (success_rate - 0.5) * 2  # Convert to -1 to +1 range
+        
+        return 0.0  # No pattern found
     
-    def get_pattern_prediction(self, pattern_id: str) -> Tuple[float, float]:
-        """Get prediction for a pattern (probability, confidence)"""
-        if pattern_id not in self.patterns:
-            return 0.5, 0.0
+    def _process_micro(self, prices: List[float], volumes: List[float]) -> float:
+        """Micro subsystem - short-term patterns"""
+        if len(prices) < 10:
+            return 0.0
         
-        pattern = self.patterns[pattern_id]
-        if pattern.sample_size < 3:
-            return 0.5, 0.0
+        # Create micro pattern
+        recent_prices = prices[-10:]
+        price_changes = [recent_prices[i] - recent_prices[i-1] for i in range(1, len(recent_prices))]
         
-        confidence = min(pattern.sample_size / 20, 1.0)
-        return pattern.success_rate, confidence
-
-class TemporalPatternArchaeologist:
-    """Track time-based patterns"""
+        # Simple pattern: direction and magnitude
+        avg_change = np.mean(price_changes)
+        volatility = np.std(price_changes)
+        
+        pattern_id = f"micro_{int(avg_change * 1000)}_{int(volatility * 1000)}"
+        
+        if pattern_id in self.micro_patterns:
+            success_rate = self.micro_patterns[pattern_id]
+            return (success_rate - 0.5) * 2
+        
+        return 0.0
     
-    def __init__(self, memory_db: PermanentMemoryDB):
-        self.memory_db = memory_db
-        self.temporal_patterns: Dict[str, TemporalPattern] = {}
-        
-    def record_temporal_event(self, timestamp: datetime, pattern_type: str, outcome: float):
-        """Record a temporal pattern event"""
+    def _process_temporal(self, timestamp: datetime) -> float:
+        """Temporal subsystem - time-based patterns"""
         hour = timestamp.hour
         minute = timestamp.minute // 15 * 15  # Round to 15-min intervals
         day_of_week = timestamp.weekday()
         
-        pattern_key = f"{hour}_{minute}_{day_of_week}_{pattern_type}"
+        time_key = f"{day_of_week}_{hour}_{minute}"
         
-        if pattern_key not in self.temporal_patterns:
-            self.temporal_patterns[pattern_key] = TemporalPattern(
-                hour=hour,
-                minute=minute,
-                day_of_week=day_of_week,
-                pattern_type=pattern_type
-            )
+        if time_key in self.temporal_patterns:
+            success_rate = self.temporal_patterns[time_key]
+            return (success_rate - 0.5) * 2
         
-        pattern = self.temporal_patterns[pattern_key]
-        if outcome > 0:
-            pattern.success_count += 1
-        else:
-            pattern.failure_count += 1
-        pattern.last_updated = timestamp
+        return 0.0
     
-    def get_temporal_strength(self, timestamp: datetime, pattern_type: str) -> float:
-        """Get strength of temporal pattern at given time"""
-        hour = timestamp.hour
-        minute = timestamp.minute // 15 * 15
-        day_of_week = timestamp.weekday()
+    def _process_immune(self, prices: List[float], volumes: List[float], timestamp: datetime) -> float:
+        """Immune subsystem - avoid bad patterns"""
+        current_pattern = self._create_immune_pattern(prices, volumes, timestamp)
         
-        pattern_key = f"{hour}_{minute}_{day_of_week}_{pattern_type}"
+        if current_pattern in self.immune_patterns:
+            return -0.8  # Strong avoid signal
         
-        if pattern_key in self.temporal_patterns:
-            pattern = self.temporal_patterns[pattern_key]
-            if pattern.confidence > 0.3:  # Require some confidence
-                return pattern.success_rate
-        
-        return 0.5  # Neutral if no pattern found
+        return 0.0  # Neutral
     
-    def get_optimal_times(self, pattern_type: str, min_confidence: float = 0.5) -> List[Tuple[int, int, int, float]]:
-        """Get optimal times for a pattern type"""
-        optimal_times = []
+    def _create_dna_sequence(self, prices: List[float], volumes: List[float]) -> str:
+        """Create DNA sequence from price/volume data"""
+        sequence = ""
         
-        for pattern in self.temporal_patterns.values():
-            if (pattern.pattern_type == pattern_type and 
-                pattern.confidence >= min_confidence and
-                pattern.success_rate > 0.6):
-                optimal_times.append((
-                    pattern.hour, 
-                    pattern.minute, 
-                    pattern.day_of_week, 
-                    pattern.success_rate
-                ))
+        for i in range(1, len(prices)):
+            price_change = (prices[i] - prices[i-1]) / prices[i-1]
+            vol_ratio = volumes[i] / volumes[i-1] if volumes[i-1] > 0 else 1.0
+            
+            # Encode as DNA bases
+            if price_change > 0.001:
+                sequence += 'A' if vol_ratio > 1.2 else 'T'
+            else:
+                sequence += 'C' if vol_ratio > 1.2 else 'G'
         
-        return sorted(optimal_times, key=lambda x: x[3], reverse=True)
-
-class MarketImmuneSystem:
-    """Remember and avoid losing patterns"""
+        return sequence
     
-    def __init__(self, memory_db: PermanentMemoryDB):
-        self.memory_db = memory_db
-        self.immune_patterns: Dict[str, Dict] = {}
-        self.beneficial_patterns: Dict[str, Dict] = {}
-        
-    def add_pathogen(self, pattern_data: Dict, failure_outcome: float):
-        """Add a losing pattern as pathogen"""
-        pattern_hash = self.hash_pattern(pattern_data)
-        
-        if pattern_hash not in self.immune_patterns:
-            self.immune_patterns[pattern_hash] = {
-                'pattern': pattern_data,
-                'failure_count': 0,
-                'total_loss': 0.0,
-                'first_seen': datetime.now(),
-                'last_failure': datetime.now()
-            }
-        
-        pathogen = self.immune_patterns[pattern_hash]
-        pathogen['failure_count'] += 1
-        pathogen['total_loss'] += abs(failure_outcome)
-        pathogen['last_failure'] = datetime.now()
-    
-    def add_beneficial_pattern(self, pattern_data: Dict, success_outcome: float):
-        """Add a successful pattern as beneficial"""
-        pattern_hash = self.hash_pattern(pattern_data)
-        
-        if pattern_hash not in self.beneficial_patterns:
-            self.beneficial_patterns[pattern_hash] = {
-                'pattern': pattern_data,
-                'success_count': 0,
-                'total_profit': 0.0,
-                'first_seen': datetime.now(),
-                'last_success': datetime.now()
-            }
-        
-        beneficial = self.beneficial_patterns[pattern_hash]
-        beneficial['success_count'] += 1
-        beneficial['total_profit'] += success_outcome
-        beneficial['last_success'] = datetime.now()
-    
-    def is_dangerous_pattern(self, pattern_data: Dict, threshold: int = 3) -> bool:
-        """Check if pattern is recognized as dangerous"""
-        pattern_hash = self.hash_pattern(pattern_data)
-        
-        if pattern_hash in self.immune_patterns:
-            pathogen = self.immune_patterns[pattern_hash]
-            return pathogen['failure_count'] >= threshold
-        
-        return False
-    
-    def is_beneficial_pattern(self, pattern_data: Dict, threshold: int = 2) -> bool:
-        """Check if pattern is recognized as beneficial"""
-        pattern_hash = self.hash_pattern(pattern_data)
-        
-        if pattern_hash in self.beneficial_patterns:
-            beneficial = self.beneficial_patterns[pattern_hash]
-            return beneficial['success_count'] >= threshold
-        
-        return False
-    
-    def hash_pattern(self, pattern_data: Dict) -> str:
-        """Create hash for pattern data"""
-        pattern_str = json.dumps(pattern_data, sort_keys=True)
-        return hashlib.md5(pattern_str.encode()).hexdigest()
-    
-    def get_immune_strength(self) -> float:
-        """Get overall immune system strength"""
-        total_patterns = len(self.immune_patterns) + len(self.beneficial_patterns)
-        if total_patterns == 0:
+    def _sequence_similarity(self, seq1: str, seq2: str) -> float:
+        """Calculate similarity between two sequences"""
+        if not seq1 or not seq2:
             return 0.0
         
-        return len(self.beneficial_patterns) / total_patterns
-
-class MetaLearningDirector:
-    """Master controller that learns optimal subsystem combinations"""
-    
-    def __init__(self, memory_db: PermanentMemoryDB):
-        self.memory_db = memory_db
+        min_len = min(len(seq1), len(seq2))
+        matches = sum(1 for i in range(min_len) if seq1[i] == seq2[i])
         
-        # INITIALIZE MISSING COMPONENTS from your prompt
-        self.subsystem_weights = {
-            'dna': 0.25,
-            'micro': 0.25, 
-            'temporal': 0.25,
-            'immune': 0.25
+        return matches / max(len(seq1), len(seq2))
+    
+    def _create_immune_pattern(self, prices: List[float], volumes: List[float], timestamp: datetime) -> str:
+        """Create pattern for immune system"""
+        if len(prices) < 5:
+            return ""
+        
+        recent_change = (prices[-1] - prices[-5]) / prices[-5]
+        volatility = np.std(prices[-10:]) if len(prices) >= 10 else 0
+        hour = timestamp.hour
+        
+        return f"immune_{int(recent_change * 1000)}_{int(volatility * 1000)}_{hour}"
+    
+    def _get_current_patterns(self, prices: List[float], volumes: List[float], timestamp: datetime) -> Dict:
+        """Get current patterns for debugging"""
+        return {
+            'dna_sequence': self._create_dna_sequence(prices[-15:], volumes[-15:]) if len(prices) >= 15 else "",
+            'micro_pattern': f"micro_{len(prices)}",
+            'temporal_key': f"{timestamp.weekday()}_{timestamp.hour}_{timestamp.minute // 15 * 15}",
+            'immune_pattern': self._create_immune_pattern(prices, volumes, timestamp)
         }
-        
-        self.disagreement_patterns = defaultdict(list)
-        self.consensus_requirements = {
-            'min_agreeing_systems': 2,
-            'max_disagreement_threshold': 0.4,
-            'high_confidence_override': 0.8
-        }
     
-    def get_consensus_signal(self, subsystem_signals: Dict[str, float], 
-                           subsystem_scores: Dict[str, float]) -> Tuple[float, float, str]:
-        """Get signal with consensus validation"""
-        
-        # Check for high-confidence override
-        for system, score in subsystem_scores.items():
-            if score > self.consensus_requirements['high_confidence_override']:
-                signal = subsystem_signals[system]
-                if abs(signal) > 0.3:  # Strong signal
-                    return signal, score, f"high_confidence_override_{system}"
-        
-        # Count agreement
-        positive_systems = []
-        negative_systems = []
-        neutral_systems = []
-        
-        for system, signal in subsystem_signals.items():
-            if signal > 0.15:
-                positive_systems.append((system, signal, subsystem_scores[system]))
-            elif signal < -0.15:
-                negative_systems.append((system, signal, subsystem_scores[system]))
-            else:
-                neutral_systems.append((system, signal, subsystem_scores[system]))
-        
-        # Require minimum agreement
-        if len(positive_systems) >= self.consensus_requirements['min_agreeing_systems']:
-            # Weighted average of agreeing systems
-            total_weight = sum(score for _, _, score in positive_systems)
-            weighted_signal = sum(signal * score for _, signal, score in positive_systems)
-            return weighted_signal / total_weight if total_weight > 0 else 0, \
-                   min(total_weight / len(positive_systems), 1.0), \
-                   f"consensus_buy_{len(positive_systems)}"
-                   
-        elif len(negative_systems) >= self.consensus_requirements['min_agreeing_systems']:
-            total_weight = sum(score for _, _, score in negative_systems)
-            weighted_signal = sum(signal * score for _, signal, score in negative_systems)
-            return weighted_signal / total_weight if total_weight > 0 else 0, \
-                   min(total_weight / len(negative_systems), 1.0), \
-                   f"consensus_sell_{len(negative_systems)}"
-        
-        # Record disagreement for learning
-        self.record_disagreement(subsystem_signals, subsystem_scores)
-        
-        return 0.0, 0.0, "no_consensus"
-    
-    def get_weighted_signal(self, subsystem_signals: Dict[str, float]) -> Tuple[float, float]:
-        """Get weighted signal from all subsystems (MISSING METHOD)"""
-        
-        if not subsystem_signals:
-            return 0.0, 0.0
-        
-        # Calculate weighted signal
-        total_weight = 0.0
-        weighted_signal = 0.0
-        
-        for system, signal in subsystem_signals.items():
-            if system in self.subsystem_weights:
-                weight = self.subsystem_weights[system]
-                weighted_signal += signal * weight
-                total_weight += weight
-        
-        if total_weight == 0:
-            return 0.0, 0.0
-        
-        final_signal = weighted_signal / total_weight
-        
-        # Calculate confidence based on agreement
-        signal_values = list(subsystem_signals.values())
-        disagreement = np.std(signal_values) if len(signal_values) > 1 else 0.0
-        confidence = max(0.0, 1.0 - (disagreement / 0.5))  # Normalize disagreement to confidence
-        
-        return final_signal, confidence
-    
-    def update_weights(self, subsystem_signals: Dict[str, float], outcome: float):
-        """Update subsystem weights based on learned signal effectiveness"""
-        log.info(f"Updating weights with outcome: {outcome:.5f}")
-
-        # Calculate total signal energy to scale learning naturally
-        signal_magnitude = sum(abs(s) for s in subsystem_signals.values()) or 1.0
-        normalized_outcome = outcome / max(0.001, abs(outcome))  # Sign only
-
-        # Update weights adaptively based on agreement with direction
-        for system, signal in subsystem_signals.items():
-            if system not in self.subsystem_weights:
-                continue
-
-            direction_agreement = np.sign(signal) == np.sign(outcome)
-            signal_strength = abs(signal) / signal_magnitude
-
-            # Meta-learned adjustment signal (no fixed learning rate)
-            adjustment = signal_strength * abs(outcome)
-
-            if direction_agreement:
-                self.subsystem_weights[system] += adjustment
-            else:
-                self.subsystem_weights[system] -= adjustment
-
-        # Soft normalization — allow natural drift but preserve balance
-        total_weight = sum(self.subsystem_weights.values())
-        if total_weight > 0:
-            for system in self.subsystem_weights:
-                self.subsystem_weights[system] /= total_weight
-
-        log.info("Subsystem weights updated: " + ", ".join(f"{k.upper()}={v:.3f}" for k, v in self.subsystem_weights.items()))
-    
-    def record_disagreement(self, signals: Dict[str, float], scores: Dict[str, float]):
-        """Record patterns when subsystems disagree"""
-        disagreement_data = {
-            'timestamp': datetime.now(),
-            'signals': signals.copy(),
-            'scores': scores.copy(),
-            'disagreement_level': self.calculate_disagreement_level(signals)
-        }
-        self.disagreement_patterns['recent'].append(disagreement_data)
-        
-        # Keep only recent disagreements
-        if len(self.disagreement_patterns['recent']) > 100:
-            self.disagreement_patterns['recent'] = self.disagreement_patterns['recent'][-100:]
-    
-    def calculate_disagreement_level(self, signals: Dict[str, float]) -> float:
-        """Calculate how much subsystems disagree"""
-        signal_values = list(signals.values())
-        return np.std(signal_values) if signal_values else 0.0
-    
-    def learn_from_disagreements(self, outcome: float):
-        """Learn when disagreements predict market moves"""
-        if not self.disagreement_patterns['recent']:
-            return
-            
-        recent_disagreement = self.disagreement_patterns['recent'][-1]
-        disagreement_level = recent_disagreement['disagreement_level']
-        
-        # High disagreement that preceded good outcome = market turning point
-        if disagreement_level > 0.3 and outcome > 0.01:
-            self.disagreement_patterns['turning_points'].append({
-                'disagreement_data': recent_disagreement,
-                'outcome': outcome,
-                'pattern_type': 'successful_chaos'
-            })
-
-class AdvancedMarketIntelligence:
-    """Main Market Intelligence Engine - FIXED initialization"""
-    
-    def __init__(self, db_path: str = "data/market_intelligence.db"):
-        self.memory_db = PermanentMemoryDB(db_path)
-        
-        # Initialize meta-learner FIRST
-        from meta_learner import PureMetaLearner
-        self.meta_learner = PureMetaLearner()
-        
-        # Initialize subsystems WITH meta_learner reference
-        self.dna_system = DNASequencingSystem(self.memory_db, self.meta_learner)
-        self.micro_system = MicroPatternNetwork(self.memory_db)
-        self.temporal_system = TemporalPatternArchaeologist(self.memory_db)
-        self.immune_system = MarketImmuneSystem(self.memory_db)
-        self.meta_director = MetaLearningDirector(self.memory_db)
-        
-        # Performance tracking
-        self.signal_history = deque(maxlen=1000)
-        self.trade_outcomes = deque(maxlen=500)
-        
-        log.info(f"Loaded {len(self.dna_system.dna_patterns)} DNA patterns from memory")
-
-    def process_market_data(self, prices: List[float], volumes: List[float], 
-                        timestamp: Optional[datetime] = None) -> Dict[str, Any]:
-        """Process market data through all subsystems WITH ACTIVE DNA SEQUENCING"""
-        if timestamp is None:
-            timestamp = datetime.now()
-        
-        # Generate subsystem signals
-        subsystem_signals = {}
-        subsystem_scores = {}
-        
-        # 1. DNA Sequencing Analysis (FIXED: Fully active and prominent)
-        current_dna = self.dna_system.create_dna_sequence(prices, volumes)
-        print(f"DNA ACTIVE: Generated sequence {current_dna[:30]}..." if len(current_dna) > 30 else f"DNA: {current_dna}")
-
-        # FIXED: Better debugging and pattern matching
-        print(f"DEBUG: Total patterns in memory: {len(self.dna_system.dna_patterns)}")
-        if len(self.dna_system.dna_patterns) > 0:
-            first_pattern = list(self.dna_system.dna_patterns.keys())[0]
-            print(f"DEBUG: First pattern example: {first_pattern}")
-            similarity = self.dna_system.calculate_sequence_similarity(current_dna, first_pattern)
-            print(f"DEBUG: Similarity to first pattern: {similarity:.3f}")
-
-        if current_dna and len(current_dna) >= 10:  # Need minimum sequence length
-            # FIXED: Use proper threshold from meta-learner
-            threshold = 0.3
-            if self.meta_learner:
-                threshold = self.meta_learner.get_parameter('dna_similarity_threshold')
-                
-            similar_patterns = self.dna_system.find_similar_patterns(current_dna, threshold)
-            print(f"DEBUG: Found {len(similar_patterns)} similar patterns with {threshold:.1f} threshold")
-            
-            if similar_patterns:
-                # FIXED: Better weighting for pattern matching
-                weighted_success = 0.0
-                total_weight = 0.0
-                
-                for pattern in similar_patterns[:5]:  # Top 5 similar patterns
-                    # Use base weight even for new patterns
-                    base_weight = 0.2  # Minimum weight for any pattern
-                    pattern_weight = max(base_weight, pattern.confidence)
-                    weight = pattern_weight * min(pattern.occurrences / 10, 1.0)
-                    
-                    weighted_success += (pattern.success_rate - 0.5) * weight
-                    total_weight += weight
-                
-                if total_weight > 0:
-                    dna_signal = weighted_success / total_weight
-                    # Base confidence on number of similar patterns found
-                    dna_confidence = min(len(similar_patterns) / 10, 1.0)
-                    
-                    print(f"DNA MATCH: {len(similar_patterns)} patterns, signal: {dna_signal:.3f}, conf: {dna_confidence:.3f}")
-                else:
-                    dna_signal = 0.0
-                    dna_confidence = 0.0
-            else:
-                # No similar patterns - this is a NEW pattern!
-                dna_signal = 0.0
-                dna_confidence = 0.2  # Low confidence for new patterns
-                print(f"DNA NEW: Novel sequence detected, adding to memory")
-                
-                # Add to patterns with neutral outcome initially
-                self.dna_system.update_pattern_outcome(current_dna, 0.0)
-        else:
-            dna_signal = 0.0
-            dna_confidence = 0.0
-            print("DNA INACTIVE: Insufficient sequence length")
-        
-        subsystem_signals['dna'] = dna_signal
-        subsystem_scores['dna'] = dna_confidence
-        
-        # 2. Micro-Pattern Analysis (ENHANCED)
-        micro_pattern_id = self.micro_system.extract_micro_pattern(prices, volumes)
-        if micro_pattern_id:
-            micro_prob, micro_conf = self.micro_system.get_pattern_prediction(micro_pattern_id)
-            micro_signal = (micro_prob - 0.5) * 2  # Scale to -1 to +1 range
-            print(f"MICRO ACTIVE: Pattern {micro_pattern_id[:8]}..., signal: {micro_signal:.3f}")
-        else:
-            micro_signal = 0.0
-            micro_conf = 0.0
-            print("MICRO: No pattern extracted")
-        
-        subsystem_signals['micro'] = micro_signal
-        subsystem_scores['micro'] = micro_conf
-        
-        # 3. Temporal Pattern Analysis (ENHANCED)
-        temporal_strength = self.temporal_system.get_temporal_strength(timestamp, "general")
-        temporal_signal = (temporal_strength - 0.5) * 2  # Scale to -1 to +1
-        temporal_conf = 0.6 if temporal_strength != 0.5 else 0.1  # Higher confidence if not neutral
-        
-        print(f"TEMPORAL: {timestamp.strftime('%H:%M')} strength: {temporal_strength:.3f}, signal: {temporal_signal:.3f}")
-        
-        subsystem_signals['temporal'] = temporal_signal
-        subsystem_scores['temporal'] = temporal_conf
-        
-        # 4. Immune System Check (ENHANCED)
-        current_pattern = {
-            'prices': prices[-10:] if len(prices) >= 10 else prices,
-            'volumes': volumes[-10:] if len(volumes) >= 10 else volumes,
-            'hour': timestamp.hour,
-            'day_of_week': timestamp.weekday(),
-            'dna_sequence': current_dna[:20] if current_dna else "",  # Include DNA in immune pattern
-            'volatility': np.std(prices[-20:]) if len(prices) >= 20 else 0.0
-        }
-        
-        if self.immune_system.is_dangerous_pattern(current_pattern):
-            immune_signal = -0.8  # Strong avoid signal
-            immune_conf = 0.9
-            print("IMMUNE: DANGER DETECTED - avoiding")
-        elif self.immune_system.is_beneficial_pattern(current_pattern):
-            immune_signal = 0.6   # Strong positive signal
-            immune_conf = 0.8
-            print("IMMUNE: Beneficial pattern recognized")
-        else:
-            immune_signal = 0.0   # Neutral
-            immune_conf = 0.3
-            print("IMMUNE: Neutral - no pattern match")
-        
-        subsystem_signals['immune'] = immune_signal
-        subsystem_scores['immune'] = immune_conf
-        
-        # 5. Meta-Learning Director combines signals
-        final_signal, confidence = self.meta_director.get_weighted_signal(subsystem_signals)
-        
-        # Generate trading recommendation
-        action = self.generate_action(final_signal, confidence)
-        
-        # Enhanced result with DNA prominence
-        result = {
-            'timestamp': timestamp,
-            'action': action,
-            'signal_strength': final_signal,
-            'confidence': confidence,
-            'subsystem_signals': subsystem_signals,
-            'subsystem_scores': subsystem_scores,
-            'current_dna': current_dna,
-            'dna_sequence_length': len(current_dna) if current_dna else 0,
-            'similar_patterns_count': len(similar_patterns) if 'similar_patterns' in locals() else 0,
-            'micro_pattern_id': micro_pattern_id,
-            'is_dangerous_pattern': self.immune_system.is_dangerous_pattern(current_pattern),
-            'is_beneficial_pattern': self.immune_system.is_beneficial_pattern(current_pattern),
-            'system_weights': self.meta_director.subsystem_weights.copy(),
-            'all_subsystems_active': all(score > 0 for score in subsystem_scores.values())
-        }
-        
-        # Store signal for learning
-        self.signal_history.append({
-            'timestamp': timestamp,
-            'signal': final_signal,
-            'confidence': confidence,
-            'action': action,
-            'subsystem_signals': subsystem_signals.copy(),
-            'dna_sequence': current_dna
-        })
-        
-        # Print subsystem summary
-        print(f"SUBSYSTEMS: DNA({dna_confidence:.2f}) MICRO({micro_conf:.2f}) TEMPORAL({temporal_conf:.2f}) IMMUNE({immune_conf:.2f})")
-        
-        return result
-    
-    def generate_action(self, signal: float, confidence: float) -> str:
-        # Use normalized soft decision surface
-        certainty = abs(signal) * confidence
-
-        # Let action emerge from confidence × strength
-        if certainty > 0.6:
-            return "BUY" if signal > 0 else "SELL"
-        elif certainty > 0.3:
-            return "BUY" if signal > 0 else "SELL" if signal < 0 else "HOLD"
-        else:
-            return "HOLD"
-    
-    def record_trade_outcome(self, signal_timestamp: datetime, outcome: float, 
-                           entry_price: float, exit_price: float):
-        """Record outcome of a trade for learning"""
-        # Find the corresponding signal
-        matching_signal = None
-        for signal_data in reversed(self.signal_history):
-            if abs((signal_data['timestamp'] - signal_timestamp).total_seconds()) < 300:  # 5 min tolerance
-                matching_signal = signal_data
-                break
-        
-        if not matching_signal:
-            return
-        
-        # Update all subsystems with outcome
-        self.trade_outcomes.append({
-            'timestamp': signal_timestamp,
-            'outcome': outcome,
-            'signal_strength': matching_signal['signal'],
-            'confidence': matching_signal['confidence']
-        })
+    def learn_from_outcome(self, signal_data: Dict, outcome: float):
+        """Learn from trading outcome"""
+        current_patterns = signal_data.get('current_patterns', {})
         
         # Update DNA patterns
-        if 'current_dna' in matching_signal:
-            self.dna_system.update_pattern_outcome(matching_signal['current_dna'], outcome)
+        dna_seq = current_patterns.get('dna_sequence', '')
+        if dna_seq:
+            if dna_seq not in self.dna_patterns:
+                self.dna_patterns[dna_seq] = 0.5  # Start neutral
+            
+            # Simple learning rule
+            current_rate = self.dna_patterns[dna_seq]
+            learning_rate = 0.1
+            
+            if outcome > 0:
+                self.dna_patterns[dna_seq] = min(0.95, current_rate + learning_rate)
+            else:
+                self.dna_patterns[dna_seq] = max(0.05, current_rate - learning_rate)
         
         # Update micro patterns
-        if 'micro_pattern_id' in matching_signal and matching_signal['micro_pattern_id']:
-            # Need prices and volumes for micro pattern update - would need to store these
-            pass
+        micro_pattern = current_patterns.get('micro_pattern', '')
+        if micro_pattern:
+            if micro_pattern not in self.micro_patterns:
+                self.micro_patterns[micro_pattern] = 0.5
+            
+            current_rate = self.micro_patterns[micro_pattern]
+            if outcome > 0:
+                self.micro_patterns[micro_pattern] = min(0.95, current_rate + 0.1)
+            else:
+                self.micro_patterns[micro_pattern] = max(0.05, current_rate - 0.1)
         
         # Update temporal patterns
-        pattern_type = "buy" if matching_signal['action'] == "BUY" else "sell" if matching_signal['action'] == "SELL" else "hold"
-        self.temporal_system.record_temporal_event(signal_timestamp, pattern_type, outcome)
-        
-        # Update immune system
-        current_pattern = {
-            'signal_strength': matching_signal['signal'],
-            'confidence': matching_signal['confidence'],
-            'hour': signal_timestamp.hour,
-            'day_of_week': signal_timestamp.weekday(),
-            'action': matching_signal['action']
-        }
-        
-        if outcome > 0:
-            self.immune_system.add_beneficial_pattern(current_pattern, outcome)
-        else:
-            self.immune_system.add_pathogen(current_pattern, outcome)
-        
-        # Update meta-learning director
-        self.meta_director.update_weights(matching_signal['subsystem_signals'], outcome)
-        
-        log.info(f"Recorded trade outcome: {outcome:.4f} for signal at {signal_timestamp}")
-    
-    def get_system_status(self) -> Dict[str, Any]:
-        """Get comprehensive system status"""
-        total_patterns = len(self.dna_system.dna_patterns)
-        total_micro_patterns = len(self.micro_system.patterns)
-        total_temporal_patterns = len(self.temporal_system.temporal_patterns)
-        immune_strength = self.immune_system.get_immune_strength()
-        
-        # Calculate recent performance
-        recent_outcomes = list(self.trade_outcomes)[-20:] if self.trade_outcomes else []
-        recent_performance = np.mean([t['outcome'] for t in recent_outcomes]) if recent_outcomes else 0.0
-        win_rate = sum(1 for t in recent_outcomes if t['outcome'] > 0) / len(recent_outcomes) if recent_outcomes else 0.0
-        
-        return {
-            'total_dna_patterns': total_patterns,
-            'total_micro_patterns': total_micro_patterns,
-            'total_temporal_patterns': total_temporal_patterns,
-            'immune_strength': immune_strength,
-            'recent_performance': recent_performance,
-            'win_rate': win_rate,
-            'total_trades_recorded': len(self.trade_outcomes),
-            'system_weights': self.meta_director.subsystem_weights,
-            'memory_utilization': {
-                'dna_patterns': len(self.dna_system.dna_patterns),
-                'beneficial_patterns': len(self.immune_system.beneficial_patterns),
-                'dangerous_patterns': len(self.immune_system.immune_patterns)
-            }
-        }
-    
-    def get_pattern_insights(self) -> Dict[str, Any]:
-        """Get insights from discovered patterns"""
-        insights = {
-            'top_dna_patterns': [],
-            'best_temporal_windows': [],
-            'dangerous_patterns_count': len(self.immune_system.immune_patterns),
-            'beneficial_patterns_count': len(self.immune_system.beneficial_patterns)
-        }
-        
-        # Top DNA patterns by confidence and success rate
-        top_dna = sorted(
-            self.dna_system.dna_patterns.values(),
-            key=lambda x: x.confidence * x.success_rate,
-            reverse=True
-        )[:5]
-        
-        for pattern in top_dna:
-            insights['top_dna_patterns'].append({
-                'sequence': pattern.sequence[:20] + "..." if len(pattern.sequence) > 20 else pattern.sequence,
-                'success_rate': pattern.success_rate,
-                'confidence': pattern.confidence,
-                'occurrences': pattern.occurrences
-            })
-        
-        # Best temporal windows
-        best_temporal = []
-        for pattern in self.temporal_system.temporal_patterns.values():
-            if pattern.confidence > 0.5 and pattern.success_rate > 0.6:
-                best_temporal.append({
-                    'time': f"{pattern.hour:02d}:{pattern.minute:02d}",
-                    'day_of_week': ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][pattern.day_of_week],
-                    'pattern_type': pattern.pattern_type,
-                    'success_rate': pattern.success_rate,
-                    'confidence': pattern.confidence
-                })
-        
-        insights['best_temporal_windows'] = sorted(best_temporal, key=lambda x: x['success_rate'], reverse=True)[:5]
-        
-        return insights
-    
-    def export_knowledge_base(self, filepath: str):
-        """Export entire knowledge base to JSON"""
-        knowledge = {
-            'export_timestamp': datetime.now().isoformat(),
-            'system_status': self.get_system_status(),
-            'pattern_insights': self.get_pattern_insights(),
-            'dna_patterns': {
-                seq: {
-                    'success_rate': pattern.success_rate,
-                    'occurrences': pattern.occurrences,
-                    'confidence': pattern.confidence,
-                    'last_seen': pattern.last_seen.isoformat()
-                }
-                for seq, pattern in self.dna_system.dna_patterns.items()
-            },
-            'system_weights': self.meta_director.subsystem_weights,
-            'performance_summary': {
-                'total_trades': len(self.trade_outcomes),
-                'recent_performance': np.mean([t['outcome'] for t in list(self.trade_outcomes)[-20:]]) if self.trade_outcomes else 0.0
-            }
-        }
-        
-        filepath = f"data/{os.path.basename(filepath)}"
-        with open(filepath, 'w') as f:
-            json.dump(knowledge, f, indent=2)
-        
-        log.info(f"Knowledge base exported to {filepath}")
-    
-    def continuous_learning_cycle(self):
-        """Perform continuous learning and optimization"""
-        # This would run in a separate thread
-        while True:
-            try:
-                # Analyze recent performance
-                if len(self.trade_outcomes) >= 20:
-                    recent_outcomes = list(self.trade_outcomes)[-20:]
-                    avg_performance = np.mean([t['outcome'] for t in recent_outcomes])
-                    
-                    # If performance is declining, adjust weights
-                    if avg_performance < -0.01:  # Losing money
-                        log.warning("Performance declining, triggering weight adjustment")
-                        # Could implement more sophisticated adjustment logic here
-                
-                # Clean up old patterns (keep memory manageable)
-                self.cleanup_old_patterns()
-                
-                # Sleep for a while before next cycle
-                time.sleep(300)  # 5 minutes
-                
-            except Exception as e:
-                log.error(f"Continuous learning cycle error: {e}")
-                time.sleep(60)  # Wait 1 minute before retrying
-    
-    def cleanup_old_patterns(self):
-        """FIXED: Remove old patterns using adaptive memory management"""
-        
-        # Get adaptive cleanup parameters
-        if hasattr(self, 'meta_learner') and self.meta_learner:
-            cleanup_days = int(self.meta_learner.get_parameter('pattern_memory_multiplier') * 30)  # Base 30 days
-            min_confidence = 0.3 * self.meta_learner.get_parameter('pattern_memory_multiplier')  # Adaptive confidence threshold
-            min_occurrences = int(5 * self.meta_learner.get_parameter('pattern_memory_multiplier'))  # Adaptive occurrence threshold
-        else:
-            # Fallback values when meta_learner not available
-            cleanup_days = 30
-            min_confidence = 0.3
-            min_occurrences = 5
-        
-        cutoff_date = datetime.now() - timedelta(days=cleanup_days)
-        
-        # Clean DNA patterns with adaptive thresholds
-        patterns_to_remove = []
-        
-        for seq, pattern in self.dna_system.dna_patterns.items():
-            if (pattern.last_seen < cutoff_date and 
-                pattern.confidence < min_confidence and 
-                pattern.occurrences < min_occurrences):
-                patterns_to_remove.append(seq)
-        
-        for seq in patterns_to_remove:
-            del self.dna_system.dna_patterns[seq]
-        
-        if patterns_to_remove:
-            log.info(f"Adaptive cleanup: removed {len(patterns_to_remove)} old DNA patterns")
-            log.info(f"Cleanup criteria: {cleanup_days} days, {min_confidence:.2f} min confidence")
-    
-    def start_continuous_learning(self):
-        """Start the continuous learning background thread"""
-        learning_thread = threading.Thread(
-            target=self.continuous_learning_cycle,
-            daemon=True,
-            name="ContinuousLearning"
-        )
-        learning_thread.start()
-        log.info("Continuous learning thread started")
-
-
-# Integration wrapper for existing trading system
-class IntelligenceIntegration:
-    """Integration layer for existing trading system"""
-    
-    def __init__(self, existing_system):
-        self.existing_system = existing_system
-        self.intelligence_engine = AdvancedMarketIntelligence()
-        self.intelligence_engine.start_continuous_learning()
-        
-        # Track signals for outcome recording
-        self.pending_signals = {}
-        
-    def enhanced_signal_generation(self, prices: List[float], volumes: List[float]) -> Dict[str, Any]:
-        """Enhanced signal generation using intelligence engine"""
-        # Get traditional signal
-        traditional_result = self.existing_system.process_market_data({'price_5m': prices, 'volume_5m': volumes})
-        
-        # Get intelligence signal
-        intelligence_result = self.intelligence_engine.process_market_data(prices, volumes)
-        
-        # Combine signals
-        traditional_confidence = traditional_result.get('confidence', 0.5)
-        intelligence_confidence = intelligence_result['confidence']
-        
-        # Weighted combination (60% traditional, 40% intelligence for safety)
-        combined_confidence = (0.6 * traditional_confidence + 0.4 * intelligence_confidence)
-        
-        # Use intelligence to filter traditional signals
-        if intelligence_result['is_dangerous_pattern']:
-            final_action = "HOLD"  # Override with hold if dangerous
-            final_confidence = 0.0
-        elif intelligence_result['is_beneficial_pattern']:
-            final_action = traditional_result.get('action', 'HOLD')
-            final_confidence = min(combined_confidence * 1.2, 1.0)  # Boost confidence
-        else:
-            final_action = traditional_result.get('action', 'HOLD')
-            final_confidence = combined_confidence
-        
-        # Store signal for outcome tracking
-        signal_id = f"signal_{datetime.now().timestamp()}"
-        self.pending_signals[signal_id] = {
-            'timestamp': datetime.now(),
-            'traditional_result': traditional_result,
-            'intelligence_result': intelligence_result
-        }
-        
-        return {
-            'action': final_action,
-            'confidence': final_confidence,
-            'signal_id': signal_id,
-            'intelligence_insights': {
-                'dna_patterns_found': intelligence_result['similar_patterns_count'],
-                'system_weights': intelligence_result['system_weights'],
-                'dangerous_pattern': intelligence_result['is_dangerous_pattern'],
-                'beneficial_pattern': intelligence_result['is_beneficial_pattern']
-            }
-        }
-    
-    def record_trade_outcome(self, signal_id: str, outcome: float, entry_price: float, exit_price: float):
-        """Record trade outcome for learning"""
-        if signal_id in self.pending_signals:
-            signal_data = self.pending_signals[signal_id]
+        temporal_key = current_patterns.get('temporal_key', '')
+        if temporal_key:
+            if temporal_key not in self.temporal_patterns:
+                self.temporal_patterns[temporal_key] = 0.5
             
-            # Update intelligence engine
-            self.intelligence_engine.record_trade_outcome(
-                signal_data['timestamp'], 
-                outcome, 
-                entry_price, 
-                exit_price
-            )
+            current_rate = self.temporal_patterns[temporal_key]
+            if outcome > 0:
+                self.temporal_patterns[temporal_key] = min(0.95, current_rate + 0.05)
+            else:
+                self.temporal_patterns[temporal_key] = max(0.05, current_rate - 0.05)
+        
+        # Update immune system (add bad patterns)
+        if outcome < -50:  # Bad outcome
+            immune_pattern = current_patterns.get('immune_pattern', '')
+            if immune_pattern:
+                self.immune_patterns.add(immune_pattern)
+                log.info(f"Added immune pattern: {immune_pattern}")
+        
+        # Clean up old patterns periodically
+        self._cleanup_patterns()
+        
+        log.info(f"Learning: outcome={outcome:.2f}, DNA={len(self.dna_patterns)}, "
+                f"Micro={len(self.micro_patterns)}, Temporal={len(self.temporal_patterns)}")
+    
+    def _cleanup_patterns(self):
+        """Remove old or poor-performing patterns"""
+        # Limit pattern counts
+        max_patterns = 1000
+        
+        if len(self.dna_patterns) > max_patterns:
+            # Remove worst performing patterns
+            sorted_patterns = sorted(self.dna_patterns.items(), key=lambda x: abs(x[1] - 0.5))
+            keep_patterns = dict(sorted_patterns[-max_patterns//2:])
+            self.dna_patterns = keep_patterns
+        
+        if len(self.micro_patterns) > max_patterns:
+            sorted_patterns = sorted(self.micro_patterns.items(), key=lambda x: abs(x[1] - 0.5))
+            self.micro_patterns = dict(sorted_patterns[-max_patterns//2:])
+        
+        if len(self.temporal_patterns) > max_patterns:
+            sorted_patterns = sorted(self.temporal_patterns.items(), key=lambda x: abs(x[1] - 0.5))
+            self.temporal_patterns = dict(sorted_patterns[-max_patterns//2:])
+    
+    def _empty_result(self):
+        """Return empty result when insufficient data"""
+        return {
+            'overall_signal': 0.0,
+            'subsystem_signals': {'dna': 0.0, 'micro': 0.0, 'temporal': 0.0, 'immune': 0.0},
+            'confidence': 0.0,
+            'current_patterns': {}
+        }
+    
+    def save_memory(self):
+        """Save all patterns to file"""
+        try:
+            memory_data = {
+                'dna_patterns': self.dna_patterns,
+                'micro_patterns': self.micro_patterns,
+                'temporal_patterns': self.temporal_patterns,
+                'immune_patterns': list(self.immune_patterns),
+                'saved_at': datetime.now().isoformat()
+            }
             
-            # Clean up
-            del self.pending_signals[signal_id]
+            with open(self.memory_file, 'w') as f:
+                json.dump(memory_data, f, indent=2)
+            
+            log.info(f"Saved intelligence memory to {self.memory_file}")
+        except Exception as e:
+            log.error(f"Failed to save memory: {e}")
     
-    def get_system_insights(self) -> str:
-        """Get human-readable system insights"""
-        status = self.intelligence_engine.get_system_status()
-        insights = self.intelligence_engine.get_pattern_insights()
-        
-        report = f"""
-=== MARKET INTELLIGENCE REPORT ===
-
-System Status:
-- DNA Patterns Stored: {status['total_dna_patterns']}
-- Micro Patterns: {status['total_micro_patterns']}
-- Temporal Patterns: {status['total_temporal_patterns']}
-- Immune System Strength: {status['immune_strength']:.2%}
-- Recent Win Rate: {status['win_rate']:.2%}
-- Recent Avg Performance: {status['recent_performance']:.4f}
-
-System Weights:
-- DNA Sequencing: {status['system_weights']['dna']:.2%}
-- Micro Patterns: {status['system_weights']['micro']:.2%}
-- Temporal Analysis: {status['system_weights']['temporal']:.2%}
-- Immune System: {status['system_weights']['immune']:.2%}
-
-Top DNA Patterns:
-"""
-        
-        for i, pattern in enumerate(insights['top_dna_patterns'][:3], 1):
-            report += f"  {i}. {pattern['sequence']} (Success: {pattern['success_rate']:.2%}, Confidence: {pattern['confidence']:.2f})\n"
-        
-        report += f"\nBest Trading Windows:\n"
-        for i, window in enumerate(insights['best_temporal_windows'][:3], 1):
-            report += f"  {i}. {window['day_of_week']} {window['time']} - {window['pattern_type']} (Success: {window['success_rate']:.2%})\n"
-        
-        report += f"\nPattern Security:\n"
-        report += f"  - Beneficial Patterns: {insights['beneficial_patterns_count']}\n"
-        report += f"  - Dangerous Patterns: {insights['dangerous_patterns_count']}\n"
-        
-        return report
-
-# Pattern interpretability and explanation system
-
-class PatternInterpreter:
-    """Make AI patterns human-readable"""
+    def load_memory(self):
+        """Load patterns from file"""
+        try:
+            with open(self.memory_file, 'r') as f:
+                memory_data = json.load(f)
+            
+            self.dna_patterns = memory_data.get('dna_patterns', {})
+            self.micro_patterns = memory_data.get('micro_patterns', {})
+            self.temporal_patterns = memory_data.get('temporal_patterns', {})
+            self.immune_patterns = set(memory_data.get('immune_patterns', []))
+            
+            log.info(f"Loaded intelligence memory from {self.memory_file}")
+        except Exception as e:
+            log.info(f"Starting with empty memory: {e}")
     
-    def __init__(self):
-        self.dna_translations = {
-            'AAAA': 'Strong sustained uptrend',
-            'CCCC': 'Strong sustained downtrend', 
-            'ATGC': 'Classic reversal pattern',
-            'ACGT': 'Volatility spike pattern',
-            'TTTT': 'Weak momentum up',
-            'GGGG': 'Weak momentum down'
+    def get_status(self):
+        """Get current status"""
+        return {
+            'dna_patterns': len(self.dna_patterns),
+            'micro_patterns': len(self.micro_patterns),
+            'temporal_patterns': len(self.temporal_patterns),
+            'immune_patterns': len(self.immune_patterns),
+            'top_dna_patterns': sorted(self.dna_patterns.items(), 
+                                     key=lambda x: abs(x[1] - 0.5), reverse=True)[:5]
         }
-        
-        self.volume_patterns = {
-            'high_volume_breakout': 'Volume confirms price movement',
-            'low_volume_drift': 'Weak conviction in price move',
-            'volume_divergence': 'Volume contradicts price action'
-        }
-    
-    def explain_dna_pattern(self, dna_sequence: str, success_rate: float) -> str:
-        """Convert DNA sequence to human explanation"""
-        explanations = []
-        
-        # Check for known patterns
-        for pattern, meaning in self.dna_translations.items():
-            if pattern in dna_sequence:
-                explanations.append(f"Contains {meaning.lower()}")
-        
-        # Analyze sequence characteristics
-        up_moves = dna_sequence.count('A') + dna_sequence.count('T')
-        down_moves = dna_sequence.count('C') + dna_sequence.count('G')
-        
-        if up_moves > down_moves * 1.5:
-            explanations.append("predominantly bullish sequence")
-        elif down_moves > up_moves * 1.5:
-            explanations.append("predominantly bearish sequence")
-        else:
-            explanations.append("balanced directional movement")
-        
-        # Success context
-        if success_rate > 0.7:
-            confidence_desc = "highly reliable"
-        elif success_rate > 0.6:
-            confidence_desc = "moderately reliable"
-        else:
-            confidence_desc = "developing pattern"
-        
-        base_explanation = ", ".join(explanations)
-        return f"{confidence_desc.title()} pattern: {base_explanation} (success rate: {success_rate:.1%})"
-    
-    def explain_trade_reasoning(self, intelligence_result: Dict) -> str:
-        """Explain why the AI made this decision"""
-        reasoning_parts = []
-        
-        # DNA evidence
-        if intelligence_result.get('similar_patterns_count', 0) > 0:
-            reasoning_parts.append(f"Found {intelligence_result['similar_patterns_count']} similar DNA patterns in memory")
-        
-        # Subsystem contributions
-        signals = intelligence_result.get('subsystem_signals', {})
-        for system, signal in signals.items():
-            if abs(signal) > 0.2:
-                direction = "bullish" if signal > 0 else "bearish"
-                strength = "strong" if abs(signal) > 0.4 else "moderate"
-                reasoning_parts.append(f"{system} system shows {strength} {direction} signal")
-        
-        # Risk factors
-        if intelligence_result.get('is_dangerous_pattern'):
-            reasoning_parts.append("WARNING: IMMUNE SYSTEM detected dangerous pattern - avoiding")
-        elif intelligence_result.get('is_beneficial_pattern'):
-            reasoning_parts.append("POSITIVE: IMMUNE SYSTEM recognizes beneficial pattern")
-        
-        # Confidence explanation
-        confidence = intelligence_result.get('confidence', 0)
-        if confidence > 0.8:
-            reasoning_parts.append(f"Very high confidence ({confidence:.2f}) from pattern convergence")
-        elif confidence > 0.6:
-            reasoning_parts.append(f"Good confidence ({confidence:.2f}) from multiple signals")
-        elif confidence > 0.4:
-            reasoning_parts.append(f"Moderate confidence ({confidence:.2f}) - proceeding cautiously")
-        else:
-            reasoning_parts.append(f"Low confidence ({confidence:.2f}) - holding position")
-        
-        return "; ".join(reasoning_parts)
-    
-    def generate_pattern_report(self, intelligence_engine) -> str:
-        """Generate human-readable intelligence report"""
-        status = intelligence_engine.get_system_status()
-        insights = intelligence_engine.get_pattern_insights()
-        
-        report = f"""
-MARKET INTELLIGENCE REPORT
-Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
-PATTERN LIBRARY STATUS:
-- DNA Patterns: {status['total_dna_patterns']} sequences learned
-- Micro Patterns: {status['total_micro_patterns']} micro-behaviors identified  
-- Temporal Patterns: {status['total_temporal_patterns']} time-based patterns
-- Win Rate: {status['win_rate']:.1%} (last 20 trades)
-
-TOP DNA DISCOVERIES:
-"""
-        
-        for i, pattern in enumerate(insights['top_dna_patterns'][:3], 1):
-            explanation = self.explain_dna_pattern(pattern['sequence'], pattern['success_rate'])
-            report += f"  {i}. {explanation}\n"
-        
-        report += f"""
-OPTIMAL TRADING WINDOWS:
-"""
-        for i, window in enumerate(insights['best_temporal_windows'][:3], 1):
-            report += f"  {i}. {window['day_of_week']} {window['time']} - {window['pattern_type']} (Success: {window['success_rate']:.1%})\n"
-        
-        report += f"""
-IMMUNE SYSTEM STATUS:
-- Beneficial Patterns: {insights['beneficial_patterns_count']} learned
-- Dangerous Patterns: {insights['dangerous_patterns_count']} avoided
-- System Health: {status['immune_strength']:.1%}
-
-CURRENT SYSTEM WEIGHTS:
-"""
-        for system, weight in status['system_weights'].items():
-            report += f"  - {system.upper()}: {weight:.1%}\n"
-        
-        return report
-
-
-# Example usage and testing
-if __name__ == "__main__":
-    # Initialize the intelligence engine
-    intelligence = AdvancedMarketIntelligence()
-    
-    # Simulate some market data
-    np.random.seed(42)
-    base_price = 4000.0
-    prices = [base_price]
-    volumes = [1000]
-    
-    # Generate realistic market data
-    for i in range(100):
-        # Random walk with slight trend
-        change = np.random.normal(0, 0.001) + 0.0001  # Slight upward bias
-        new_price = prices[-1] * (1 + change)
-        prices.append(new_price)
-        
-        # Volume with some correlation to price movement
-        vol_change = np.random.normal(0, 0.2) + (0.1 if change > 0 else -0.1)
-        new_volume = max(100, volumes[-1] * (1 + vol_change))
-        volumes.append(new_volume)
-    
-    print("Testing Advanced Market Intelligence Engine")
-    print("=" * 50)
-    
-    # Process market data
-    for i in range(20, len(prices), 5):  # Process every 5th point
-        current_prices = prices[:i]
-        current_volumes = volumes[:i]
-        
-        result = intelligence.process_market_data(current_prices, current_volumes)
-        
-        print(f"Bar {i}: Action={result['action']}, Signal={result['signal_strength']:.3f}, "
-              f"Confidence={result['confidence']:.3f}")
-        
-        # Simulate trade outcomes (random for demo)
-        if result['action'] != 'HOLD':
-            outcome = np.random.normal(0.001, 0.01)  # Random outcome
-            intelligence.record_trade_outcome(
-                result['timestamp'], 
-                outcome, 
-                current_prices[-1], 
-                current_prices[-1] * (1 + outcome)
-            )
-    
-    # Print system status
-    print("\n" + "=" * 50)
-    print("FINAL SYSTEM STATUS")
-    print("=" * 50)
-    
-    status = intelligence.get_system_status()
-    insights = intelligence.get_pattern_insights()
-    
-    print(f"DNA Patterns: {status['total_dna_patterns']}")
-    print(f"Micro Patterns: {status['total_micro_patterns']}")
-    print(f"Win Rate: {status['win_rate']:.2%}")
-    print(f"System Weights: {status['system_weights']}")
-    
-    # Export knowledge base
-    intelligence.export_knowledge_base("intelligence_knowledge.json")
-    print("\nKnowledge base exported to intelligence_knowledge.json")
+# Factory function
+def create_intelligence_engine():
+    return SimpleIntelligenceEngine()

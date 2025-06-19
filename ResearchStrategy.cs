@@ -1,4 +1,4 @@
-// ResearchStrategy.cs - REFACTORED: Pure position management using real NinjaTrader data
+// ResearchStrategy.cs - SIMPLIFIED for Black Box Trading System
 
 using System;
 using System.Collections.Generic;
@@ -16,12 +16,13 @@ namespace NinjaTrader.NinjaScript.Strategies
     {
         #region Private Fields
         
+        // TCP connections
         private TcpClient featureClient;
         private TcpClient signalClient;
         private Thread signalThread;
         private bool isRunning;
         
-        // Data storage for Python communication
+        // Market data storage
         private List<double> prices15m = new List<double>();
         private List<double> volumes15m = new List<double>();
         private List<double> prices5m = new List<double>();
@@ -29,163 +30,103 @@ namespace NinjaTrader.NinjaScript.Strategies
         private List<double> prices1m = new List<double>();
         private List<double> volumes1m = new List<double>();
         
-        // Position tracking for AI learning feedback
-        private DateTime positionEntryTime = DateTime.MinValue;
-        private double positionEntryPrice = 0.0;
+        // Trade tracking for learning
         private string currentTradeId = "";
-        private int tradeIdCounter = 0;
+        private int tradeCounter = 0;
+        private DateTime tradeStartTime;
+        private double entryPrice = 0.0;
         private string lastToolUsed = "";
-		private int entryTagCounter = 0;
-        
-        // Enhanced tracking from original version
-        private int signalCount;
-        private int tradesExecuted;
-        private int connectionAttempts;
-        private DateTime lastConnectionAttempt;
-        private DateTime lastTradeEntry;
-        
-        // AI signal data
-        private bool lastSignalUsedAIStop = false;
-        private bool lastSignalUsedAITarget = false;
-        private double lastAIStopPrice = 0.0;
-        private double lastAITargetPrice = 0.0;
-        private double lastAIPositionSize = 1.0;
         
         // Connection status
-        private bool isConnectedToFeatureServer;
-        private bool isConnectedToSignalServer;
+        private bool isConnectedToFeatures;
+        private bool isConnectedToSignals;
+        private int totalSignalsReceived = 0;
+        private int totalTradesExecuted = 0;
         
-        private string DetermineExitReason(string orderName)
+        #endregion
+        
+        #region Strategy Setup
+        
+        protected override void OnStateChange()
         {
-            if (orderName.Contains("Exit"))
-                return "intelligence_exit";
-            else if (orderName.Contains("Reverse"))
-                return "signal_reversal";
-            else if (orderName.Contains("Stop"))
-                return "stop_hit";
-            else if (orderName.Contains("Target"))
-                return "target_hit";
-            else
-                return "session_close";
+            switch (State)
+            {
+                case State.SetDefaults:
+                    Description = "Simplified Black Box Trading Strategy";
+                    Name = "ResearchStrategy";
+                    Calculate = Calculate.OnBarClose;
+                    
+                    EntryHandling = EntryHandling.AllEntries;
+                    ExitOnSessionCloseSeconds = 30;
+                    MaximumBarsLookBack = MaximumBarsLookBack.TwoHundredFiftySix;
+                    OrderFillResolution = OrderFillResolution.Standard;
+                    Slippage = 0;
+                    StartBehavior = StartBehavior.WaitUntilFlat;
+                    TimeInForce = TimeInForce.Gtc;
+                    TraceOrders = false;
+                    RealtimeErrorHandling = RealtimeErrorHandling.StopCancelClose;
+                    StopTargetHandling = StopTargetHandling.PerEntryExecution;
+                    BarsRequiredToTrade = 1;
+                    EntriesPerDirection = 5;
+                    break;
+                    
+                case State.Configure:
+                    // Add multiple timeframe data
+                    AddDataSeries(BarsPeriodType.Minute, 15);
+                    AddDataSeries(BarsPeriodType.Minute, 5);
+                    AddDataSeries(BarsPeriodType.Minute, 1);
+                    break;
+                    
+                case State.DataLoaded:
+                    Print("Black Box Strategy loaded - connecting to Python AI");
+                    break;
+                    
+                case State.Realtime:
+                    Print("Entering real-time mode");
+                    ConnectToPython();
+                    StartSignalReceiver();
+                    break;
+                    
+                case State.Terminated:
+                    Cleanup();
+                    break;
+            }
         }
         
         #endregion
         
-        #region Strategy Lifecycle
-        
-        protected override void OnStateChange()
-        {
-            try
-            {
-                switch (State)
-                {
-                    case State.SetDefaults:
-                        Description = "Pure Position Management - No Hardcoded Limits";
-                        Name = "ResearchStrategy";
-                        Calculate = Calculate.OnBarClose;
-                        
-                        EntryHandling = EntryHandling.AllEntries;
-                        ExitOnSessionCloseSeconds = 30;
-                        IsFillLimitOnTouch = false;
-                        MaximumBarsLookBack = MaximumBarsLookBack.TwoHundredFiftySix;
-                        OrderFillResolution = OrderFillResolution.Standard;
-                        Slippage = 0;
-                        StartBehavior = StartBehavior.WaitUntilFlat;
-                        TimeInForce = TimeInForce.Gtc;
-                        TraceOrders = false;
-                        RealtimeErrorHandling = RealtimeErrorHandling.StopCancelClose;
-                        StopTargetHandling  = StopTargetHandling.PerEntryExecution;
-                        BarsRequiredToTrade = 1;
-						EntriesPerDirection = 10; 
-						
-                        break;
-                        
-                    case State.Configure:
-                        AddDataSeries(BarsPeriodType.Minute, 15);
-                        AddDataSeries(BarsPeriodType.Minute, 5);
-                        AddDataSeries(BarsPeriodType.Minute, 1);
-                        break;
-                        
-                    case State.DataLoaded:
-                        if (BarsArray?.Length > 0 && CurrentBars[0] > 0)
-                        {
-                            Print("Pure Position Management Strategy loaded - using real account data");
-                        }
-                        break;
-                        
-                    case State.Realtime:
-                        Print("Entering real-time: Pure position management active");
-                        ConnectToPython();
-                        StartSignalReceiver();
-                        
-                        if (isConnectedToFeatureServer)
-                        {
-                            Print($"Sending historical data: 15m={prices15m.Count}, 5m={prices5m.Count}, 1m={prices1m.Count}");
-                            SendMarketDataToPython();
-                        }
-                        break;
-                        
-                    case State.Terminated:
-                        if (signalCount > 0 || tradesExecuted > 0)
-                        {
-                            CleanupWithStats();
-                        }
-                        else
-                        {
-                            QuietCleanup();
-                        }
-                        break;
-                }
-            }
-            catch (Exception ex)
-            {
-                Print($"OnStateChange error: {ex.Message}");
-            }
-        }
+        #region Data Collection
         
         protected override void OnBarUpdate()
         {
+            // Only process in real-time with sufficient data
+            if (State != State.Realtime || CurrentBars[0] < 1 || CurrentBars[1] < 1 || 
+                CurrentBars[2] < 1 || CurrentBars[3] < 1)
+                return;
+            
             try
             {
-                if (CurrentBars[0] < 1 || CurrentBars[1] < 1 || CurrentBars[2] < 1 || CurrentBars[3] < 1)
-                    return;
-                
-                if (State == State.Historical || State == State.Realtime)
+                // Update data on new bars
+                if (IsFirstTickOfBar)
                 {
-                    if (IsFirstTickOfBar)
+                    switch (BarsInProgress)
                     {
-                        switch (BarsInProgress)
-                        {
-                            case 1: Update15mData(); break;
-                            case 2: Update5mData(); break;
-                            case 3: Update1mData(); break;
-                        }
+                        case 1: // 15-minute data
+                            UpdateTimeframeData(prices15m, volumes15m, Closes[1][0], Volumes[1][0], 100);
+                            break;
+                        case 2: // 5-minute data
+                            UpdateTimeframeData(prices5m, volumes5m, Closes[2][0], Volumes[2][0], 300);
+                            break;
+                        case 3: // 1-minute data
+                            UpdateTimeframeData(prices1m, volumes1m, Closes[3][0], Volumes[3][0], 1000);
+                            break;
                     }
                 }
                 
-                if (State == State.Realtime && BarsInProgress == 0 && IsFirstTickOfBar)
+                // Send data to Python on primary timeframe new bar
+                if (BarsInProgress == 0 && IsFirstTickOfBar && isConnectedToFeatures)
                 {
-                    if (isConnectedToFeatureServer)
-                    {
-                        SendMarketDataToPython();
-                        
-                        // Enhanced logging every 10 bars
-                        if (CurrentBar % 10 == 0)
-                        {
-                            Print($"Intelligence Feed: Bar {CurrentBar} | " +
-                                  $"Data: 15m={prices15m.Count}, 5m={prices5m.Count}, 1m={prices1m.Count} | " +
-                                  $"Connections: Feature={isConnectedToFeatureServer}, Signal={isConnectedToSignalServer}");
-                        }
-                    }
-                    else
-                    {
-                        // Alert if connection lost
-                        if (CurrentBar % 50 == 0)
-                        {
-                            Print("WARNING: Intelligence engine disconnected - attempting reconnect");
-                            ConnectToPython();
-                        }
-                    }
+                    SendMarketDataToPython();
                 }
             }
             catch (Exception ex)
@@ -194,91 +135,18 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
         
-        protected override void OnExecutionUpdate(Execution execution, string executionId, 
-                                                double price, int quantity, MarketPosition marketPosition, 
-                                                string orderId, DateTime time)
+        private void UpdateTimeframeData(List<double> prices, List<double> volumes, 
+                                       double newPrice, double newVolume, int maxCount)
         {
-            try
+            prices.Add(newPrice);
+            volumes.Add(newVolume);
+            
+            // Keep only recent data
+            if (prices.Count > maxCount)
             {
-                if (execution.Order != null)
-                {
-                    tradesExecuted++;
-                    
-                    // Track position entry
-                    if (execution.Order.Name.Contains("AI_") && 
-                        string.IsNullOrEmpty(currentTradeId) &&
-                        (execution.Order.OrderAction == OrderAction.Buy || execution.Order.OrderAction == OrderAction.SellShort))
-                    {
-                        lastTradeEntry = DateTime.Now;
-                        positionEntryTime = DateTime.Now;
-                        positionEntryPrice = price;
-                        tradeIdCounter++;
-                        currentTradeId = $"trade_{tradeIdCounter}";
-                        
-                        // Extract tool from order name
-                        if (execution.Order.Name.Contains("_dna_"))
-                            lastToolUsed = "dna";
-                        else if (execution.Order.Name.Contains("_micro_"))
-                            lastToolUsed = "micro";
-                        else if (execution.Order.Name.Contains("_temporal_"))
-                            lastToolUsed = "temporal";
-                        else if (execution.Order.Name.Contains("_immune_"))
-                            lastToolUsed = "immune";
-                        
-                        Print($"AI Trade started: {currentTradeId} using {lastToolUsed} at ${price:F2}");
-                    }
-                    
-                    // Handle position going flat - send completion data to Python
-                    if (marketPosition == MarketPosition.Flat && !string.IsNullOrEmpty(currentTradeId))
-                    {
-                        int duration = (int)(DateTime.Now - lastTradeEntry).TotalMinutes;
-                        string exitReason = DetermineExitReason(execution.Order.Name);
-                        
-                        SendTradeCompletionToPython(price, execution.Order.Name);
-                        Print($"AI Trade completed: {currentTradeId}, Exit: ${price:F2}, Reason: {exitReason}");
-                        currentTradeId = "";
-                        lastToolUsed = "";
-                    }
-                }
+                prices.RemoveAt(0);
+                volumes.RemoveAt(0);
             }
-            catch (Exception ex)
-            {
-                Print($"Execution update error: {ex.Message}");
-            }
-        }
-        
-        #endregion
-        
-        #region Data Management
-        
-        private void Update15mData()
-        {
-            prices15m.Add(Closes[1][0]);
-            volumes15m.Add(Volumes[1][0]);
-            TrimList(prices15m, 415);
-            TrimList(volumes15m, 415);
-        }
-        
-        private void Update5mData()
-        {
-            prices5m.Add(Closes[2][0]);
-            volumes5m.Add(Volumes[2][0]);
-            TrimList(prices5m, 1248);
-            TrimList(volumes5m, 1248);
-        }
-        
-        private void Update1mData()
-        {
-            prices1m.Add(Closes[3][0]);
-            volumes1m.Add(Volumes[3][0]);
-            TrimList(prices1m, 6247);
-            TrimList(volumes1m, 6247);
-        }
-        
-        private void TrimList(List<double> list, int maxCount)
-        {
-            if (list.Count > maxCount)
-                list.RemoveAt(0);
         }
         
         #endregion
@@ -289,58 +157,88 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             try
             {
-                if (State == State.Realtime)
+                // Connect to feature server (port 5556)
+                if (!isConnectedToFeatures)
                 {
-                    lastConnectionAttempt = DateTime.Now;
-                    connectionAttempts++;
+                    featureClient = new TcpClient("localhost", 5556);
+                    isConnectedToFeatures = true;
+                    Print("Connected to Python AI on port 5556");
                 }
                 
-                if (!isConnectedToFeatureServer)
+                // Connect to signal server (port 5557)
+                if (!isConnectedToSignals)
                 {
-                    try
-                    {
-                        featureClient = new TcpClient("localhost", 5556);
-                        isConnectedToFeatureServer = true;
-                        Print("Connected to Python AI (port 5556)");
-                    }
-                    catch (Exception ex)
-                    {
-                        Print($"AI connection failed: {ex.Message}");
-                        isConnectedToFeatureServer = false;
-                    }
+                    signalClient = new TcpClient("localhost", 5557);
+                    isConnectedToSignals = true;
+                    Print("Connected to signal server on port 5557");
                 }
                 
-                if (!isConnectedToSignalServer)
+                if (isConnectedToFeatures && isConnectedToSignals)
                 {
-                    try
-                    {
-                        signalClient = new TcpClient("localhost", 5557);
-                        isConnectedToSignalServer = true;
-                        Print("Connected to Signal Server (port 5557)");
-                    }
-                    catch (Exception ex)
-                    {
-                        Print($"Signal connection failed: {ex.Message}");
-                        isConnectedToSignalServer = false;
-                    }
-                }
-                
-                if (isConnectedToFeatureServer && isConnectedToSignalServer)
-                {
-                    Print("Pure AI system connected - no hardcoded limits active");
-                    if (State == State.Realtime)
-                    {
-                        Print("Black Box Intelligence fully connected");
-                        Print("Pure AI Pattern Discovery - No hardcoded rules");
-                    }
+                    Print("Black Box AI system fully connected");
                 }
             }
             catch (Exception ex)
             {
                 Print($"Connection error: {ex.Message}");
-                isConnectedToFeatureServer = false;
-                isConnectedToSignalServer = false;
+                isConnectedToFeatures = false;
+                isConnectedToSignals = false;
             }
+        }
+        
+        private void SendMarketDataToPython()
+        {
+            if (!isConnectedToFeatures || featureClient?.Connected != true)
+                return;
+            
+            try
+            {
+                // Build simple JSON message
+                var jsonBuilder = new StringBuilder();
+                jsonBuilder.Append("{");
+                
+                // Price data
+                AppendPriceData(jsonBuilder, "price_15m", prices15m);
+                AppendPriceData(jsonBuilder, "volume_15m", volumes15m);
+                AppendPriceData(jsonBuilder, "price_5m", prices5m);
+                AppendPriceData(jsonBuilder, "volume_5m", volumes5m);
+                AppendPriceData(jsonBuilder, "price_1m", prices1m);
+                AppendPriceData(jsonBuilder, "volume_1m", volumes1m);
+                
+                // Account data for position sizing
+                jsonBuilder.Append($"\"account_balance\":{Account.Get(AccountItem.CashValue, Currency.UsDollar):F2},");
+                jsonBuilder.Append($"\"buying_power\":{Account.Get(AccountItem.BuyingPower, Currency.UsDollar):F2},");
+                jsonBuilder.Append($"\"daily_pnl\":{Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar):F2},");
+                jsonBuilder.Append($"\"cash_value\":{Account.Get(AccountItem.CashValue, Currency.UsDollar):F2},");
+                
+                jsonBuilder.Append($"\"timestamp\":{DateTime.Now.Ticks}");
+                jsonBuilder.Append("}");
+                
+                // Send to Python
+                string json = jsonBuilder.ToString();
+                byte[] data = Encoding.UTF8.GetBytes(json);
+                byte[] header = BitConverter.GetBytes(data.Length);
+                
+                var stream = featureClient.GetStream();
+                stream.Write(header, 0, 4);
+                stream.Write(data, 0, data.Length);
+            }
+            catch (Exception ex)
+            {
+                Print($"Data send error: {ex.Message}");
+                isConnectedToFeatures = false;
+            }
+        }
+        
+        private void AppendPriceData(StringBuilder json, string name, List<double> data)
+        {
+            json.Append($"\"{name}\":[");
+            for (int i = 0; i < data.Count; i++)
+            {
+                if (i > 0) json.Append(",");
+                json.Append(data[i].ToString("F6"));
+            }
+            json.Append("],");
         }
         
         private void StartSignalReceiver()
@@ -351,10 +249,10 @@ namespace NinjaTrader.NinjaScript.Strategies
             signalThread = new Thread(ReceiveSignals)
             {
                 IsBackground = true,
-                Name = "AISignalReceiver"
+                Name = "SignalReceiver"
             };
             signalThread.Start();
-            Print("Intelligence signal receiver started");
+            Print("Signal receiver started");
         }
         
         private void ReceiveSignals()
@@ -369,6 +267,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         continue;
                     }
                     
+                    // Read message header
                     var headerBytes = new byte[4];
                     int headerRead = 0;
                     
@@ -378,7 +277,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         if (bytesRead == 0)
                         {
                             Print("Signal connection lost");
-                            isConnectedToSignalServer = false;
+                            isConnectedToSignals = false;
                             return;
                         }
                         headerRead += bytesRead;
@@ -392,6 +291,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                         continue;
                     }
                     
+                    // Read message data
                     var messageBytes = new byte[messageLength];
                     int totalRead = 0;
                     
@@ -402,499 +302,339 @@ namespace NinjaTrader.NinjaScript.Strategies
                         if (bytesRead == 0)
                         {
                             Print("Signal data connection lost");
-                            isConnectedToSignalServer = false;
+                            isConnectedToSignals = false;
                             return;
                         }
                         totalRead += bytesRead;
                     }
                     
-                    // Process the complete message
+                    // Process signal
                     string signalJson = Encoding.UTF8.GetString(messageBytes);
-                    ProcessAISignal(signalJson);
+                    ProcessTradingSignal(signalJson);
                 }
                 catch (Exception ex)
                 {
                     Print($"Signal receive error: {ex.Message}");
-                    isConnectedToSignalServer = false;
                     Thread.Sleep(2000);
                 }
             }
-            
-            Print("Intelligence signal receiver stopped");
-		}
-        
-		private void SendMarketDataToPython()
-		{
-		    if (featureClient?.Connected != true)
-		    {
-		        isConnectedToFeatureServer = false;
-		        return;
-		    }
-		    
-		    try
-		    {
-		        var jsonBuilder = new StringBuilder();
-		        jsonBuilder.Append("{");
-		        
-		        // Add price data
-		        jsonBuilder.Append("\"price_15m\":[");
-		        for (int i = 0; i < prices15m.Count; i++)
-		        {
-		            if (i > 0) jsonBuilder.Append(",");
-		            jsonBuilder.Append(prices15m[i].ToString("F6"));
-		        }
-		        jsonBuilder.Append("],");
-		        
-		        jsonBuilder.Append("\"volume_15m\":[");
-		        for (int i = 0; i < volumes15m.Count; i++)
-		        {
-		            if (i > 0) jsonBuilder.Append(",");
-		            jsonBuilder.Append(volumes15m[i].ToString("F2"));
-		        }
-		        jsonBuilder.Append("],");
-		        
-		        jsonBuilder.Append("\"price_5m\":[");
-		        for (int i = 0; i < prices5m.Count; i++)
-		        {
-		            if (i > 0) jsonBuilder.Append(",");
-		            jsonBuilder.Append(prices5m[i].ToString("F6"));
-		        }
-		        jsonBuilder.Append("],");
-		        
-		        jsonBuilder.Append("\"volume_5m\":[");
-		        for (int i = 0; i < volumes5m.Count; i++)
-		        {
-		            if (i > 0) jsonBuilder.Append(",");
-		            jsonBuilder.Append(volumes5m[i].ToString("F2"));
-		        }
-		        jsonBuilder.Append("],");
-		        
-		        jsonBuilder.Append("\"price_1m\":[");
-		        for (int i = 0; i < prices1m.Count; i++)
-		        {
-		            if (i > 0) jsonBuilder.Append(",");
-		            jsonBuilder.Append(prices1m[i].ToString("F6"));
-		        }
-		        jsonBuilder.Append("],");
-		        
-		        jsonBuilder.Append("\"volume_1m\":[");
-		        for (int i = 0; i < volumes1m.Count; i++)
-		        {
-		            if (i > 0) jsonBuilder.Append(",");
-		            jsonBuilder.Append(volumes1m[i].ToString("F2"));
-		        }
-		        jsonBuilder.Append("],");
-		        
-		        // CRITICAL FIX: Add account data for AI position sizing as required by prompt
-		        jsonBuilder.Append($"\"buying_power\":{Account.Get(AccountItem.ExcessIntradayMargin, Currency.UsDollar):F2},");
-		        jsonBuilder.Append($"\"account_balance\":{Account.Get(AccountItem.CashValue, Currency.UsDollar):F2},");
-		        jsonBuilder.Append($"\"daily_pnl\":{Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar):F2},");
-		        jsonBuilder.Append($"\"cash_value\":{Account.Get(AccountItem.CashValue, Currency.UsDollar):F2},");
-		        jsonBuilder.Append($"\"excess_liquidity\":{Account.Get(AccountItem.ExcessInitialMargin, Currency.UsDollar):F2},");
-		        jsonBuilder.Append($"\"net_liquidation\":{Account.Get(AccountItem.NetLiquidation, Currency.UsDollar):F2},");
-		        
-		        jsonBuilder.Append($"\"timestamp\":{DateTime.Now.Ticks}");
-		        jsonBuilder.Append("}");
-		        
-		        string json = jsonBuilder.ToString();
-		        byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
-		        byte[] header = BitConverter.GetBytes(jsonBytes.Length);
-		        
-		        var stream = featureClient.GetStream();
-		        stream.Write(header, 0, 4);
-		        stream.Write(jsonBytes, 0, jsonBytes.Length);
-		        
-				if (CurrentBar % 100 == 0)  // Log every 100 bars instead of 50
-				{
-				    double balance = Account.Get(AccountItem.CashValue, Currency.UsDollar);
-				    double buyingPower = Account.Get(AccountItem.BuyingPower, Currency.UsDollar);
-				    Print($"Account data sent to AI: Balance=${balance:F0}, BP=${buyingPower:F0}");
-				}
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Data send error: {ex.Message}");
-		        isConnectedToFeatureServer = false;
-		    }
-		}
-        
-		private void SendTradeCompletionToPython(double exitPrice, string orderName, double manualPnl = 0.0)
-		{
-		    if (featureClient?.Connected != true || string.IsNullOrEmpty(currentTradeId))
-		        return;
-		    
-		    try
-		    {
-		        string exitReason = "unknown";
-		        if (orderName.Contains("Stop"))
-		            exitReason = "stop_hit";
-		        else if (orderName.Contains("Target"))
-		            exitReason = "target_hit";
-		        else if (orderName.Contains("Exit"))
-		            exitReason = "ai_exit";
-		        else if (orderName == "signal_reversal")
-		            exitReason = "signal_reversal";
-		        else
-		            exitReason = "manual_close";
-		        
-		        int durationMinutes = (int)(DateTime.Now - positionEntryTime).TotalMinutes;
-		        
-		        // FIXED: Use manual P&L for reversals, system P&L for natural closes
-		        double realizedPnl = manualPnl != 0.0 ? manualPnl : 
-		            (SystemPerformance.AllTrades.Count > 0 ? 
-		             SystemPerformance.AllTrades[SystemPerformance.AllTrades.Count - 1].ProfitCurrency : 0.0);
-		        
-		        var completionData = new StringBuilder();
-		        completionData.Append("{");
-		        completionData.Append("\"type\":\"trade_completion\",");
-		        completionData.Append($"\"trade_id\":\"{currentTradeId}\",");
-		        completionData.Append($"\"signal_timestamp\":{positionEntryTime.Ticks},");
-		        completionData.Append($"\"entry_price\":{positionEntryPrice:F2},");
-		        completionData.Append($"\"exit_price\":{exitPrice:F2},");
-		        completionData.Append($"\"final_pnl\":{realizedPnl:F2},");
-		        completionData.Append($"\"exit_reason\":\"{exitReason}\",");
-		        completionData.Append($"\"duration_minutes\":{durationMinutes},");
-		        completionData.Append($"\"tool_used\":\"{lastToolUsed}\",");
-		        completionData.Append($"\"used_ai_stop\":{(lastSignalUsedAIStop ? "true" : "false")},");
-		        completionData.Append($"\"used_ai_target\":{(lastSignalUsedAITarget ? "true" : "false")},");
-		        
-		        // Enhanced correlation data for better learning
-		        completionData.Append($"\"position_size\":{lastAIPositionSize:F2},");
-		        completionData.Append($"\"account_balance\":{Account.Get(AccountItem.CashValue, Currency.UsDollar):F2},");
-		        completionData.Append($"\"buying_power\":{Account.Get(AccountItem.ExcessIntradayMargin, Currency.UsDollar):F2},");
-		        completionData.Append($"\"daily_pnl\":{Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar):F2},");
-		        
-		        // Add AI learning correlation data
-		        completionData.Append($"\"ai_stop_price\":{lastAIStopPrice:F2},");
-		        completionData.Append($"\"ai_target_price\":{lastAITargetPrice:F2},");
-		        completionData.Append($"\"entry_timestamp\":{positionEntryTime.Ticks},");
-		        completionData.Append($"\"completion_timestamp\":{DateTime.Now.Ticks},");
-		        
-		        completionData.Append($"\"timestamp\":{DateTime.Now.Ticks}");
-		        completionData.Append("}");
-		        
-		        string json = completionData.ToString();
-		        byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
-		        byte[] header = BitConverter.GetBytes(jsonBytes.Length);
-		        
-		        var stream = featureClient.GetStream();
-		        stream.Write(header, 0, 4);
-		        stream.Write(jsonBytes, 0, jsonBytes.Length);
-		        
-		        Print($"Trade completion sent to AI: {currentTradeId}, P&L: ${realizedPnl:F2}, Tool: {lastToolUsed}");
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Trade completion error: {ex.Message}");
-		    }
-		}
+        }
         
         #endregion
         
         #region Signal Processing
         
-        private void ProcessAISignal(string signalJson)
+        private void ProcessTradingSignal(string signalJson)
         {
-            var signal = ParseSignalJson(signalJson);
-            if (signal == null) return;
-            
-            // Store AI recommendations
-            lastSignalUsedAIStop = signal.use_stop;
-            lastSignalUsedAITarget = signal.use_target;
-            lastAIStopPrice = signal.stop_price;
-            lastAITargetPrice = signal.target_price;
-            lastAIPositionSize = signal.position_size;
-            
-            ExecuteAISignal(signal);
+            try
+            {
+                var signal = ParseSignal(signalJson);
+                if (signal == null) return;
+                
+                totalSignalsReceived++;
+                
+                string actionName = signal.action == 1 ? "BUY" : signal.action == 2 ? "SELL" : "EXIT";
+                Print($"AI Signal #{totalSignalsReceived}: {actionName} " +
+                      $"(conf: {signal.confidence:F3}, size: {signal.position_size:F1}, tool: {signal.tool_used})");
+                
+                ExecuteSignal(signal);
+            }
+            catch (Exception ex)
+            {
+                Print($"Signal processing error: {ex.Message}");
+            }
         }
         
-        private SignalData ParseSignalJson(string json)
+        private TradingSignal ParseSignal(string json)
         {
-            try 
+            try
             {
-                var signal = new SignalData();
+                var signal = new TradingSignal();
                 
-                // Parse action
-                var actionStart = json.IndexOf("\"action\":") + 9;
-                if (actionStart > 8)
-                {
-                    var actionEnd = json.IndexOf(",", actionStart);
-                    if (actionEnd == -1) actionEnd = json.IndexOf("}", actionStart);
-                    if (int.TryParse(json.Substring(actionStart, actionEnd - actionStart).Trim(), out int actionValue))
-                        signal.action = actionValue;
-                }
-                
-                // Parse confidence
-                var confStart = json.IndexOf("\"confidence\":") + 13;
-                if (confStart > 12)
-                {
-                    var confEnd = json.IndexOf(",", confStart);
-                    if (confEnd == -1) confEnd = json.IndexOf("}", confStart);
-                    if (double.TryParse(json.Substring(confStart, confEnd - confStart).Trim(), out double confValue))
-                        signal.confidence = confValue;
-                }
-                
-                // Parse tool_used
-                var toolPattern = "\"tool_used\":\"";
-                var toolStart = json.IndexOf(toolPattern);
-                if (toolStart >= 0)
-                {
-                    toolStart += toolPattern.Length;
-                    var toolEnd = json.IndexOf("\"", toolStart);
-                    if (toolEnd > toolStart)
-                    {
-                        signal.tool_used = json.Substring(toolStart, toolEnd - toolStart);
-                    }
-                }
-                
-                // Parse use_stop
-                var useStopPattern = "\"use_stop\":";
-                var useStopStart = json.IndexOf(useStopPattern);
-                if (useStopStart >= 0)
-                {
-                    useStopStart += useStopPattern.Length;
-                    var useStopEnd = json.IndexOf(",", useStopStart);
-                    if (useStopEnd == -1) useStopEnd = json.IndexOf("}", useStopStart);
-                    
-                    string useStopStr = json.Substring(useStopStart, useStopEnd - useStopStart).Trim();
-                    signal.use_stop = useStopStr.ToLower() == "true";
-                }
-                
-                // Parse stop_price
-                var stopPattern = "\"stop_price\":";
-                var stopStart = json.IndexOf(stopPattern);
-                if (stopStart >= 0)
-                {
-                    stopStart += stopPattern.Length;
-                    var stopEnd = json.IndexOf(",", stopStart);
-                    if (stopEnd == -1) stopEnd = json.IndexOf("}", stopStart);
-                    
-                    if (double.TryParse(json.Substring(stopStart, stopEnd - stopStart).Trim(), out double stopValue))
-                    {
-                        signal.stop_price = stopValue;
-                    }
-                }
-                
-                // Parse use_target
-                var useTargetPattern = "\"use_target\":";
-                var useTargetStart = json.IndexOf(useTargetPattern);
-                if (useTargetStart >= 0)
-                {
-                    useTargetStart += useTargetPattern.Length;
-                    var useTargetEnd = json.IndexOf(",", useTargetStart);
-                    if (useTargetEnd == -1) useTargetEnd = json.IndexOf("}", useTargetStart);
-                    
-                    string useTargetStr = json.Substring(useTargetStart, useTargetEnd - useTargetStart).Trim();
-                    signal.use_target = useTargetStr.ToLower() == "true";
-                }
-                
-                // Parse target_price
-                var targetPattern = "\"target_price\":";
-                var targetStart = json.IndexOf(targetPattern);
-                if (targetStart >= 0)
-                {
-                    targetStart += targetPattern.Length;
-                    var targetEnd = json.IndexOf(",", targetStart);
-                    if (targetEnd == -1) targetEnd = json.IndexOf("}", targetStart);
-                    
-                    if (double.TryParse(json.Substring(targetStart, targetEnd - targetStart).Trim(), out double targetValue))
-                    {
-                        signal.target_price = targetValue;
-                    }
-                }
-                
-                // Parse quality
-                var qualityPattern = "\"quality\":\"";
-                var qualStart = json.IndexOf(qualityPattern);
-                if (qualStart >= 0)
-                {
-                    qualStart += qualityPattern.Length;
-                    var qualEnd = json.IndexOf("\"", qualStart);
-                    if (qualEnd > qualStart)
-                    {
-                        signal.quality = json.Substring(qualStart, qualEnd - qualStart);
-                    }
-                }
-                
-                // Parse timestamp
-                var timePattern = "\"timestamp\":";
-                var timeStart = json.IndexOf(timePattern);
-                if (timeStart >= 0)
-                {
-                    timeStart += timePattern.Length;
-                    var timeEnd = json.IndexOf(",", timeStart);
-                    if (timeEnd == -1) timeEnd = json.IndexOf("}", timeStart);
-                    
-                    if (long.TryParse(json.Substring(timeStart, timeEnd - timeStart).Trim(), out long timeValue))
-                    {
-                        signal.timestamp = timeValue;
-                    }
-                }
-                
-                // Parse position_size
-                var positionSizePattern = "\"position_size\":";
-                var positionSizeStart = json.IndexOf(positionSizePattern);
-                if (positionSizeStart >= 0)
-                {
-                    positionSizeStart += positionSizePattern.Length;
-                    var positionSizeEnd = json.IndexOf(",", positionSizeStart);
-                    if (positionSizeEnd == -1) positionSizeEnd = json.IndexOf("}", positionSizeStart);
-                    
-                    if (double.TryParse(json.Substring(positionSizeStart, positionSizeEnd - positionSizeStart).Trim(), out double positionSizeValue))
-                    {
-                        signal.position_size = positionSizeValue;
-                    }
-                }
+                // Simple JSON parsing for core fields
+                signal.action = ExtractIntValue(json, "action");
+                signal.confidence = ExtractDoubleValue(json, "confidence");
+                signal.position_size = ExtractDoubleValue(json, "position_size");
+                signal.use_stop = ExtractBoolValue(json, "use_stop");
+                signal.stop_price = ExtractDoubleValue(json, "stop_price");
+                signal.use_target = ExtractBoolValue(json, "use_target");
+                signal.target_price = ExtractDoubleValue(json, "target_price");
+                signal.tool_used = ExtractStringValue(json, "tool_used");
                 
                 return signal;
             }
-            catch (Exception ex) 
+            catch (Exception ex)
             {
-                Print($"JSON parsing error: {ex.Message}");
+                Print($"Signal parsing error: {ex.Message}");
                 return null;
             }
         }
         
-		private bool IsValidSignal(SignalData signal)
-		{
-		    if (signal == null) return false;
-		    
-		    // Use adaptive signal timeout from Python AI system
-		    // Default to 30 seconds if not provided by AI
-		    double signalTimeoutSeconds = signal.adaptive_timeout > 0 ? signal.adaptive_timeout : 30.0;
-		    
-		    // Basic signal age protection with AI-determined timeout
-		    var signalAge = (DateTime.Now.Ticks - signal.timestamp) / TimeSpan.TicksPerSecond;
-		    if (signalAge > signalTimeoutSeconds)
-		    {
-		        Print($"Signal too old: {signalAge}s > {signalTimeoutSeconds}s (AI timeout) - skipping");
-		        return false;
-		    }
-		    
-		    return true;
-		}
+        private void ExecuteSignal(TradingSignal signal)
+        {
+            try
+            {
+                int quantity = Math.Max(1, (int)Math.Round(signal.position_size));
+                string entryName = $"AI_{signal.tool_used}_{DateTime.Now:HHmmss}";
+                
+                // Store trade info for completion tracking
+                lastToolUsed = signal.tool_used;
+                
+                switch (signal.action)
+                {
+                    case 1: // BUY
+                        if (Position.MarketPosition == MarketPosition.Short)
+                        {
+                            ExitShort("AI_Reverse");
+                        }
+                        
+                        EnterLong(quantity, entryName);
+                        
+                        // Set stops and targets if AI decided to use them
+                        if (signal.use_stop && signal.stop_price > 0)
+                        {
+                            SetStopLoss(entryName, CalculationMode.Price, signal.stop_price, false);
+                        }
+                        if (signal.use_target && signal.target_price > 0)
+                        {
+                            SetProfitTarget(entryName, CalculationMode.Price, signal.target_price);
+                        }
+                        break;
+                        
+                    case 2: // SELL
+                        if (Position.MarketPosition == MarketPosition.Long)
+                        {
+                            ExitLong("AI_Reverse");
+                        }
+                        
+                        EnterShort(quantity, entryName);
+                        
+                        if (signal.use_stop && signal.stop_price > 0)
+                        {
+                            SetStopLoss(entryName, CalculationMode.Price, signal.stop_price, false);
+                        }
+                        if (signal.use_target && signal.target_price > 0)
+                        {
+                            SetProfitTarget(entryName, CalculationMode.Price, signal.target_price);
+                        }
+                        break;
+                        
+                    case 0: // EXIT
+                        if (Position.MarketPosition == MarketPosition.Long)
+                            ExitLong("AI_Exit");
+                        else if (Position.MarketPosition == MarketPosition.Short)
+                            ExitShort("AI_Exit");
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"Signal execution error: {ex.Message}");
+            }
+        }
         
-		private void ExecuteAISignal(SignalData signal)
-		{
-		    try
-		    {
-		        signalCount++;
-		        int    sz     = Math.Max(1, (int)Math.Round(signal.position_size));
-		        string prefix = $"AI_{signal.tool_used}";
-		        string dirTag = signal.action == 1 ? "Long" : "Short";
-		
-		        // ensure every entry gets a fresh tag
-		        entryTagCounter++;
-		        string tag = $"AI_{signal.tool_used}_{dirTag}_{entryTagCounter}";
-		
-		        switch (signal.action)
-		        {
-		            case 1:  // BUY
-		                if (Position.MarketPosition == MarketPosition.Short)
-		                {
-		                    // COMPLETE CURRENT TRADE BEFORE REVERSAL
-		                    CompleteCurrentTrade(GetLastPrice(), "signal_reversal");
-		                    
-		                    Print("Reversal: exiting short then entering long");
-		                    ExitShort("AI_Reverse");
-		                }
-		                EnterLong(sz, tag);
-		                break;
-		
-		            case 2:  // SELL
-		                if (Position.MarketPosition == MarketPosition.Long)
-		                {
-		                    // COMPLETE CURRENT TRADE BEFORE REVERSAL  
-		                    CompleteCurrentTrade(GetLastPrice(), "signal_reversal");
-		                    
-		                    Print("Reversal: exiting long then entering short");
-		                    ExitLong("AI_Reverse");
-		                }
-		                EnterShort(sz, tag);
-		                break;
-
-		            case 0:  // EXIT
-		                if (Position.MarketPosition == MarketPosition.Long)
-		                    ExitLong($"{prefix}_Exit");
-		                else if (Position.MarketPosition == MarketPosition.Short)
-		                    ExitShort($"{prefix}_Exit");
-		                Print("AI Signal EXIT");
-		                break;
-		        }
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Signal execution error: {ex.Message}");
-		    }
-		}
-		
-		private void CompleteCurrentTrade(double exitPrice, string exitReason)
-		{
-		    if (!string.IsNullOrEmpty(currentTradeId))
-		    {
-		        // Calculate P&L manually since trade isn't closed yet
-		        double pnl = 0.0;
-		        if (Position.MarketPosition == MarketPosition.Long)
-		        {
-		            pnl = (exitPrice - positionEntryPrice) * Position.Quantity * 2.0; // MNQ point value
-		        }
-		        else if (Position.MarketPosition == MarketPosition.Short)
-		        {
-		            pnl = (positionEntryPrice - exitPrice) * Position.Quantity * 2.0;
-		        }
-		        
-		        int duration = (int)(DateTime.Now - positionEntryTime).TotalMinutes;
-		        
-		        SendTradeCompletionToPython(exitPrice, exitReason, pnl);
-		        Print($"AI Trade completed (reversal): {currentTradeId}, Exit: ${exitPrice:F2}, P&L: ${pnl:F2}");
-		        
-		        // Reset for next trade
-		        currentTradeId = "";
-		        lastToolUsed = "";
-		    }
-		}
-		
-		private double GetLastPrice()
-		{
-		    return Closes[0][0]; // Current close price
-		}
+        #endregion
+        
+        #region Trade Execution Tracking
+        
+        protected override void OnExecutionUpdate(Execution execution, string executionId, 
+                                                double price, int quantity, MarketPosition marketPosition, 
+                                                string orderId, DateTime time)
+        {
+            try
+            {
+                if (execution.Order?.Name?.Contains("AI_") == true)
+                {
+                    totalTradesExecuted++;
+                    
+                    // Track trade entry
+                    if (execution.Order.OrderAction == OrderAction.Buy || 
+                        execution.Order.OrderAction == OrderAction.SellShort)
+                    {
+                        if (string.IsNullOrEmpty(currentTradeId))
+                        {
+                            tradeCounter++;
+                            currentTradeId = $"trade_{tradeCounter}";
+                            tradeStartTime = DateTime.Now;
+                            entryPrice = price;
+                            
+                            Print($"Trade started: {currentTradeId} at ${price:F2} using {lastToolUsed}");
+                        }
+                    }
+                    
+                    // Track trade completion (position goes flat)
+                    if (marketPosition == MarketPosition.Flat && !string.IsNullOrEmpty(currentTradeId))
+                    {
+                        SendTradeCompletionToPython(price, execution.Order.Name);
+                        
+                        Print($"Trade completed: {currentTradeId} exit at ${price:F2}");
+                        currentTradeId = "";
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Print($"Execution tracking error: {ex.Message}");
+            }
+        }
+        
+        private void SendTradeCompletionToPython(double exitPrice, string orderName)
+        {
+            if (!isConnectedToFeatures || featureClient?.Connected != true || string.IsNullOrEmpty(currentTradeId))
+                return;
+            
+            try
+            {
+                // Determine exit reason
+                string exitReason = "unknown";
+                if (orderName.Contains("Stop"))
+                    exitReason = "stop_hit";
+                else if (orderName.Contains("Target") || orderName.Contains("Profit"))
+                    exitReason = "target_hit";
+                else if (orderName.Contains("Exit"))
+                    exitReason = "ai_exit";
+                else if (orderName.Contains("Reverse"))
+                    exitReason = "signal_reversal";
+                else
+                    exitReason = "session_close";
+                
+                // Calculate P&L
+                double pnl = 0.0;
+                if (SystemPerformance.AllTrades.Count > 0)
+                {
+                    var lastTrade = SystemPerformance.AllTrades[SystemPerformance.AllTrades.Count - 1];
+                    pnl = lastTrade.ProfitCurrency;
+                }
+                
+                int durationMinutes = (int)(DateTime.Now - tradeStartTime).TotalMinutes;
+                
+                // Build completion message
+                var completionData = new StringBuilder();
+                completionData.Append("{");
+                completionData.Append("\"type\":\"trade_completion\",");
+                completionData.Append($"\"trade_id\":\"{currentTradeId}\",");
+                completionData.Append($"\"entry_price\":{entryPrice:F2},");
+                completionData.Append($"\"exit_price\":{exitPrice:F2},");
+                completionData.Append($"\"final_pnl\":{pnl:F2},");
+                completionData.Append($"\"exit_reason\":\"{exitReason}\",");
+                completionData.Append($"\"duration_minutes\":{durationMinutes},");
+                completionData.Append($"\"tool_used\":\"{lastToolUsed}\",");
+                completionData.Append($"\"signal_timestamp\":{tradeStartTime.Ticks},");
+                completionData.Append($"\"timestamp\":{DateTime.Now.Ticks}");
+                completionData.Append("}");
+                
+                // Send to Python
+                string json = completionData.ToString();
+                byte[] data = Encoding.UTF8.GetBytes(json);
+                byte[] header = BitConverter.GetBytes(data.Length);
+                
+                var stream = featureClient.GetStream();
+                stream.Write(header, 0, 4);
+                stream.Write(data, 0, data.Length);
+                
+                Print($"Trade completion sent to AI: {currentTradeId}, P&L: ${pnl:F2}");
+            }
+            catch (Exception ex)
+            {
+                Print($"Trade completion error: {ex.Message}");
+            }
+        }
+        
+        #endregion
+        
+        #region Helper Methods
+        
+        private int ExtractIntValue(string json, string key)
+        {
+            var pattern = $"\"{key}\":";
+            var start = json.IndexOf(pattern);
+            if (start < 0) return 0;
+            
+            start += pattern.Length;
+            var end = json.IndexOf(",", start);
+            if (end < 0) end = json.IndexOf("}", start);
+            
+            if (int.TryParse(json.Substring(start, end - start).Trim(), out int result))
+                return result;
+            
+            return 0;
+        }
+        
+        private double ExtractDoubleValue(string json, string key)
+        {
+            var pattern = $"\"{key}\":";
+            var start = json.IndexOf(pattern);
+            if (start < 0) return 0.0;
+            
+            start += pattern.Length;
+            var end = json.IndexOf(",", start);
+            if (end < 0) end = json.IndexOf("}", start);
+            
+            if (double.TryParse(json.Substring(start, end - start).Trim(), out double result))
+                return result;
+            
+            return 0.0;
+        }
+        
+        private bool ExtractBoolValue(string json, string key)
+        {
+            var pattern = $"\"{key}\":";
+            var start = json.IndexOf(pattern);
+            if (start < 0) return false;
+            
+            start += pattern.Length;
+            var end = json.IndexOf(",", start);
+            if (end < 0) end = json.IndexOf("}", start);
+            
+            string value = json.Substring(start, end - start).Trim().ToLower();
+            return value == "true";
+        }
+        
+        private string ExtractStringValue(string json, string key)
+        {
+            var pattern = $"\"{key}\":\"";
+            var start = json.IndexOf(pattern);
+            if (start < 0) return "";
+            
+            start += pattern.Length;
+            var end = json.IndexOf("\"", start);
+            
+            if (end > start)
+                return json.Substring(start, end - start);
+            
+            return "";
+        }
         
         #endregion
         
         #region Cleanup
         
-        private void CleanupWithStats()
+        private void Cleanup()
         {
             try
             {
-                Print("Black Box Intelligence shutting down...");
+                Print("Black Box Strategy shutting down...");
                 
                 isRunning = false;
                 
+                // Stop signal thread
                 if (signalThread?.IsAlive == true)
                 {
-                    if (!signalThread.Join(2000))
-                    {
-                        Print("Signal thread did not stop gracefully");
-                    }
+                    signalThread.Join(2000);
                 }
                 
+                // Close connections
                 try
                 {
                     featureClient?.Close();
                     signalClient?.Close();
-                    Print("TCP connections closed");
                 }
                 catch (Exception ex)
                 {
                     Print($"Connection cleanup error: {ex.Message}");
                 }
                 
-                Print($"Intelligence Strategy Final Stats:");
-                Print($"Intelligence Signals Received: {signalCount}");
-                Print($"Trades Executed: {tradesExecuted}");
-                Print($"Connection Attempts: {connectionAttempts}");
-                Print("Black Box Intelligence stopped - All patterns preserved");
+                Print($"Strategy stopped. Signals received: {totalSignalsReceived}, Trades: {totalTradesExecuted}");
             }
             catch (Exception ex)
             {
@@ -902,56 +642,21 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
         
-        private void QuietCleanup()
-        {
-            try
-            {
-                isRunning = false;
-                
-                if (signalThread?.IsAlive == true)
-                {
-                    signalThread.Join(1000);
-                }
-                
-                featureClient?.Close();
-                signalClient?.Close();
-            }
-            catch
-            {
-                // Silent cleanup
-            }
-        }
-        
-        private void Cleanup()
-        {
-            if (signalCount > 0 || tradesExecuted > 0)
-            {
-                CleanupWithStats();
-            }
-            else
-            {
-                QuietCleanup();
-            }
-        }
-        
         #endregion
         
         #region Helper Classes
         
-		public class SignalData
-		{
-		    public int action { get; set; }
-		    public double confidence { get; set; }
-		    public string quality { get; set; }
-		    public string tool_used { get; set; }
-		    public double position_size { get; set; } = 1.0;
-		    public long timestamp { get; set; }
-		    public bool use_stop { get; set; } = false;
-		    public double stop_price { get; set; } = 0.0;
-		    public bool use_target { get; set; } = false;
-		    public double target_price { get; set; } = 0.0;
-		    public double adaptive_timeout { get; set; } = 30.0;  // NEW: AI-determined timeout
-		}
+        private class TradingSignal
+        {
+            public int action { get; set; }
+            public double confidence { get; set; }
+            public double position_size { get; set; } = 1.0;
+            public bool use_stop { get; set; } = false;
+            public double stop_price { get; set; } = 0.0;
+            public bool use_target { get; set; } = false;
+            public double target_price { get; set; } = 0.0;
+            public string tool_used { get; set; } = "unknown";
+        }
         
         #endregion
     }
