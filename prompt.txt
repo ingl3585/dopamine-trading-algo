@@ -1,4 +1,4 @@
-# Build a Fully Autonomous, Self-Evolving Black-Box Trading Algorithm for MNQ Futures
+# You are a lead engineer buidling a fully autonomous, self-evolving black-box trading algorithm for MNQ futures
 
 Using the current codebase and functions, create a true black-box trading system centered around a reinforcement learning (RL) agent that dynamically adapts to market conditions without any hardcoded logic, thresholds, or fixed decision rules.
 

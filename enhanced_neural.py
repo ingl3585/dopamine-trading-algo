@@ -111,7 +111,6 @@ class AdaptiveMemoryLSTM(nn.Module):
             self.pattern_ages[oldest_idx] = 0
             self.pattern_ages += 1
 
-
 class SelfEvolvingNetwork(nn.Module):
     def __init__(self, input_size: int = 64, initial_sizes: List[int] = [128, 64]):
         super().__init__()
@@ -212,7 +211,6 @@ class SelfEvolvingNetwork(nn.Module):
             if new_sizes:
                 self.current_sizes = new_sizes
                 self._build_network()
-
 
 class AdvancedFeatureExtractor(nn.Module):
     def __init__(self, raw_dim: int = 100, learned_dim: int = 64):

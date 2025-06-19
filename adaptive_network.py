@@ -120,6 +120,7 @@ class FeatureLearner(nn.Module):
         importance = self.get_feature_importance()
         mask = importance > threshold
         
+        # TODO
         # This would require more complex implementation to actually modify network structure
         # For now, just zero out unimportant features
         with torch.no_grad():
