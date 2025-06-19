@@ -76,45 +76,171 @@ class TCPServer:
                 message = json.loads(data.decode())
                 self.data_received += 1
                 
+                # Enhanced message handling for better account data
                 if message.get('type') == 'trade_completion':
                     if self.on_trade_completion:
                         self.on_trade_completion(message)
-                elif 'price_1m' in message:
+                elif self._is_market_data(message):
                     if self.on_market_data:
-                        self.on_market_data(message)
+                        # Add validation and enhancement for account data
+                        enhanced_message = self._enhance_market_data(message)
+                        self.on_market_data(enhanced_message)
                         
             except Exception as e:
                 logger.error(f"Data receive error: {e}")
                 break
+    
+    def _is_market_data(self, message: dict) -> bool:
+        """Check if message contains market data"""
+        required_fields = ['price_1m', 'account_balance', 'buying_power']
+        return any(field in message for field in required_fields)
+    
+    def _enhance_market_data(self, message: dict) -> dict:
+        """Enhance market data with computed fields and validation"""
+        enhanced = message.copy()
+        
+        # Ensure all required account fields exist with defaults
+        account_defaults = {
+            'account_balance': 25000.0,
+            'buying_power': 25000.0,
+            'daily_pnl': 0.0,
+            'net_liquidation': 25000.0,
+            'margin_used': 0.0,
+            'available_margin': 25000.0,
+            'open_positions': 0
+        }
+        
+        for field, default_value in account_defaults.items():
+            if field not in enhanced:
+                enhanced[field] = default_value
+        
+        # Add computed fields for better analysis
+        try:
+            # Calculate margin utilization percentage
+            margin_used = enhanced.get('margin_used', 0)
+            net_liquidation = enhanced.get('net_liquidation', enhanced.get('account_balance', 25000))
+            
+            if net_liquidation > 0:
+                enhanced['margin_utilization'] = margin_used / net_liquidation
+            else:
+                enhanced['margin_utilization'] = 0.0
+            
+            # Calculate available buying power percentage
+            buying_power = enhanced.get('buying_power', 25000)
+            if net_liquidation > 0:
+                enhanced['buying_power_ratio'] = buying_power / net_liquidation
+            else:
+                enhanced['buying_power_ratio'] = 1.0
+            
+            # Calculate daily PnL percentage
+            daily_pnl = enhanced.get('daily_pnl', 0)
+            if net_liquidation > 0:
+                enhanced['daily_pnl_pct'] = daily_pnl / net_liquidation
+            else:
+                enhanced['daily_pnl_pct'] = 0.0
+            
+            # Validate and clean price/volume arrays
+            for timeframe in ['1m', '5m', '15m']:
+                price_key = f'price_{timeframe}'
+                volume_key = f'volume_{timeframe}'
+                
+                if price_key in enhanced and enhanced[price_key]:
+                    # Ensure arrays are lists and contain valid numbers
+                    prices = enhanced[price_key]
+                    if isinstance(prices, list) and len(prices) > 0:
+                        # Remove any invalid values
+                        valid_prices = [p for p in prices if isinstance(p, (int, float)) and p > 0]
+                        enhanced[price_key] = valid_prices
+                    else:
+                        enhanced[price_key] = []
+                
+                if volume_key in enhanced and enhanced[volume_key]:
+                    volumes = enhanced[volume_key]
+                    if isinstance(volumes, list) and len(volumes) > 0:
+                        valid_volumes = [v for v in volumes if isinstance(v, (int, float)) and v >= 0]
+                        enhanced[volume_key] = valid_volumes
+                    else:
+                        enhanced[volume_key] = []
+        
+        except Exception as e:
+            logger.warning(f"Error enhancing market data: {e}")
+        
+        return enhanced
     
     def send_signal(self, order: Order) -> bool:
         if not self.running or not self.signal_socket:
             return False
             
         try:
+            # Enhanced signal with better validation
             signal = {
                 "action": 1 if order.action == 'buy' else 2,  # NinjaTrader expects 1=buy, 2=sell
-                "confidence": order.confidence,
-                "position_size": order.size,
+                "confidence": max(0.0, min(1.0, order.confidence)),  # Clamp to [0,1]
+                "position_size": max(1, int(order.size)),  # Ensure positive integer
                 "use_stop": order.stop_price > 0,
-                "stop_price": order.stop_price,
+                "stop_price": order.stop_price if order.stop_price > 0 else 0.0,
                 "use_target": order.target_price > 0,
-                "target_price": order.target_price,
-                "tool_used": "ai_agent",
+                "target_price": order.target_price if order.target_price > 0 else 0.0,
+                "tool_used": getattr(order, 'primary_tool', 'ai_agent'),
                 "timestamp": int(time.time() * 10000000 + 621355968000000000)  # .NET ticks
             }
+            
+            # Validate signal before sending
+            if not self._validate_signal(signal, order):
+                logger.warning(f"Invalid signal rejected: {signal}")
+                return False
             
             data = json.dumps(signal).encode()
             header = struct.pack('<I', len(data))
             self.signal_socket.sendall(header + data)
             
             self.signals_sent += 1
-            logger.info(f"Signal sent: {order.action.upper()} {order.size} @ {order.price:.2f}")
+            logger.info(f"Signal sent: {order.action.upper()} {order.size} @ {order.price:.2f} (Conf: {order.confidence:.2f})")
             
             return True
             
         except Exception as e:
             logger.error(f"Signal send error: {e}")
+            return False
+    
+    def _validate_signal(self, signal: dict, order: Order) -> bool:
+        """Validate signal before sending to NinjaTrader"""
+        try:
+            # Basic validation
+            if signal['action'] not in [1, 2]:
+                return False
+            
+            if signal['position_size'] <= 0:
+                return False
+            
+            if signal['confidence'] < 0 or signal['confidence'] > 1:
+                return False
+            
+            # Stop/target validation
+            if signal['use_stop'] and signal['stop_price'] <= 0:
+                return False
+            
+            if signal['use_target'] and signal['target_price'] <= 0:
+                return False
+            
+            # Price relationship validation
+            if hasattr(order, 'price') and order.price > 0:
+                if signal['use_stop']:
+                    if order.action == 'buy' and signal['stop_price'] >= order.price:
+                        return False
+                    if order.action == 'sell' and signal['stop_price'] <= order.price:
+                        return False
+                
+                if signal['use_target']:
+                    if order.action == 'buy' and signal['target_price'] <= order.price:
+                        return False
+                    if order.action == 'sell' and signal['target_price'] >= order.price:
+                        return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Signal validation error: {e}")
             return False
     
     def stop(self):

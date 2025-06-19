@@ -187,11 +187,22 @@ class StateEncoder:
             else:
                 features.append(0.0)
         
-        # Account state
+        # Enhanced account state features
         features.extend([
+            # Normalized account balance (using 50k as reference)
             min(1.0, market_data.account_balance / 50000),
+            # Normalized buying power
             min(1.0, market_data.buying_power / 50000),
-            np.tanh(market_data.daily_pnl / 1000),
+            # Daily PnL as percentage of account (already computed by TCP bridge)
+            np.tanh(market_data.daily_pnl_pct * 100),  # Scale to reasonable range
+            # Margin utilization (0-1 ratio)
+            min(1.0, market_data.margin_utilization),
+            # Buying power ratio (how much buying power vs net liquidation)
+            min(2.0, market_data.buying_power_ratio),  # Cap at 2x leverage
+            # Open positions normalized
+            min(1.0, market_data.open_positions / 5.0),  # Assume max 5 positions
+            # Available margin normalized
+            min(1.0, market_data.available_margin / 25000)
         ])
         
         # Time features
@@ -231,13 +242,16 @@ class StateEncoder:
         market_state = self.encode_market_data(market_data)
         intelligence_state = self.encode_intelligence_features(intelligence_features)
         
-        # Meta-learning context
+        # Enhanced meta-learning context with account-aware features
         meta_state = torch.tensor([
             meta_context.get('recent_performance', 0.0),
             meta_context.get('consecutive_losses', 0.0) / 10.0,
             meta_context.get('trades_today', 0.0) / 20.0,
             meta_context.get('learning_efficiency', 0.0),
             meta_context.get('architecture_generation', 0.0) / 10.0,
+            # Additional account context
+            min(1.0, meta_context.get('position_count', 0.0) / 5.0),
+            np.tanh(meta_context.get('time_since_last_trade', 0.0))
         ], dtype=torch.float32)
         
         # Combine all features

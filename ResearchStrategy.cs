@@ -1,4 +1,4 @@
-// ResearchStrategy.cs
+// ResearchStrategy.cs - Enhanced version with better account data
 
 using System;
 using System.Collections.Generic;
@@ -28,12 +28,18 @@ namespace NinjaTrader.NinjaScript.Strategies
         private List<double> volumes5m = new List<double>();
         private List<double> volumes15m = new List<double>();
         
+        // Enhanced account tracking
+        private double lastAccountBalance = 0;
+        private double lastBuyingPower = 0;
+        private double sessionStartPnL = 0;
+        private bool sessionStartSet = false;
+        
         protected override void OnStateChange()
         {
             switch (State)
             {
                 case State.SetDefaults:
-                    Description = "AI Trading Strategy";
+                    Description = "Adaptive AI Trading Strategy";
                     Name = "ResearchStrategy";
                     Calculate = Calculate.OnBarClose;
                     BarsRequiredToTrade = 1;
@@ -46,11 +52,22 @@ namespace NinjaTrader.NinjaScript.Strategies
                 case State.Realtime:
                     ConnectToPython();
                     StartSignalReceiver();
+                    InitializeSession();
                     break;
                     
                 case State.Terminated:
                     Cleanup();
                     break;
+            }
+        }
+        
+        private void InitializeSession()
+        {
+            if (!sessionStartSet)
+            {
+                sessionStartPnL = Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
+                sessionStartSet = true;
+                Print($"Session initialized - Starting P&L: {sessionStartPnL:C}");
             }
         }
         
@@ -114,7 +131,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 
             try
             {
-                // Build JSON manually to avoid Newtonsoft dependency
                 var json = BuildMarketDataJson();
                 
                 byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
@@ -146,10 +162,24 @@ namespace NinjaTrader.NinjaScript.Strategies
             sb.Append($"\"volume_5m\":{SerializeDoubleArray(volumes5m)},");
             sb.Append($"\"volume_15m\":{SerializeDoubleArray(volumes15m)},");
             
-            // Add account data
-            sb.Append($"\"account_balance\":{Account.Get(AccountItem.CashValue, Currency.UsDollar).ToString(CultureInfo.InvariantCulture)},");
-            sb.Append($"\"buying_power\":{Account.Get(AccountItem.BuyingPower, Currency.UsDollar).ToString(CultureInfo.InvariantCulture)},");
-            sb.Append($"\"daily_pnl\":{Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar).ToString(CultureInfo.InvariantCulture)},");
+            // Enhanced account data for adaptive system
+            double currentBalance = Account.Get(AccountItem.CashValue, Currency.UsDollar);
+            double currentBuyingPower = Account.Get(AccountItem.BuyingPower, Currency.UsDollar);
+            double totalPnL = Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
+            double dailyPnL = sessionStartSet ? (totalPnL - sessionStartPnL) : 0;
+            
+            // Additional account metrics for better position sizing
+            double netLiquidation = Account.Get(AccountItem.NetLiquidation, Currency.UsDollar);
+            double marginUsed = Account.Get(AccountItem.InitialMargin, Currency.UsDollar);
+            double availableMargin = currentBuyingPower - marginUsed;
+            
+            sb.Append($"\"account_balance\":{currentBalance.ToString(CultureInfo.InvariantCulture)},");
+            sb.Append($"\"buying_power\":{currentBuyingPower.ToString(CultureInfo.InvariantCulture)},");
+            sb.Append($"\"daily_pnl\":{dailyPnL.ToString(CultureInfo.InvariantCulture)},");
+            sb.Append($"\"net_liquidation\":{netLiquidation.ToString(CultureInfo.InvariantCulture)},");
+            sb.Append($"\"margin_used\":{marginUsed.ToString(CultureInfo.InvariantCulture)},");
+            sb.Append($"\"available_margin\":{availableMargin.ToString(CultureInfo.InvariantCulture)},");
+            sb.Append($"\"open_positions\":{Position.Quantity},");
             sb.Append($"\"timestamp\":{DateTime.Now.Ticks}");
             
             sb.Append("}");
@@ -220,7 +250,6 @@ namespace NinjaTrader.NinjaScript.Strategies
         {
             try
             {
-                // Parse JSON manually to avoid Newtonsoft dependency
                 var signal = ParseSignalJson(json);
                 
                 int action = signal.Item1;
@@ -233,29 +262,35 @@ namespace NinjaTrader.NinjaScript.Strategies
                 
                 string entryName = $"AI_{DateTime.Now:HHmmss}";
                 
+                // Enhanced position management for adaptive system
                 switch (action)
                 {
                     case 1: // Buy
                         if (Position.MarketPosition == MarketPosition.Short)
-                            ExitShort();
-                        EnterLong(size, entryName);
+                            ExitShort(entryName + "_Cover");
+                        
+                        if (size > 0)
+                            EnterLong(size, entryName);
                         break;
                         
                     case 2: // Sell
                         if (Position.MarketPosition == MarketPosition.Long)
-                            ExitLong();
-                        EnterShort(size, entryName);
+                            ExitLong(entryName + "_Exit");
+                        
+                        if (size > 0)
+                            EnterShort(size, entryName);
                         break;
                 }
                 
-                // Set stops and targets if provided
+                // Apply stops and targets only if AI system wants them
                 if (useStop && stopPrice > 0)
                     SetStopLoss(entryName, CalculationMode.Price, stopPrice, false);
                     
                 if (useTarget && targetPrice > 0)
                     SetProfitTarget(entryName, CalculationMode.Price, targetPrice);
                 
-                Print($"Signal executed: {(action == 1 ? "BUY" : "SELL")} {size} contracts");
+                Print($"AI Signal: {(action == 1 ? "BUY" : "SELL")} {size} contracts (Conf: {confidence:P0})");
+                
             }
             catch (Exception ex)
             {
@@ -265,7 +300,6 @@ namespace NinjaTrader.NinjaScript.Strategies
         
         private Tuple<int, double, int, bool, double, bool, double> ParseSignalJson(string json)
         {
-            // Simple JSON parsing for known structure
             int action = 0;
             double confidence = 0.0;
             int size = 1;
@@ -384,7 +418,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 string exitReason = execution.Order.Name.Contains("Stop") ? "stop_hit" : 
                                    execution.Order.Name.Contains("Target") ? "target_hit" : "ai_exit";
                 
-                // Build completion JSON manually
                 var json = $"{{" +
                           $"\"type\":\"trade_completion\"," +
                           $"\"final_pnl\":{pnl.ToString(CultureInfo.InvariantCulture)}," +
@@ -400,7 +433,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 stream.Write(header, 0, 4);
                 stream.Write(jsonBytes, 0, jsonBytes.Length);
                 
-                Print($"Trade completion sent: P&L ${pnl:F2}");
+                Print($"Trade completed: P&L ${pnl:F2} ({exitReason})");
             }
             catch (Exception ex)
             {

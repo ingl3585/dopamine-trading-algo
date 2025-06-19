@@ -17,9 +17,18 @@ class MarketData:
     volumes_1m: List[float]
     volumes_5m: List[float]
     volumes_15m: List[float]
+    # Enhanced account data
     account_balance: float
     buying_power: float
     daily_pnl: float
+    net_liquidation: float
+    margin_used: float
+    available_margin: float
+    open_positions: int
+    # Computed ratios from TCP bridge
+    margin_utilization: float
+    buying_power_ratio: float
+    daily_pnl_pct: float
 
 
 class DataProcessor:
@@ -67,9 +76,18 @@ class DataProcessor:
             volumes_1m=list(self.volumes_1m),
             volumes_5m=list(self.volumes_5m),
             volumes_15m=list(self.volumes_15m),
+            # Enhanced account data from NinjaTrader
             account_balance=raw_data.get('account_balance', 25000),
             buying_power=raw_data.get('buying_power', 25000),
-            daily_pnl=raw_data.get('daily_pnl', 0)
+            daily_pnl=raw_data.get('daily_pnl', 0),
+            net_liquidation=raw_data.get('net_liquidation', 25000),
+            margin_used=raw_data.get('margin_used', 0),
+            available_margin=raw_data.get('available_margin', 25000),
+            open_positions=raw_data.get('open_positions', 0),
+            # Computed ratios from TCP bridge
+            margin_utilization=raw_data.get('margin_utilization', 0.0),
+            buying_power_ratio=raw_data.get('buying_power_ratio', 1.0),
+            daily_pnl_pct=raw_data.get('daily_pnl_pct', 0.0)
         )
 
     def _is_valid_data(self, data: Dict) -> bool:
