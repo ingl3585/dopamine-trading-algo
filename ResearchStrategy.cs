@@ -83,7 +83,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                         Name = "ResearchStrategy";
                         Calculate = Calculate.OnBarClose;
                         
-                        EntriesPerDirection = 1;
                         EntryHandling = EntryHandling.AllEntries;
                         ExitOnSessionCloseSeconds = 30;
                         IsFillLimitOnTouch = false;
@@ -774,71 +773,60 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    try
 		    {
 		        signalCount++;
+		        int sz        = Math.Max(1, (int)Math.Round(signal.position_size));
+		        string prefix = $"AI_{signal.tool_used}";
 		
-		        // If you’re short and get a BUY, reverse in one shot
-		        if (signal.action == 1 && Position.MarketPosition == MarketPosition.Short)
-		        {
-		            Print("Reversal: exiting short then entering long");
-		            ExitShort("AI_Reverse");
-		            
-		            // immediately queue the new long
-		            int sz = Math.Max(1, (int)Math.Round(signal.position_size));
-		            string name = $"AI_{signal.tool_used}_Long";
-		            EnterLong(sz, name);
-		            
-		            // apply your stops/targets exactly as usual...
-		            if (signal.use_stop)   SetStopLoss(name, CalculationMode.Price, signal.stop_price,  false);
-		            if (signal.use_target) SetProfitTarget(name, CalculationMode.Price, signal.target_price);
-		            return;
-		        }
-		
-		        // ─── 2) If you’re long and get a SELL, reverse in one shot ─────────────
-		        if (signal.action == 2 && Position.MarketPosition == MarketPosition.Long)
-		        {
-		            Print("Reversal: exiting long then entering short");
-		            ExitLong("AI_Reverse");
-		            
-		            int sz = Math.Max(1, (int)Math.Round(signal.position_size));
-		            string name = $"AI_{signal.tool_used}_Short";
-		            EnterShort(sz, name);
-		            
-		            if (signal.use_stop)   SetStopLoss(name, CalculationMode.Price, signal.stop_price,  false);
-		            if (signal.use_target) SetProfitTarget(name, CalculationMode.Price, signal.target_price);
-		            return;
-		        }
-		
-		        // ─── 3) Otherwise, you’re flat, so just follow your normal BUY/SELL/EXIT logic ───
 		        switch (signal.action)
 		        {
 		            case 1: // BUY
-		                if (Position.MarketPosition == MarketPosition.Flat)
+		                if (Position.MarketPosition == MarketPosition.Short)
 		                {
-		                    int sz = Math.Max(1, (int)Math.Round(signal.position_size));
-		                    string name = $"AI_{signal.tool_used}_Long";
-		                    EnterLong(sz, name);
-		                    if (signal.use_stop)   SetStopLoss(name, CalculationMode.Price, signal.stop_price,  false);
-		                    if (signal.use_target) SetProfitTarget(name, CalculationMode.Price, signal.target_price);
-		                    Print($"AI Signal: BUY size={sz}, conf={signal.confidence:F3}");
+		                    // reverse
+		                    Print("Reversal: exiting short then entering long");
+		                    ExitShort("AI_Reverse");
+		                    EnterLong(sz, $"{prefix}_Long");
 		                }
+		                else
+		                {
+		                    // flat OR already long -> pyramid/add
+		                    EnterLong(sz, $"{prefix}_Long");
+		                }
+		
+		                if (signal.use_stop)
+		                    SetStopLoss($"{prefix}_Long", CalculationMode.Price, signal.stop_price, false);
+		                if (signal.use_target)
+		                    SetProfitTarget($"{prefix}_Long", CalculationMode.Price, signal.target_price);
+		
+		                Print($"AI Signal: BUY size={sz}, conf={signal.confidence:F3}");
 		                break;
-		                
+		
 		            case 2: // SELL
-		                if (Position.MarketPosition == MarketPosition.Flat)
+		                if (Position.MarketPosition == MarketPosition.Long)
 		                {
-		                    int sz = Math.Max(1, (int)Math.Round(signal.position_size));
-		                    string name = $"AI_{signal.tool_used}_Short";
-		                    EnterShort(sz, name);
-		                    if (signal.use_stop)   SetStopLoss(name, CalculationMode.Price, signal.stop_price,  false);
-		                    if (signal.use_target) SetProfitTarget(name, CalculationMode.Price, signal.target_price);
-		                    Print($"AI Signal: SELL size={sz}, conf={signal.confidence:F3}");
+		                    // reverse
+		                    Print("Reversal: exiting long then entering short");
+		                    ExitLong("AI_Reverse");
+		                    EnterShort(sz, $"{prefix}_Short");
 		                }
+		                else
+		                {
+		                    // flat OR already short -> pyramid/add
+		                    EnterShort(sz, $"{prefix}_Short");
+		                }
+		
+		                if (signal.use_stop)
+		                    SetStopLoss($"{prefix}_Short", CalculationMode.Price, signal.stop_price, false);
+		                if (signal.use_target)
+		                    SetProfitTarget($"{prefix}_Short", CalculationMode.Price, signal.target_price);
+		
+		                Print($"AI Signal: SELL size={sz}, conf={signal.confidence:F3}");
 		                break;
-		                
+		
 		            case 0: // EXIT
 		                if (Position.MarketPosition == MarketPosition.Long)
-		                    ExitLong($"AI_{signal.tool_used}_Exit");
+		                    ExitLong($"{prefix}_Exit");
 		                else if (Position.MarketPosition == MarketPosition.Short)
-		                    ExitShort($"AI_{signal.tool_used}_Exit");
+		                    ExitShort($"{prefix}_Exit");
 		                Print("AI Signal: EXIT");
 		                break;
 		        }
