@@ -151,55 +151,57 @@ class AdaptiveSafetyManager:
             
             return max(1.0, base_size * adaptive_multiplier)
 
-    def calculate_account_based_position_size(self, account_data: Dict, current_price: float,
-                                            current_phase: str, decision: Dict) -> float:
-        """Calculate position size based on AI's stop or full exposure if none is provided."""
-
+    def calculate_account_based_position_size(self, account_data: Dict, current_price: float, 
+                                            current_phase: str) -> float:
+        """FIXED: Calculate position size based on account/margin data as required by prompt"""
+        
+        # Extract account information
         available_capital = account_data.get('buying_power')
         account_balance = account_data.get('account_balance')
         daily_pnl = account_data.get('daily_pnl')
-
+        cash_value = account_data.get('cash_value')
+        
+        # Get adaptive risk parameters
         risk_per_trade_pct = self.meta_learner.get_parameter('risk_per_trade_pct')
         position_size_base = self.meta_learner.get_parameter('position_size_base')
-
+        
+        # Calculate base position size from available capital
         risk_amount = available_capital * risk_per_trade_pct
-        point_value = 2.0  # MNQ = $2 per point (get from NinjaTrader in the future)
-        estimated_margin_per_contract = 500.0 # MNQ intraday margin requirement (need to get from NinjaTrader in the future)
-
-        use_stop = decision.get('use_stop')
-        stop_price = decision.get('stop_price')
-
-        if use_stop and stop_price > 0:
-            stop_distance = abs(current_price - stop_price)
-            risk_per_contract = stop_distance * point_value
-        else:
-            # AI chose no stop — treat full notional exposure as risk per contract
-            risk_per_contract = current_price * point_value
-            log.info("AI chose no stop — sizing based on full notional exposure")
-
-        if risk_per_contract <= 0:
-            log.warning("Invalid risk per contract — skipping trade.")
-            return 0
-
-        base_contracts = (risk_amount / risk_per_contract) * position_size_base
+        
+        # MNQ futures specifics
+        estimated_margin_per_contract = 500.0  # More realistic margin for MNQ (get from ninjatrader in the future)
+        point_value = 2.0  # $2 per point for MNQ (get from ninjatrader in the future)
+        
+        # Maximum contracts by margin
         max_contracts_by_margin = available_capital / estimated_margin_per_contract
-
+        
+        # Phase-based adjustments (adaptive)
         phase_multipliers = {
             'exploration': 0.3,
-            'development': 0.6,
+            'development': 0.6, 
             'production': 1.0
         }
         phase_multiplier = phase_multipliers.get(current_phase, 0.5)
-
-        performance_factor = 1.0 + min(0.5, max(-0.5, daily_pnl / max(1, account_balance)))
-
+        
+        # Account performance adjustment
+        if account_balance > 0:
+            performance_factor = 1.0 + min(0.5, max(-0.5, daily_pnl / account_balance))
+        else:
+            performance_factor = 0.5
+        
+        # Calculate final position size
+        base_contracts = (risk_amount / (current_price * point_value)) * position_size_base
+        
         final_size = base_contracts * phase_multiplier * performance_factor
-        final_size = min(final_size, max_contracts_by_margin * 0.8)
-        final_size = min(final_size, 10)
-
-        log.info(f"AI Position Sizing: Risk=${risk_amount:.2f}, RPC=${risk_per_contract:.2f}, "
-                f"Final={final_size:.2f} contracts, StopUsed={use_stop}")
-
+        
+        # Safety bounds
+        final_size = max(1, min(final_size, max_contracts_by_margin * 0.8))  # Never use more than 80% of margin
+        final_size = min(final_size, 10)  # Absolute safety cap
+        
+        log.info(f"Position calculation: Available=${available_capital:.0f}, "
+                f"Balance=${account_balance:.0f}, Risk=${risk_amount:.0f}, "
+                f"Final={final_size:.1f} contracts, Phase={current_phase}")
+        
         return int(final_size)
 
     def _adapt_learning_phase(self):
