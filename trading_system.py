@@ -17,12 +17,11 @@ class TradingSystem:
     def __init__(self):
         logger.info("Initializing trading system")
         
-        self.config = Config()
         self.portfolio = Portfolio()
         self.data_processor = DataProcessor()
         self.intelligence = IntelligenceEngine()
         self.agent = TradingAgent(self.intelligence, self.portfolio)
-        self.risk_manager = RiskManager(self.portfolio, self.config, self.agent.meta_learner)
+        self.risk_manager = RiskManager(self.portfolio, self.agent.meta_learner)
         
         self.tcp_server = TCPServer()
         self.tcp_server.on_market_data = self._process_market_data

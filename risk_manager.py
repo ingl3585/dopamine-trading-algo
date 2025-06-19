@@ -22,19 +22,15 @@ class Order:
 
 
 class RiskManager:
-    def __init__(self, portfolio, config, meta_learner):
+    def __init__(self, portfolio, meta_learner):
         self.portfolio = portfolio
-        self.config = config
         self.meta_learner = meta_learner
-        
-        # Base margin requirement for MNQ
-        self.margin_per_contract = 500
         
     def validate_order(self, decision: Decision, market_data: MarketData) -> Optional[Order]:
         if decision.action == 'hold':
             return None
         
-        # All limits now come from meta-learner
+        # All limits from meta-learner - no hardcoded values
         max_daily_loss = self.meta_learner.get_parameter('max_daily_loss')
         if market_data.daily_pnl <= -max_daily_loss:
             return None
@@ -43,12 +39,12 @@ class RiskManager:
         if self.portfolio.get_consecutive_losses() >= consecutive_limit:
             return None
         
-        # Position size calculation using meta-learned parameters
+        # Position size calculation using only meta-learned parameters
         size = self._calculate_position_size(decision, market_data)
         if size == 0:
             return None
         
-        # Validate prices
+        # Validate prices using meta-learned bounds
         stop_price = self._validate_stop_price(decision.stop_price, market_data.price, decision.action)
         target_price = self._validate_target_price(decision.target_price, market_data.price, decision.action)
         
@@ -65,20 +61,24 @@ class RiskManager:
     def _calculate_position_size(self, decision: Decision, market_data: MarketData) -> int:
         base_size = decision.size
         
+        # Get meta-learned parameters for all calculations
+        margin_per_contract = self.meta_learner.get_parameter('margin_per_contract')
+        buying_power_usage = self.meta_learner.get_parameter('buying_power_usage')
+        risk_per_trade = self.meta_learner.get_parameter('risk_per_trade')
+        point_value = self.meta_learner.get_parameter('point_value')
+        estimated_stop_points = self.meta_learner.get_parameter('estimated_stop_points')
+        max_position_size = self.meta_learner.get_parameter('max_position_count')
+        
         # Account-based limits
-        max_by_margin = int(market_data.buying_power * 0.8 / self.margin_per_contract)
+        max_by_margin = int(market_data.buying_power * buying_power_usage / margin_per_contract)
         
-        # Meta-learned position limits
-        max_position_size = int(self.meta_learner.get_parameter('max_position_count'))
-        
-        # Risk-based limits using meta-learned risk parameters
-        max_risk_per_trade = self.meta_learner.get_parameter('stop_loss_base') * 2  # Estimate based on typical stop
-        risk_amount = market_data.account_balance * max_risk_per_trade
-        estimated_stop_distance = 20 * 2  # Conservative estimate: 20 points * $2 per point
-        max_by_risk = int(risk_amount / estimated_stop_distance)
+        # Risk-based limits using meta-learned parameters
+        risk_amount = market_data.account_balance * risk_per_trade
+        estimated_stop_distance = estimated_stop_points * point_value
+        max_by_risk = int(risk_amount / estimated_stop_distance) if estimated_stop_distance > 0 else 1
         
         # Apply all limits
-        max_size = min(max_by_margin, max_by_risk, max_position_size)
+        max_size = min(max_by_margin, max_by_risk, int(max_position_size))
         final_size = min(int(base_size), max_size)
         
         return max(0, final_size)
@@ -94,8 +94,12 @@ class RiskManager:
             return 0
         
         # Use meta-learned bounds for stop distance
-        min_stop = self.meta_learner.get_parameter('stop_loss_base') * 0.5
-        max_stop = self.meta_learner.get_parameter('stop_loss_base') * 3.0
+        stop_loss_base = self.meta_learner.get_parameter('stop_loss_base')
+        stop_min_multiplier = self.meta_learner.get_parameter('stop_min_multiplier')
+        stop_max_multiplier = self.meta_learner.get_parameter('stop_max_multiplier')
+        
+        min_stop = stop_loss_base * stop_min_multiplier
+        max_stop = stop_loss_base * stop_max_multiplier
         
         distance = abs(stop_price - current_price) / current_price
         if distance < min_stop or distance > max_stop:
@@ -114,8 +118,12 @@ class RiskManager:
             return 0
         
         # Use meta-learned bounds for target distance
-        min_target = self.meta_learner.get_parameter('take_profit_base') * 0.5
-        max_target = self.meta_learner.get_parameter('take_profit_base') * 4.0
+        take_profit_base = self.meta_learner.get_parameter('take_profit_base')
+        target_min_multiplier = self.meta_learner.get_parameter('target_min_multiplier')
+        target_max_multiplier = self.meta_learner.get_parameter('target_max_multiplier')
+        
+        min_target = take_profit_base * target_min_multiplier
+        max_target = take_profit_base * target_max_multiplier
         
         distance = abs(target_price - current_price) / current_price
         if distance < min_target or distance > max_target:

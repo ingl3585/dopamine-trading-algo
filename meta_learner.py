@@ -167,8 +167,9 @@ class MetaLearner:
     def __init__(self, state_dim: int = 20):
         self.state_dim = state_dim
         
-        # Core parameters that were previously hardcoded
+        # Core parameters
         self.parameters = {
+            # Trading decision parameters
             'confidence_threshold': MetaParameter(0.6, (0.1, 0.9)),
             'position_size_base': MetaParameter(1.5, (0.5, 3.0)),
             'max_daily_loss': MetaParameter(500.0, (100.0, 1000.0)),
@@ -176,7 +177,24 @@ class MetaLearner:
             'trade_frequency_limit': MetaParameter(3.0, (1.0, 10.0)),
             'stop_loss_base': MetaParameter(0.015, (0.005, 0.05)),
             'take_profit_base': MetaParameter(0.03, (0.01, 0.1)),
-            'consecutive_loss_limit': MetaParameter(4.0, (2.0, 8.0))
+            'consecutive_loss_limit': MetaParameter(4.0, (2.0, 8.0)),
+            
+            # Risk management parameters (no more hardcoded values)
+            'margin_per_contract': MetaParameter(500.0, (200.0, 1000.0)),
+            'buying_power_usage': MetaParameter(0.8, (0.5, 0.95)),
+            'risk_per_trade': MetaParameter(0.02, (0.005, 0.05)),
+            'point_value': MetaParameter(2.0, (1.0, 5.0)),
+            'estimated_stop_points': MetaParameter(20.0, (5.0, 50.0)),
+            'stop_min_multiplier': MetaParameter(0.5, (0.1, 1.0)),
+            'stop_max_multiplier': MetaParameter(3.0, (1.5, 5.0)),
+            'target_min_multiplier': MetaParameter(0.5, (0.1, 1.0)),
+            'target_max_multiplier': MetaParameter(4.0, (2.0, 8.0)),
+            
+            # Intelligence subsystem parameters  
+            'pattern_memory_size': MetaParameter(1000.0, (500.0, 5000.0)),
+            'recent_outcomes_window': MetaParameter(100.0, (50.0, 500.0)),
+            'learning_rate_base': MetaParameter(0.1, (0.01, 0.5)),
+            'sequence_similarity_threshold': MetaParameter(0.7, (0.5, 0.9))
         }
         
         # Adaptive components
