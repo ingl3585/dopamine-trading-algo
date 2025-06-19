@@ -2,6 +2,8 @@
 
 Using the current codebase and functions, create a true black-box trading system centered around a reinforcement learning (RL) agent that dynamically adapts to market conditions without any hardcoded logic, thresholds, or fixed decision rules.
 
+Please provide full newly created files if they have not been created yet, and fully modified blocks of code for exising files in order to accomplish this goal
+
 ## Core Agent Responsibilities
 
 The agent must learn to manage:
