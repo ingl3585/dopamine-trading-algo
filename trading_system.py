@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class TradingSystem:
     def __init__(self):
-        logger.info("Initializing trading system")
+        logger.info("Initializing trading system with historical bootstrapping")
         
         self.portfolio = Portfolio()
         self.data_processor = DataProcessor()
@@ -26,20 +26,22 @@ class TradingSystem:
         self.tcp_server = TCPServer()
         self.tcp_server.on_market_data = self._process_market_data
         self.tcp_server.on_trade_completion = self._process_trade_completion
+        self.tcp_server.on_historical_data = self._process_historical_data  # New callback
         
         self.running = False
         self.last_save = time.time()
         self.last_account_update = time.time()
+        self.ready_for_trading = False
         
         # Account monitoring
         self.last_account_balance = 0.0
-        self.account_change_threshold = 0.05  # 5% change triggers adaptation
+        self.account_change_threshold = 0.05
         
         # Load previous state if available
         self._load_state()
 
     def start(self):
-        logger.info("Starting trading system")
+        logger.info("Starting trading system - waiting for historical data...")
         self.tcp_server.start()
         self.running = True
         
@@ -54,6 +56,14 @@ class TradingSystem:
         while self.running:
             time.sleep(0.1)
             
+            # Wait for historical data processing before starting trading
+            if not self.ready_for_trading:
+                if self.tcp_server.is_ready_for_live_trading() and self.intelligence.historical_processed:
+                    self.ready_for_trading = True
+                    logger.info("=== READY FOR LIVE TRADING ===")
+                    self._log_bootstrap_summary()
+                continue
+            
             # Save state every 5 minutes
             if time.time() - self.last_save > 300:
                 self._save_state()
@@ -64,7 +74,25 @@ class TradingSystem:
                 self._log_performance_summary()
                 self.last_account_update = time.time()
 
+    def _process_historical_data(self, historical_data):
+        """Process historical data for pattern bootstrapping"""
+        try:
+            logger.info("Processing historical data for pattern learning...")
+            
+            # Bootstrap the intelligence engine with historical patterns
+            self.intelligence.bootstrap_from_historical_data(historical_data)
+            
+            # Signal that historical processing is complete
+            logger.info("Historical data processing complete")
+            
+        except Exception as e:
+            logger.error(f"Error processing historical data: {e}")
+
     def _process_market_data(self, raw_data):
+        # Only process live market data if we're ready for trading
+        if not self.ready_for_trading:
+            return
+            
         try:
             market_data = self.data_processor.process(raw_data)
             
@@ -100,7 +128,7 @@ class TradingSystem:
                         self.portfolio.add_pending_order(order)
                         
                         # Log with account context
-                        account_risk = (order.size * 600) / market_data.account_balance * 100  # Estimate risk %
+                        account_risk = (order.size * 600) / market_data.account_balance * 100
                         logger.info(f"Order placed: {order.action.upper()} {order.size} @ {order.price:.2f} "
                                   f"(Risk: {account_risk:.1f}%, Balance: ${market_data.account_balance:.0f})")
                     else:
@@ -132,6 +160,26 @@ class TradingSystem:
         except Exception as e:
             logger.error(f"Error processing trade completion: {e}")
 
+    def _log_bootstrap_summary(self):
+        """Log summary of historical pattern learning"""
+        try:
+            bootstrap_stats = self.intelligence.bootstrap_stats
+            intelligence_stats = self.intelligence.get_stats()
+            
+            logger.info("=== BOOTSTRAP SUMMARY ===")
+            logger.info(f"Historical bars processed: {bootstrap_stats['total_bars_processed']}")
+            logger.info(f"Patterns discovered: {bootstrap_stats['patterns_discovered']}")
+            logger.info(f"Bootstrap time: {bootstrap_stats['bootstrap_time']:.1f}s")
+            logger.info(f"DNA patterns: {intelligence_stats['dna_patterns']}")
+            logger.info(f"Micro patterns: {intelligence_stats['micro_patterns']}")
+            logger.info(f"Temporal patterns: {intelligence_stats['temporal_patterns']}")
+            logger.info(f"Immune patterns: {intelligence_stats['immune_patterns']}")
+            logger.info("System ready for live trading with pre-learned patterns")
+            logger.info("=" * 30)
+            
+        except Exception as e:
+            logger.error(f"Error logging bootstrap summary: {e}")
+
     def _check_account_adaptation(self, market_data):
         """Check if we need to adapt to account balance changes"""
         current_balance = market_data.account_balance
@@ -157,7 +205,7 @@ class TradingSystem:
         """Update account tracking after trade"""
         if self.last_account_balance > 0:
             change = (new_balance - self.last_account_balance) / self.last_account_balance
-            if abs(change) > 0.01:  # 1% change
+            if abs(change) > 0.01:
                 logger.info(f"Account balance updated: ${self.last_account_balance:.2f} -> ${new_balance:.2f}")
         
         self.last_account_balance = new_balance
@@ -166,17 +214,17 @@ class TradingSystem:
         """Additional validation with account context"""
         
         # Estimated margin requirement for order
-        estimated_margin = order.size * 600  # $600 per MNQ contract estimate
+        estimated_margin = order.size * 600
         
         # Check available margin
-        if estimated_margin > market_data.available_margin * 0.8:  # Use max 80% of available
+        if estimated_margin > market_data.available_margin * 0.8:
             logger.warning(f"Order rejected: Insufficient margin "
                           f"(Need: ${estimated_margin:.0f}, Available: ${market_data.available_margin:.0f})")
             return False
         
         # Check account risk percentage
         account_risk_pct = estimated_margin / market_data.account_balance
-        max_risk_pct = 0.1 if market_data.account_balance < 10000 else 0.2  # More conservative for smaller accounts
+        max_risk_pct = 0.1 if market_data.account_balance < 10000 else 0.2
         
         if account_risk_pct > max_risk_pct:
             logger.warning(f"Order rejected: Risk too high "
@@ -185,7 +233,7 @@ class TradingSystem:
         
         # Check margin utilization after order
         projected_margin_usage = (market_data.margin_used + estimated_margin) / market_data.net_liquidation
-        if projected_margin_usage > 0.8:  # Don't exceed 80% total margin usage
+        if projected_margin_usage > 0.8:
             logger.warning(f"Order rejected: Total margin usage would be too high "
                           f"({projected_margin_usage:.1%})")
             return False
@@ -207,14 +255,16 @@ class TradingSystem:
             logger.info(f"Win Rate: {portfolio_summary['win_rate']:.1%}")
             logger.info(f"Daily P&L: ${portfolio_summary['daily_pnl']:.2f}")
             logger.info(f"Profit Factor: {portfolio_summary.get('profit_factor', 0):.2f}")
-            logger.info(f"Avg Risk/Trade: {portfolio_summary.get('avg_risk_per_trade_pct', 0):.2f}%")
-            logger.info(f"Margin Usage: ${portfolio_summary.get('current_margin_usage', 0):.0f}")
             
             logger.info(f"Agent Learning Efficiency: {agent_stats['learning_efficiency']:.2%}")
             logger.info(f"Architecture Generation: {agent_stats['architecture_generation']}")
             logger.info(f"Intelligence Patterns: DNA={intelligence_stats['dna_patterns']}, "
                        f"Micro={intelligence_stats['micro_patterns']}, "
                        f"Temporal={intelligence_stats['temporal_patterns']}")
+            
+            if intelligence_stats['historical_processed']:
+                logger.info(f"Bootstrap Stats: {intelligence_stats['bootstrap_stats']['total_bars_processed']} bars processed")
+            
             logger.info("=" * 30)
             
         except Exception as e:
@@ -230,6 +280,7 @@ class TradingSystem:
             system_state = {
                 'last_account_balance': self.last_account_balance,
                 'account_change_threshold': self.account_change_threshold,
+                'ready_for_trading': self.ready_for_trading,
                 'saved_at': time.time()
             }
             
@@ -253,8 +304,13 @@ class TradingSystem:
                     system_state = json.load(f)
                     self.last_account_balance = system_state.get('last_account_balance', 0.0)
                     self.account_change_threshold = system_state.get('account_change_threshold', 0.05)
+                    # Don't restore ready_for_trading - always wait for fresh historical data
             except FileNotFoundError:
                 pass
+            
+            # Log if we have existing patterns
+            if self.intelligence.historical_processed:
+                logger.info("Loaded existing historical patterns - will still wait for fresh bootstrap")
             
         except Exception as e:
             logger.info("Starting with fresh state")
@@ -270,9 +326,18 @@ class TradingSystem:
         final_summary = self.portfolio.get_summary()
         logger.info(f"Final session summary: {final_summary}")
         
-        # Log final account metrics
+        # Log final account metrics and bootstrap stats
         account_perf = self.portfolio.get_account_performance()
         if account_perf:
             logger.info(f"Session return: {account_perf.get('session_return_pct', 0):.2f}%")
             logger.info(f"Max drawdown: {account_perf.get('max_drawdown_pct', 0):.2f}%")
             logger.info(f"Profit factor: {account_perf.get('profit_factor', 0):.2f}")
+        
+        # Log final intelligence stats
+        intelligence_stats = self.intelligence.get_stats()
+        if intelligence_stats['historical_processed']:
+            logger.info(f"Final pattern count: DNA={intelligence_stats['dna_patterns']}, "
+                       f"Micro={intelligence_stats['micro_patterns']}, "
+                       f"Temporal={intelligence_stats['temporal_patterns']}")
+        
+        logger.info("Trading system shutdown complete")

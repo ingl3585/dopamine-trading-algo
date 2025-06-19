@@ -2,6 +2,7 @@
 
 import json
 import numpy as np
+import logging
 
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -9,6 +10,8 @@ from datetime import datetime
 from typing import Dict, List
 
 from data_processor import MarketData
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class Features:
@@ -39,8 +42,177 @@ class IntelligenceEngine:
         self.patterns = defaultdict(list)
         self.recent_outcomes = deque(maxlen=100)
         
+        # Historical data processing state
+        self.historical_processed = False
+        self.bootstrap_stats = {
+            'total_bars_processed': 0,
+            'patterns_discovered': 0,
+            'bootstrap_time': 0
+        }
+        
         self.load_patterns(self.memory_file)
         
+    def bootstrap_from_historical_data(self, historical_data):
+        """Bootstrap pattern learning from historical data"""
+        logger.info("Starting historical data bootstrap...")
+        start_time = datetime.now()
+        
+        try:
+            # Process each timeframe
+            total_bars = 0
+            
+            for timeframe in ['15m', '5m', '1m']:
+                bars_key = f'bars_{timeframe}'
+                if bars_key in historical_data:
+                    bars = historical_data[bars_key]
+                    processed = self._process_historical_bars(bars, timeframe)
+                    total_bars += processed
+                    logger.info(f"Processed {processed} {timeframe} bars")
+            
+            # Generate synthetic outcomes for pattern initialization
+            self._generate_synthetic_outcomes()
+            
+            # Update bootstrap stats
+            self.bootstrap_stats['total_bars_processed'] = total_bars
+            self.bootstrap_stats['patterns_discovered'] = (
+                len(self.dna_patterns) + 
+                len(self.micro_patterns) + 
+                len(self.temporal_patterns)
+            )
+            self.bootstrap_stats['bootstrap_time'] = (datetime.now() - start_time).total_seconds()
+            
+            self.historical_processed = True
+            
+            logger.info(f"Bootstrap complete: {total_bars} bars processed, "
+                       f"{self.bootstrap_stats['patterns_discovered']} patterns discovered "
+                       f"in {self.bootstrap_stats['bootstrap_time']:.1f}s")
+            
+            # Save bootstrapped patterns
+            self.save_patterns(self.memory_file)
+            
+        except Exception as e:
+            logger.error(f"Bootstrap error: {e}")
+            self.historical_processed = False
+    
+    def _process_historical_bars(self, bars, timeframe):
+        """Process historical bars for pattern learning"""
+        if not bars or len(bars) < 20:
+            return 0
+        
+        prices = [bar['close'] for bar in bars]
+        volumes = [bar['volume'] for bar in bars]
+        timestamps = [datetime.fromtimestamp(bar['timestamp'] / 10000000 - 62135596800) for bar in bars]
+        
+        processed_count = 0
+        
+        # Process with sliding windows
+        window_size = min(20, len(bars) // 4)
+        
+        for i in range(window_size, len(bars)):
+            window_prices = prices[i-window_size:i+1]
+            window_volumes = volumes[i-window_size:i+1]
+            window_timestamp = timestamps[i]
+            
+            # DNA pattern learning
+            if len(window_prices) >= 15:
+                dna_seq = self._create_dna_sequence(window_prices[-15:], window_volumes[-15:])
+                if dna_seq and dna_seq not in self.dna_patterns:
+                    # Initialize with neutral success rate
+                    self.dna_patterns[dna_seq] = 0.5
+            
+            # Micro pattern learning
+            if len(window_prices) >= 10:
+                micro_pattern = self._create_micro_pattern(window_prices[-10:], window_volumes[-10:])
+                if micro_pattern and micro_pattern not in self.micro_patterns:
+                    self.micro_patterns[micro_pattern] = 0.5
+            
+            # Temporal pattern learning
+            temporal_key = self._create_temporal_key(window_timestamp)
+            if temporal_key not in self.temporal_patterns:
+                self.temporal_patterns[temporal_key] = 0.5
+            
+            processed_count += 1
+        
+        return processed_count
+    
+    def _generate_synthetic_outcomes(self):
+        """Generate synthetic outcomes based on market structure for initial learning"""
+        
+        # For DNA patterns - favor patterns with moderate consistency
+        for seq, _ in list(self.dna_patterns.items()):
+            # Analyze sequence characteristics
+            up_moves = seq.count('A') + seq.count('T')
+            down_moves = seq.count('C') + seq.count('G')
+            total_moves = len(seq)
+            
+            if total_moves > 0:
+                trend_strength = abs(up_moves - down_moves) / total_moves
+                # Moderate trends tend to be more reliable
+                if 0.3 < trend_strength < 0.7:
+                    self.dna_patterns[seq] = 0.5 + (trend_strength - 0.5) * 0.2
+                else:
+                    self.dna_patterns[seq] = 0.45  # Slightly pessimistic for extreme patterns
+        
+        # For micro patterns - favor momentum patterns
+        for pattern_id, _ in list(self.micro_patterns.items()):
+            try:
+                # Extract momentum from pattern ID
+                parts = pattern_id.split('_')
+                if len(parts) >= 3:
+                    momentum = int(parts[1])
+                    volatility = int(parts[2])
+                    
+                    # Moderate momentum with low volatility is often good
+                    if abs(momentum) > 5 and volatility < 50:
+                        self.micro_patterns[pattern_id] = 0.55
+                    else:
+                        self.micro_patterns[pattern_id] = 0.48
+            except:
+                self.micro_patterns[pattern_id] = 0.5
+        
+        # For temporal patterns - use market session knowledge
+        for time_key, _ in list(self.temporal_patterns.items()):
+            try:
+                parts = time_key.split('_')
+                if len(parts) >= 3:
+                    day_of_week = int(parts[0])
+                    hour = int(parts[1])
+                    
+                    # Market open/close times tend to be more volatile
+                    if hour in [9, 10, 15, 16]:  # Market open/close hours
+                        self.temporal_patterns[time_key] = 0.52
+                    elif day_of_week in [0, 4]:  # Monday/Friday
+                        self.temporal_patterns[time_key] = 0.48
+                    else:
+                        self.temporal_patterns[time_key] = 0.5
+            except:
+                self.temporal_patterns[time_key] = 0.5
+        
+        logger.info(f"Generated synthetic outcomes for {len(self.dna_patterns)} DNA, "
+                   f"{len(self.micro_patterns)} micro, {len(self.temporal_patterns)} temporal patterns")
+    
+    def _create_micro_pattern(self, prices, volumes):
+        """Create micro pattern from recent price/volume data"""
+        if len(prices) < 10:
+            return None
+        
+        price_changes = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+        avg_change = np.mean(price_changes)
+        volatility = np.std(price_changes)
+        
+        # Add volume characteristics
+        volume_trend = (volumes[-1] - volumes[0]) / volumes[0] if volumes[0] > 0 else 0
+        
+        return f"micro_{int(avg_change * 1000)}_{int(volatility * 1000)}_{int(volume_trend * 100)}"
+    
+    def _create_temporal_key(self, timestamp):
+        """Create temporal key from timestamp"""
+        hour = timestamp.hour
+        minute = timestamp.minute // 15 * 15  # Round to 15-min intervals
+        day_of_week = timestamp.weekday()
+        
+        return f"{day_of_week}_{hour}_{minute}"
+    
     def extract_features(self, data: MarketData) -> Features:
         if len(data.prices_1m) < 20:
             return self._default_features()
@@ -75,7 +247,10 @@ class IntelligenceEngine:
         # Overall confidence based on signal strength and consistency
         signal_strength = abs(subsystem_result['overall_signal'])
         momentum_strength = abs(price_momentum) + abs(volume_momentum)
-        confidence = min(1.0, signal_strength + momentum_strength * 0.5)
+        
+        # Boost confidence if we have historical patterns
+        pattern_boost = 0.1 if self.historical_processed else 0.0
+        confidence = min(1.0, signal_strength + momentum_strength * 0.5 + pattern_boost)
         
         return Features(
             price_momentum=price_momentum,
@@ -104,7 +279,7 @@ class IntelligenceEngine:
         temporal_signal = self._process_temporal(timestamp)
         immune_signal = self._process_immune(prices, volumes, timestamp)
         
-        # Combine signals (weights will be applied externally by meta-learner)
+        # Combine signals
         subsystem_signals = {
             'dna': dna_signal,
             'micro': micro_signal, 
@@ -112,9 +287,15 @@ class IntelligenceEngine:
             'immune': immune_signal
         }
         
-        # Calculate raw overall signal (unweighted average for internal use)
+        # Calculate raw overall signal
         signals = list(subsystem_signals.values())
         overall_signal = sum(signals) / len(signals) if signals else 0.0
+        
+        # Boost signal strength if we have good historical patterns
+        if self.historical_processed and abs(overall_signal) > 0:
+            pattern_count = len(self.dna_patterns) + len(self.micro_patterns) + len(self.temporal_patterns)
+            if pattern_count > 100:  # Good pattern base
+                overall_signal *= 1.2  # 20% boost
         
         return {
             'overall_signal': overall_signal,
@@ -130,6 +311,10 @@ class IntelligenceEngine:
         
         sequence = self._create_dna_sequence(prices[-15:], volumes[-15:])
         
+        if not sequence:
+            return 0.0
+        
+        # Find best matching pattern
         best_match = None
         best_similarity = 0
         
@@ -141,7 +326,9 @@ class IntelligenceEngine:
         
         if best_match:
             success_rate = self.dna_patterns[best_match]
-            return (success_rate - 0.5) * 2  # Convert to -1 to +1 range
+            signal = (success_rate - 0.5) * 2  # Convert to -1 to +1 range
+            # Boost signal based on similarity
+            return signal * best_similarity
         
         return 0.0
     
@@ -150,15 +337,9 @@ class IntelligenceEngine:
         if len(prices) < 10:
             return 0.0
         
-        recent_prices = prices[-10:]
-        price_changes = [recent_prices[i] - recent_prices[i-1] for i in range(1, len(recent_prices))]
+        pattern_id = self._create_micro_pattern(prices[-10:], volumes[-10:])
         
-        avg_change = np.mean(price_changes)
-        volatility = np.std(price_changes)
-        
-        pattern_id = f"micro_{int(avg_change * 1000)}_{int(volatility * 1000)}"
-        
-        if pattern_id in self.micro_patterns:
+        if pattern_id and pattern_id in self.micro_patterns:
             success_rate = self.micro_patterns[pattern_id]
             return (success_rate - 0.5) * 2
         
@@ -166,11 +347,7 @@ class IntelligenceEngine:
     
     def _process_temporal(self, timestamp: datetime) -> float:
         """Temporal subsystem - time-based patterns"""
-        hour = timestamp.hour
-        minute = timestamp.minute // 15 * 15  # Round to 15-min intervals
-        day_of_week = timestamp.weekday()
-        
-        time_key = f"{day_of_week}_{hour}_{minute}"
+        time_key = self._create_temporal_key(timestamp)
         
         if time_key in self.temporal_patterns:
             success_rate = self.temporal_patterns[time_key]
@@ -190,10 +367,13 @@ class IntelligenceEngine:
     
     def _create_dna_sequence(self, prices: List[float], volumes: List[float]) -> str:
         """Create DNA sequence from price/volume data"""
+        if len(prices) < 2 or len(volumes) < 2:
+            return ""
+        
         sequence = ""
         
         for i in range(1, len(prices)):
-            price_change = (prices[i] - prices[i-1]) / prices[i-1]
+            price_change = (prices[i] - prices[i-1]) / prices[i-1] if prices[i-1] != 0 else 0
             vol_ratio = volumes[i] / volumes[i-1] if volumes[i-1] > 0 else 1.0
             
             # Encode as DNA bases
@@ -210,8 +390,10 @@ class IntelligenceEngine:
             return 0.0
         
         min_len = min(len(seq1), len(seq2))
-        matches = sum(1 for i in range(min_len) if seq1[i] == seq2[i])
+        if min_len == 0:
+            return 0.0
         
+        matches = sum(1 for i in range(min_len) if seq1[i] == seq2[i])
         return matches / max(len(seq1), len(seq2))
     
     def _create_immune_pattern(self, prices: List[float], volumes: List[float], 
@@ -220,7 +402,7 @@ class IntelligenceEngine:
         if len(prices) < 5:
             return ""
         
-        recent_change = (prices[-1] - prices[-5]) / prices[-5]
+        recent_change = (prices[-1] - prices[-5]) / prices[-5] if prices[-5] != 0 else 0
         volatility = np.std(prices[-10:]) if len(prices) >= 10 else 0
         hour = timestamp.hour
         
@@ -231,8 +413,8 @@ class IntelligenceEngine:
         """Get current patterns for debugging"""
         return {
             'dna_sequence': self._create_dna_sequence(prices[-15:], volumes[-15:]) if len(prices) >= 15 else "",
-            'micro_pattern': f"micro_{len(prices)}",
-            'temporal_key': f"{timestamp.weekday()}_{timestamp.hour}_{timestamp.minute // 15 * 15}",
+            'micro_pattern': self._create_micro_pattern(prices[-10:], volumes[-10:]) if len(prices) >= 10 else "",
+            'temporal_key': self._create_temporal_key(timestamp),
             'immune_pattern': self._create_immune_pattern(prices, volumes, timestamp)
         }
     
@@ -240,8 +422,8 @@ class IntelligenceEngine:
         if len(prices) < 10:
             return 0.0
             
-        trend = (prices[-1] - prices[-10]) / prices[-10]
-        vol_trend = (volumes[-1] - np.mean(volumes[-5:])) / np.mean(volumes[-5:])
+        trend = (prices[-1] - prices[-10]) / prices[-10] if prices[-10] != 0 else 0
+        vol_trend = (volumes[-1] - np.mean(volumes[-5:])) / np.mean(volumes[-5:]) if np.mean(volumes[-5:]) > 0 else 0
         
         if (trend > 0 and vol_trend > 0) or (trend < 0 and vol_trend < 0):
             pattern_strength = abs(trend) * (1 + abs(vol_trend))
@@ -251,7 +433,7 @@ class IntelligenceEngine:
         return np.tanh(pattern_strength * 10)
     
     def learn_from_outcome(self, trade):
-        outcome = trade.pnl / abs(trade.entry_price * 0.01)
+        outcome = trade.pnl / abs(trade.entry_price * 0.01) if trade.entry_price != 0 else 0
         
         # Learn subsystem patterns if available
         if hasattr(trade, 'intelligence_data'):
@@ -278,7 +460,7 @@ class IntelligenceEngine:
                 self.dna_patterns[dna_seq] = 0.5
             
             current_rate = self.dna_patterns[dna_seq]
-            learning_rate = 0.1
+            learning_rate = 0.05 if self.historical_processed else 0.1  # Slower learning if bootstrapped
             
             if outcome > 0:
                 self.dna_patterns[dna_seq] = min(0.95, current_rate + learning_rate)
@@ -292,10 +474,12 @@ class IntelligenceEngine:
                 self.micro_patterns[micro_pattern] = 0.5
             
             current_rate = self.micro_patterns[micro_pattern]
+            learning_rate = 0.05 if self.historical_processed else 0.1
+            
             if outcome > 0:
-                self.micro_patterns[micro_pattern] = min(0.95, current_rate + 0.1)
+                self.micro_patterns[micro_pattern] = min(0.95, current_rate + learning_rate)
             else:
-                self.micro_patterns[micro_pattern] = max(0.05, current_rate - 0.1)
+                self.micro_patterns[micro_pattern] = max(0.05, current_rate - learning_rate)
         
         # Update temporal patterns
         temporal_key = current_patterns.get('temporal_key', '')
@@ -304,10 +488,12 @@ class IntelligenceEngine:
                 self.temporal_patterns[temporal_key] = 0.5
             
             current_rate = self.temporal_patterns[temporal_key]
+            learning_rate = 0.02 if self.historical_processed else 0.05
+            
             if outcome > 0:
-                self.temporal_patterns[temporal_key] = min(0.95, current_rate + 0.05)
+                self.temporal_patterns[temporal_key] = min(0.95, current_rate + learning_rate)
             else:
-                self.temporal_patterns[temporal_key] = max(0.05, current_rate - 0.05)
+                self.temporal_patterns[temporal_key] = max(0.05, current_rate - learning_rate)
         
         # Update immune system
         if outcome < -50:  # Bad outcome
@@ -315,23 +501,30 @@ class IntelligenceEngine:
             if immune_pattern:
                 self.immune_patterns.add(immune_pattern)
         
-        self._cleanup_patterns()
+        # Periodic cleanup
+        if len(self.dna_patterns) > 1000:
+            self._cleanup_patterns()
     
     def _cleanup_patterns(self):
         """Remove old or poor-performing patterns"""
-        max_patterns = 1000
+        max_patterns = 800
         
         if len(self.dna_patterns) > max_patterns:
-            sorted_patterns = sorted(self.dna_patterns.items(), key=lambda x: abs(x[1] - 0.5))
-            self.dna_patterns = dict(sorted_patterns[-max_patterns//2:])
+            # Keep patterns that are far from neutral (0.5)
+            sorted_patterns = sorted(self.dna_patterns.items(), key=lambda x: abs(x[1] - 0.5), reverse=True)
+            self.dna_patterns = dict(sorted_patterns[:max_patterns])
         
         if len(self.micro_patterns) > max_patterns:
-            sorted_patterns = sorted(self.micro_patterns.items(), key=lambda x: abs(x[1] - 0.5))
-            self.micro_patterns = dict(sorted_patterns[-max_patterns//2:])
+            sorted_patterns = sorted(self.micro_patterns.items(), key=lambda x: abs(x[1] - 0.5), reverse=True)
+            self.micro_patterns = dict(sorted_patterns[:max_patterns])
         
         if len(self.temporal_patterns) > max_patterns:
-            sorted_patterns = sorted(self.temporal_patterns.items(), key=lambda x: abs(x[1] - 0.5))
-            self.temporal_patterns = dict(sorted_patterns[-max_patterns//2:])
+            sorted_patterns = sorted(self.temporal_patterns.items(), key=lambda x: abs(x[1] - 0.5), reverse=True)
+            self.temporal_patterns = dict(sorted_patterns[:max_patterns])
+        
+        # Keep most recent immune patterns
+        if len(self.immune_patterns) > 200:
+            self.immune_patterns = set(list(self.immune_patterns)[-200:])
     
     def _empty_subsystem_result(self):
         return {
@@ -359,6 +552,8 @@ class IntelligenceEngine:
             'immune_patterns': list(self.immune_patterns),
             'patterns': dict(self.patterns),
             'recent_outcomes': list(self.recent_outcomes),
+            'historical_processed': self.historical_processed,
+            'bootstrap_stats': self.bootstrap_stats,
             'saved_at': datetime.now().isoformat()
         }
         
@@ -376,17 +571,32 @@ class IntelligenceEngine:
             self.immune_patterns = set(data.get('immune_patterns', []))
             self.patterns = defaultdict(list, data.get('patterns', {}))
             self.recent_outcomes = deque(data.get('recent_outcomes', []), maxlen=100)
+            self.historical_processed = data.get('historical_processed', False)
+            self.bootstrap_stats = data.get('bootstrap_stats', {
+                'total_bars_processed': 0,
+                'patterns_discovered': 0,
+                'bootstrap_time': 0
+            })
+            
+            if self.historical_processed:
+                logger.info(f"Loaded patterns: DNA={len(self.dna_patterns)}, "
+                           f"Micro={len(self.micro_patterns)}, "
+                           f"Temporal={len(self.temporal_patterns)}")
             
         except FileNotFoundError:
-            pass
+            logger.info("No existing patterns found, starting fresh")
     
     def get_stats(self) -> Dict:
-        return {
+        stats = {
             'dna_patterns': len(self.dna_patterns),
             'micro_patterns': len(self.micro_patterns),
             'temporal_patterns': len(self.temporal_patterns),
             'immune_patterns': len(self.immune_patterns),
             'total_patterns': len(self.patterns),
             'recent_performance': np.mean(self.recent_outcomes) if self.recent_outcomes else 0,
-            'pattern_count': sum(len(outcomes) for outcomes in self.patterns.values())
+            'pattern_count': sum(len(outcomes) for outcomes in self.patterns.values()),
+            'historical_processed': self.historical_processed,
+            'bootstrap_stats': self.bootstrap_stats
         }
+        
+        return stats

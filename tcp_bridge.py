@@ -25,9 +25,11 @@ class TCPServer:
         # Callbacks
         self.on_market_data: Optional[Callable] = None
         self.on_trade_completion: Optional[Callable] = None
+        self.on_historical_data: Optional[Callable] = None  # NEW: Historical data callback
         
         self.signals_sent = 0
         self.data_received = 0
+        self.historical_data_received = False  # NEW: Track historical data status
         
     def start(self):
         logger.info(f"Starting TCP server on ports {self.data_port} and {self.signal_port}")
@@ -64,7 +66,7 @@ class TCPServer:
                     break
                     
                 msg_length = struct.unpack('<I', header)[0]
-                if msg_length <= 0 or msg_length > 1000000:
+                if msg_length <= 0 or msg_length > 10000000:  # MODIFIED: Increased for historical data
                     continue
                 
                 # Read message data
@@ -76,8 +78,15 @@ class TCPServer:
                 message = json.loads(data.decode())
                 self.data_received += 1
                 
-                # Enhanced message handling for better account data
-                if message.get('type') == 'trade_completion':
+                # MODIFIED: Enhanced message handling for historical data
+                message_type = message.get('type', '')
+                
+                if message_type == 'historical_data':
+                    if self.on_historical_data:
+                        logger.info(f"Received historical data: {len(message.get('bars_15m', []))} 15m bars")
+                        self.on_historical_data(message)
+                        self.historical_data_received = True
+                elif message_type == 'trade_completion':
                     if self.on_trade_completion:
                         self.on_trade_completion(message)
                 elif self._is_market_data(message):
@@ -242,6 +251,11 @@ class TCPServer:
         except Exception as e:
             logger.error(f"Signal validation error: {e}")
             return False
+    
+    # NEW: Method to check if ready for live trading
+    def is_ready_for_live_trading(self) -> bool:
+        """Check if historical data has been received and processed"""
+        return self.historical_data_received
     
     def stop(self):
         logger.info("Stopping TCP server")

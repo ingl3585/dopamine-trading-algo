@@ -1,4 +1,4 @@
-// ResearchStrategy.cs - Enhanced version with better account data
+// ResearchStrategy.cs
 
 using System;
 using System.Collections.Generic;
@@ -20,6 +20,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private Thread signalThread;
         private bool isConnected;
         private bool isRunning;
+        private bool historicalDataSent = false;
         
         private List<double> prices1m = new List<double>();
         private List<double> prices5m = new List<double>();
@@ -39,7 +40,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             switch (State)
             {
                 case State.SetDefaults:
-                    Description = "Adaptive AI Trading Strategy";
+                    Description = "Adaptive AI Trading Strategy with Historical Bootstrapping";
                     Name = "ResearchStrategy";
                     Calculate = Calculate.OnBarClose;
                     BarsRequiredToTrade = 1;
@@ -79,7 +80,111 @@ namespace NinjaTrader.NinjaScript.Strategies
             UpdatePriceData();
             
             if (BarsInProgress == 0 && isConnected)
-                SendDataToPython();
+            {
+                // Send historical data first, then live data
+                if (!historicalDataSent)
+                {
+                    SendHistoricalData();
+                    historicalDataSent = true;
+                }
+                else
+                {
+                    SendDataToPython();
+                }
+            }
+        }
+        
+        private void SendHistoricalData()
+        {
+            try
+            {
+                Print("Sending historical data to Python...");
+                
+                // Get 10 days of data (approximately 1000+ bars for 15min)
+                int historyDays = 10;
+                int barsToSend = historyDays * 96; // 96 15-min bars per day
+                
+                var historicalData = new
+                {
+                    type = "historical_data",
+                    bars_15m = GetHistoricalBars(BarsArray[1], Math.Min(barsToSend, BarsArray[1].Count)),
+                    bars_5m = GetHistoricalBars(BarsArray[2], Math.Min(barsToSend * 3, BarsArray[2].Count)),
+                    bars_1m = GetHistoricalBars(BarsArray[3], Math.Min(barsToSend * 15, BarsArray[3].Count)),
+                    timestamp = DateTime.Now.Ticks
+                };
+                
+                string json = SerializeHistoricalData(historicalData);
+                SendJsonMessage(json);
+                
+                Print($"Historical data sent: {historicalData.bars_15m.Count} 15m bars, " +
+                      $"{historicalData.bars_5m.Count} 5m bars, {historicalData.bars_1m.Count} 1m bars");
+            }
+            catch (Exception ex)
+            {
+                Print($"Historical data send error: {ex.Message}");
+            }
+        }
+        
+        private List<BarData> GetHistoricalBars(Bars bars, int count)
+        {
+            var barList = new List<BarData>();
+            
+            if (bars == null || bars.Count == 0)
+                return barList;
+            
+            int startIndex = Math.Max(0, bars.Count - count);
+            
+            for (int i = startIndex; i < bars.Count; i++)
+            {
+                barList.Add(new BarData
+                {
+                    timestamp = bars.GetTime(i).Ticks,
+                    open = bars.GetOpen(i),
+                    high = bars.GetHigh(i),
+                    low = bars.GetLow(i),
+                    close = bars.GetClose(i),
+                    volume = bars.GetVolume(i)
+                });
+            }
+            
+            return barList;
+        }
+        
+        private string SerializeHistoricalData(dynamic data)
+        {
+            var sb = new StringBuilder();
+            sb.Append("{");
+            sb.Append($"\"type\":\"historical_data\",");
+            sb.Append($"\"bars_15m\":{SerializeBarArray(data.bars_15m)},");
+            sb.Append($"\"bars_5m\":{SerializeBarArray(data.bars_5m)},");
+            sb.Append($"\"bars_1m\":{SerializeBarArray(data.bars_1m)},");
+            sb.Append($"\"timestamp\":{data.timestamp}");
+            sb.Append("}");
+            return sb.ToString();
+        }
+        
+        private string SerializeBarArray(List<BarData> bars)
+        {
+            var sb = new StringBuilder();
+            sb.Append("[");
+            
+            for (int i = 0; i < bars.Count; i++)
+            {
+                if (i > 0) sb.Append(",");
+                
+                var bar = bars[i];
+                sb.Append("{");
+                sb.Append($"\"timestamp\":{bar.timestamp},");
+                sb.Append($"\"open\":{bar.open.ToString(CultureInfo.InvariantCulture)},");
+                sb.Append($"\"high\":{bar.high.ToString(CultureInfo.InvariantCulture)},");
+                sb.Append($"\"low\":{bar.low.ToString(CultureInfo.InvariantCulture)},");
+                sb.Append($"\"close\":{bar.close.ToString(CultureInfo.InvariantCulture)},");
+                sb.Append($"\"volume\":{bar.volume}");
+                sb.Append("}");
+            }
+            
+            sb.Append("]");
+            return sb.ToString();
         }
         
         private void UpdatePriceData()
@@ -132,13 +237,7 @@ namespace NinjaTrader.NinjaScript.Strategies
             try
             {
                 var json = BuildMarketDataJson();
-                
-                byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
-                byte[] header = BitConverter.GetBytes(jsonBytes.Length);
-                
-                var stream = dataClient.GetStream();
-                stream.Write(header, 0, 4);
-                stream.Write(jsonBytes, 0, jsonBytes.Length);
+                SendJsonMessage(json);
             }
             catch (Exception ex)
             {
@@ -147,28 +246,34 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
         
+        private void SendJsonMessage(string json)
+        {
+            byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
+            byte[] header = BitConverter.GetBytes(jsonBytes.Length);
+            
+            var stream = dataClient.GetStream();
+            stream.Write(header, 0, 4);
+            stream.Write(jsonBytes, 0, jsonBytes.Length);
+        }
+        
         private string BuildMarketDataJson()
         {
             var sb = new StringBuilder();
             sb.Append("{");
             
-            // Add price arrays
+            sb.Append($"\"type\":\"live_data\",");
             sb.Append($"\"price_1m\":{SerializeDoubleArray(prices1m)},");
             sb.Append($"\"price_5m\":{SerializeDoubleArray(prices5m)},");
             sb.Append($"\"price_15m\":{SerializeDoubleArray(prices15m)},");
-            
-            // Add volume arrays
             sb.Append($"\"volume_1m\":{SerializeDoubleArray(volumes1m)},");
             sb.Append($"\"volume_5m\":{SerializeDoubleArray(volumes5m)},");
             sb.Append($"\"volume_15m\":{SerializeDoubleArray(volumes15m)},");
             
-            // Enhanced account data for adaptive system
+            // Enhanced account data
             double currentBalance = Account.Get(AccountItem.CashValue, Currency.UsDollar);
             double currentBuyingPower = Account.Get(AccountItem.BuyingPower, Currency.UsDollar);
             double totalPnL = Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
             double dailyPnL = sessionStartSet ? (totalPnL - sessionStartPnL) : 0;
-            
-            // Additional account metrics for better position sizing
             double netLiquidation = Account.Get(AccountItem.NetLiquidation, Currency.UsDollar);
             double marginUsed = Account.Get(AccountItem.InitialMargin, Currency.UsDollar);
             double availableMargin = currentBuyingPower - marginUsed;
@@ -262,7 +367,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                 
                 string entryName = $"AI_{DateTime.Now:HHmmss}";
                 
-                // Enhanced position management for adaptive system
                 switch (action)
                 {
                     case 1: // Buy
@@ -282,7 +386,6 @@ namespace NinjaTrader.NinjaScript.Strategies
                         break;
                 }
                 
-                // Apply stops and targets only if AI system wants them
                 if (useStop && stopPrice > 0)
                     SetStopLoss(entryName, CalculationMode.Price, stopPrice, false);
                     
@@ -426,13 +529,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                           $"\"timestamp\":{DateTime.Now.Ticks}" +
                           $"}}";
                 
-                byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
-                byte[] header = BitConverter.GetBytes(jsonBytes.Length);
-                
-                var stream = dataClient.GetStream();
-                stream.Write(header, 0, 4);
-                stream.Write(jsonBytes, 0, jsonBytes.Length);
-                
+                SendJsonMessage(json);
                 Print($"Trade completed: P&L ${pnl:F2} ({exitReason})");
             }
             catch (Exception ex)
@@ -459,5 +556,15 @@ namespace NinjaTrader.NinjaScript.Strategies
             
             Print("Strategy cleanup complete");
         }
+    }
+    
+    public class BarData
+    {
+        public long timestamp;
+        public double open;
+        public double high;
+        public double low;
+        public double close;
+        public long volume;
     }
 }

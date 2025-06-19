@@ -34,6 +34,8 @@ Communication between Python and NinjaTrader must occur over TCP using two chann
 
 This system must:
 
+Send historical data to Python from NinjaTrader (historical bootstrapping)
+
 Continuously learn and evolve through actual trade outcomes
 
 Maintain no static thresholds for trading or risk management
