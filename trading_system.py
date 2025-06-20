@@ -170,7 +170,7 @@ class TradingSystem:
                         self.portfolio.add_pending_order(order)
                         
                         # Log with account context
-                        account_risk = (order.size * 500) / market_data.account_balance * 100
+                        account_risk = (order.size * 100) / market_data.account_balance * 100
                         logger.info(f"Order placed: {order.action.upper()} {order.size} @ {order.price:.2f} "
                                     f"(Risk: {account_risk:.1f}%, Balance: ${market_data.account_balance:.0f})")
                     else:
@@ -310,7 +310,7 @@ class TradingSystem:
         """Additional validation with account context"""
         
         # Estimated margin requirement for order
-        estimated_margin = order.size * 500
+        estimated_margin = order.size * 100
         
         # Check available margin
         if estimated_margin > market_data.available_margin * 0.8:

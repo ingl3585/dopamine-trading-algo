@@ -102,7 +102,7 @@ class RiskManager:
         position_factor = self.meta_learner.get_parameter('position_size_factor')
         max_position_factor = self.meta_learner.get_parameter('max_position_factor')
 
-        est_margin = 500
+        est_margin = 100
         sizes = []
 
         if available_margin > 0:
