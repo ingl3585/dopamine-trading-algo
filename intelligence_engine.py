@@ -263,56 +263,45 @@ class IntelligenceEngine:
         return total
     
     def extract_features(self, data: MarketData) -> Features:
-        """Enhanced feature extraction with microstructure and adaptation"""
         if len(data.prices_1m) < 20:
             return self._default_features()
-            
+
         prices = np.array(data.prices_1m[-20:])
         volumes = np.array(data.volumes_1m[-20:]) if len(data.volumes_1m) >= 20 else np.ones(20)
-        
-        # Basic features
+
         short_ma = np.mean(prices[-5:])
         long_ma = np.mean(prices)
         price_momentum = (short_ma - long_ma) / long_ma
-        
+
         recent_vol = np.mean(volumes[-5:])
         avg_vol = np.mean(volumes)
         volume_momentum = (recent_vol - avg_vol) / avg_vol if avg_vol > 0 else 0
-        
+
         high = np.max(prices)
         low = np.min(prices)
         price_position = (prices[-1] - low) / (high - low) if high > low else 0.5
-        
-        volatility = np.std(prices) / np.mean(prices) if np.mean(prices) > 0 else 0
-        
-        now = datetime.fromtimestamp(data.timestamp)
 
-        # With this enhanced error handling:
+        volatility = np.std(prices) / np.mean(prices) if np.mean(prices) > 0 else 0
+
         try:
-            # Try direct timestamp conversion first
             now = datetime.fromtimestamp(data.timestamp)
             time_of_day = (now.hour * 60 + now.minute) / 1440
-        except (OSError, ValueError, OverflowError) as e:
-            # Fallback: try .NET ticks conversion
+        except (OSError, ValueError, OverflowError):
             try:
-                if data.timestamp > 1e15:  # Likely .NET ticks
+                if data.timestamp > 1e15:
                     unix_timestamp = (data.timestamp - 621355968000000000) / 10000000
-                    # Additional safety check
                     if unix_timestamp < 0 or unix_timestamp > 2147483647:
-                        raise ValueError("Timestamp out of range")
+                        raise ValueError
                     now = datetime.fromtimestamp(unix_timestamp)
                     time_of_day = (now.hour * 60 + now.minute) / 1440
                 else:
-                    raise ValueError("Invalid timestamp format")
+                    raise ValueError
             except:
-                # Final fallback: use current time
                 import time as time_module
                 now = datetime.fromtimestamp(time_module.time())
                 time_of_day = (now.hour * 60 + now.minute) / 1440
                 logger.warning(f"Using current time as fallback due to invalid timestamp: {data.timestamp}")
-                time_of_day = (now.hour * 60 + now.minute) / 1440
-        
-        # Enhanced market features
+
         market_features = {
             'volatility': volatility,
             'price_momentum': price_momentum,
@@ -322,50 +311,41 @@ class IntelligenceEngine:
             'account_balance': data.account_balance,
             'margin_utilization': data.margin_utilization
         }
-        
-        # Process through enhanced orchestrator
-        timestamps = [data.timestamp - i * 60 for i in range(len(prices))][::-1]  # Approximate timestamps
+
+        timestamps = [data.timestamp - i * 60 for i in range(len(prices))][::-1]
         orchestrator_result = self.orchestrator.process_market_data(
             data.prices_1m, data.volumes_1m, market_features, timestamps
         )
-        
-        # Microstructure analysis
+
         microstructure_result = self.microstructure_engine.analyze_market_state(
             data.prices_1m, data.volumes_1m
         )
-        
-        # Real-time adaptation
+
         adaptation_context = {
             'volatility': volatility,
             'trend_strength': abs(price_momentum),
             'volume_regime': min(1.0, volume_momentum + 0.5),
             'time_of_day': time_of_day
         }
-        
-        # Create feature tensor for adaptation
+
         feature_tensor = self._create_feature_tensor(market_features, orchestrator_result, microstructure_result)
         adaptation_decision = self.adaptation_engine.get_adaptation_decision(feature_tensor, adaptation_context)
-        
-        # Basic pattern score
+
         pattern_score = self._recognize_patterns(prices, volumes)
-        
-        # Enhanced confidence calculation
         signal_strength = abs(orchestrator_result['overall_signal'])
         momentum_strength = abs(price_momentum) + abs(volume_momentum)
         microstructure_strength = abs(microstructure_result.get('microstructure_signal', 0))
         adaptation_quality = adaptation_decision.get('adaptation_quality', 0.5)
-        
-        # Boost confidence if we have historical patterns and good adaptation
         pattern_boost = 0.15 if self.historical_processed else 0.0
         adaptation_boost = adaptation_quality * 0.1
-        
-        confidence = min(1.0, signal_strength + momentum_strength * 0.3 + 
-                        microstructure_strength * 0.2 + pattern_boost + adaptation_boost)
-        
-        # Extract microstructure features
+        confidence = min(
+            1.0,
+            signal_strength + momentum_strength * 0.3 + microstructure_strength * 0.2 + pattern_boost + adaptation_boost
+        )
+
         microstructure_features = microstructure_result.get('order_flow', {})
         regime_state = microstructure_result.get('regime_state', {})
-        
+
         return Features(
             price_momentum=price_momentum,
             volume_momentum=volume_momentum,
@@ -375,11 +355,10 @@ class IntelligenceEngine:
             pattern_score=pattern_score,
             confidence=confidence,
             dna_signal=orchestrator_result['dna_signal'],
-            micro_signal=orchestrator_result['temporal_signal'],  # Note: this maps to temporal for compatibility
+            micro_signal=orchestrator_result['temporal_signal'],
             temporal_signal=orchestrator_result['temporal_signal'],
             immune_signal=orchestrator_result['immune_signal'],
             overall_signal=orchestrator_result['overall_signal'],
-            # Enhanced features
             microstructure_signal=microstructure_result.get('microstructure_signal', 0.0),
             regime_adjusted_signal=microstructure_result.get('regime_adjusted_signal', 0.0),
             adaptation_quality=adaptation_quality,
