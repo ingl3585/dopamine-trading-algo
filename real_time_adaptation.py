@@ -175,7 +175,7 @@ class OnlineLearner:
         self.loss_history.append(float(loss))
         
         if self.weights.grad is not None:
-            grad_norm = torch.norm(self.weights.grad).item()
+            grad_norm = torch.norm(self.weights.grad).detach().item()
             self.gradient_history.append(grad_norm)
         
         # Exit emergency mode if performance improves
@@ -467,7 +467,7 @@ class RealTimeAdaptationEngine:
         """Estimate uncertainty for current decision"""
         
         # Simple uncertainty based on feature magnitude and prediction confidence
-        feature_uncertainty = torch.std(features).item()
+        feature_uncertainty = torch.std(features).detach().item()
         prediction_uncertainty = abs(prediction) if abs(prediction) < 0.5 else 0.5
         
         return (feature_uncertainty + prediction_uncertainty) / 2.0

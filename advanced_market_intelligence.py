@@ -356,11 +356,11 @@ class AdvancedMarketIntelligence:
             risk_params = outputs['risk_params']
             
             return {
-                'action_probabilities': action_probs.squeeze().cpu().numpy(),
+                'action_probabilities': action_probs.squeeze().detach().cpu().numpy(),
                 'confidence': float(confidence.squeeze()),
                 'suggested_position_size': float(position_size.squeeze()),
-                'risk_parameters': risk_params.squeeze().cpu().numpy(),
-                'neural_signal': float(torch.sum(action_probs.squeeze() * torch.tensor([0, 1, -1])))  # Convert to signal
+                'risk_parameters': risk_params.squeeze().detach().cpu().numpy(),
+                'neural_signal': float(torch.sum(action_probs.squeeze() * torch.tensor([0, 1, -1])).detach())  # Convert to signal
             }
     
     def _create_adaptation_context(self, market_features: Dict, microstructure_result: Dict) -> Dict:

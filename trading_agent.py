@@ -190,8 +190,8 @@ class TradingAgent:
             # Get action probabilities with temperature scaling
             temperature = 1.0 + features.volatility * 2.0  # Higher temperature for higher volatility
             action_logits = combined_outputs['action_logits'] / temperature
-            action_probs = F.softmax(action_logits, dim=-1).cpu().numpy()[0]
-            confidence = float(combined_outputs['confidence'].cpu().numpy()[0])
+            action_probs = F.softmax(action_logits, dim=-1).detach().cpu().numpy()[0]
+            confidence = float(combined_outputs['confidence'].detach().cpu().numpy()[0])
             
             # Enhanced exploration decision with adaptation strategy
             should_explore = self.meta_learner.should_explore(
@@ -228,8 +228,8 @@ class TradingAgent:
                 action_idx = 0
             
             # Enhanced sizing and risk parameters
-            position_size = float(combined_outputs['position_size'].cpu().numpy()[0])
-            risk_params = combined_outputs['risk_params'].cpu().numpy()[0]
+            position_size = float(combined_outputs['position_size'].detach().cpu().numpy()[0])
+            risk_params = combined_outputs['risk_params'].detach().cpu().numpy()[0]
             
             # Uncertainty-adjusted position sizing
             uncertainty_factor = 1.0 - adaptation_decision.get('uncertainty', 0.5)
@@ -269,8 +269,8 @@ class TradingAgent:
         
         # Store enhanced intelligence data
         intelligence_data = {
-            'subsystem_signals': subsystem_signals.cpu().numpy().tolist(),
-            'subsystem_weights': subsystem_weights.cpu().numpy().tolist(),
+            'subsystem_signals': subsystem_signals.detach().cpu().numpy().tolist(),
+            'subsystem_weights': subsystem_weights.detach().cpu().numpy().tolist(),
             'weighted_signal': float(weighted_signal),
             'adaptation_decision': adaptation_decision,
             'few_shot_prediction': float(few_shot_prediction.squeeze()),
@@ -282,7 +282,7 @@ class TradingAgent:
         self.last_trade_time = market_data.timestamp
         
         # Store few-shot learning example
-        self.few_shot_learner.add_support_example(learned_state.squeeze(), weighted_signal.item())
+        self.few_shot_learner.add_support_example(learned_state.squeeze(), weighted_signal.detach().item())
         
         return Decision(
             action=action,
@@ -293,7 +293,7 @@ class TradingAgent:
             primary_tool=primary_tool,
             exploration=exploration,
             intelligence_data=intelligence_data,
-            state_features=learned_state.squeeze().cpu().numpy().tolist(),
+            state_features=learned_state.squeeze().detach().cpu().numpy().tolist(),
             adaptation_strategy=selected_strategy,
             uncertainty_estimate=adaptation_decision.get('uncertainty', 0.5),
             few_shot_prediction=float(few_shot_prediction.squeeze()),
@@ -391,7 +391,7 @@ class TradingAgent:
         # Stack and calculate variance
         prob_stack = torch.stack(action_probs)
         prob_variance = torch.var(prob_stack, dim=0)
-        uncertainty = torch.mean(prob_variance).item()
+        uncertainty = torch.mean(prob_variance).detach().item()
         
         return min(1.0, uncertainty * 5.0)  # Scale to [0, 1]
     
