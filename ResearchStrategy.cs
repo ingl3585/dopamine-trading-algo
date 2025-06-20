@@ -34,6 +34,10 @@ namespace NinjaTrader.NinjaScript.Strategies
         private double lastBuyingPower = 0;
         private double sessionStartPnL = 0;
         private bool sessionStartSet = false;
+		
+		// Data sending tracking
+        private DateTime lastDataSent = DateTime.MinValue;
+        private int dataSendCount = 0;
         
         protected override void OnStateChange()
         {
@@ -74,58 +78,92 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
         
-        protected override void OnBarUpdate()
-        {
-            if (State != State.Realtime || !IsFirstTickOfBar)
-                return;
-                
-            UpdatePriceData();
-            
-            if (BarsInProgress == 0 && isConnected)
-            {
-                // Send historical data first, then live data
-                if (!historicalDataSent)
-                {
-                    SendHistoricalData();
-                    historicalDataSent = true;
-                }
-                else
-                {
-                    SendDataToPython();
-                }
-            }
-        }
-        
-        private void SendHistoricalData()
-        {
-            try
-            {
-                Print("Sending historical data to Python...");
-                
-                // Get 10 days of data (approximately 1000+ bars for 15min)
-                int historyDays = 10;
-                int barsToSend = historyDays * 96; // 96 15-min bars per day
-                
-                var historicalData = new
-                {
-                    type = "historical_data",
-                    bars_15m = GetHistoricalBars(BarsArray[1], Math.Min(barsToSend, BarsArray[1].Count)),
-                    bars_5m = GetHistoricalBars(BarsArray[2], Math.Min(barsToSend * 3, BarsArray[2].Count)),
-                    bars_1m = GetHistoricalBars(BarsArray[3], Math.Min(barsToSend * 15, BarsArray[3].Count)),
-                    timestamp = DateTime.Now.Ticks
-                };
-                
-                string json = SerializeHistoricalData(historicalData);
-                SendJsonMessage(json);
-                
-                Print($"Historical data sent: {historicalData.bars_15m.Count} 15m bars, " +
-                      $"{historicalData.bars_5m.Count} 5m bars, {historicalData.bars_1m.Count} 1m bars");
-            }
-            catch (Exception ex)
-            {
-                Print($"Historical data send error: {ex.Message}");
-            }
-        }
+		protected override void OnBarUpdate()
+		{
+		    // Only process on the primary series (BarsInProgress == 0)
+		    // OnBarUpdate gets called for each timeframe: 0=primary, 1=15m, 2=5m, 3=1m
+		    if (BarsInProgress != 0 || State != State.Realtime)
+		        return;
+		    
+		    // Update price data from all available series when processing primary series
+		    UpdatePriceData();
+		    
+		    if (!isConnected)
+		        return;
+		    
+		    // Send historical data once
+		    if (!historicalDataSent)
+		    {
+		        SendHistoricalData();
+		        historicalDataSent = true;
+		        return; // Don't send live data on the same bar as historical
+		    }
+		    
+		    // Send live data on every bar close of primary series
+		    if (HasValidData())
+		    {
+		        SendDataToPython();
+		        dataSendCount++;
+		        
+		        // Debug logging every 5 sends
+		        if (dataSendCount % 5 == 0)
+		        {
+		            Print($"Live data sent #{dataSendCount} - Primary: {Close[0]:F2}, 15m: {(BarsArray.Length > 1 && BarsArray[1].Count > 0 ? Closes[1][0].ToString("F2") : "N/A")}, Time: {Time[0]:HH:mm:ss}");
+		        }
+		    }
+		}
+		
+		private bool HasValidData()
+		{
+		    // Check if we have valid data from primary series and at least some historical data
+		    bool primaryValid = Close[0] > 0 && Volume[0] > 0;
+		    bool listsHaveData = prices1m.Count > 0 && volumes1m.Count > 0;
+		    
+		    return primaryValid && listsHaveData;
+		}
+
+		private void SendHistoricalData()
+		{
+		    try
+		    {
+		        Print("Sending historical data to Python...");
+		        
+		        // Wait for all series to have some data before sending
+		        if (BarsArray.Length < 3 || BarsArray[1].Count == 0 || BarsArray[2].Count == 0)
+		        {
+		            Print("Waiting for all timeframe data to load...");
+		            return;
+		        }
+		        
+		        // Get 10 days of data (approximately 1000+ bars for 15min)
+		        int historyDays = 10;
+		        int barsToSend15m = Math.Min(historyDays * 96, BarsArray[1].Count); // 96 15-min bars per day
+		        int barsToSend5m = Math.Min(historyDays * 288, BarsArray[2].Count); // 288 5-min bars per day
+		        int barsToSend1m = Math.Min(historyDays * 1440, BarsArray[0].Count); // 1440 1-min bars per day (using primary)
+		        
+		        var historicalData = new
+		        {
+		            type = "historical_data",
+		            bars_15m = GetHistoricalBars(BarsArray[1], barsToSend15m),
+		            bars_5m = GetHistoricalBars(BarsArray[2], barsToSend5m),
+		            bars_1m = GetHistoricalBars(BarsArray[0], barsToSend1m), // Using primary series as 1m data
+		            timestamp = DateTime.Now.Ticks
+		        };
+		        
+		        string json = SerializeHistoricalData(historicalData);
+		        SendJsonMessage(json);
+		        
+		        Print($"Historical data sent: {historicalData.bars_15m.Count} 15m bars, " +
+		              $"{historicalData.bars_5m.Count} 5m bars, {historicalData.bars_1m.Count} 1m bars");
+		              
+		        historicalDataSent = true;
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Historical data send error: {ex.Message}");
+		        // Don't set historicalDataSent = true on error, so it will retry
+		    }
+		}
         
         private List<BarData> GetHistoricalBars(Bars bars, int count)
         {
@@ -189,24 +227,52 @@ namespace NinjaTrader.NinjaScript.Strategies
             return sb.ToString();
         }
         
-        private void UpdatePriceData()
-        {
-            switch (BarsInProgress)
-            {
-                case 1: // 15m
-                    UpdateList(prices15m, Closes[1][0], 100);
-                    UpdateList(volumes15m, Volumes[1][0], 100);
-                    break;
-                case 2: // 5m
-                    UpdateList(prices5m, Closes[2][0], 300);
-                    UpdateList(volumes5m, Volumes[2][0], 300);
-                    break;
-                case 3: // 1m
-                    UpdateList(prices1m, Closes[3][0], 1000);
-                    UpdateList(volumes1m, Volumes[3][0], 1000);
-                    break;
-            }
-        }
+		private void UpdatePriceData()
+		{
+		    // Only update when processing the primary series to avoid duplicate updates
+		    if (BarsInProgress != 0) 
+		        return;
+		    
+		    // The primary series data (whatever timeframe the strategy is running on)
+		    // We'll treat this as our base timeframe
+		    UpdateList(prices1m, Close[0], 1000);
+		    UpdateList(volumes1m, Volume[0], 1000);
+		    
+		    // Update from additional series if they have data
+		    // BarsArray[1] = 15m series
+		    if (BarsArray.Length > 1 && BarsArray[1].Count > 0)
+		    {
+		        UpdateList(prices15m, Closes[1][0], 100);
+		        UpdateList(volumes15m, Volumes[1][0], 100);
+		    }
+		    
+		    // BarsArray[2] = 5m series  
+		    if (BarsArray.Length > 2 && BarsArray[2].Count > 0)
+		    {
+		        UpdateList(prices5m, Closes[2][0], 300);
+		        UpdateList(volumes5m, Volumes[2][0], 300);
+		    }
+		    
+		    // Note: BarsArray[3] would be 1m, but we're using the primary series as our minute data
+		    // If you want true 1m data separate from primary, you'd access it here as Closes[3][0]
+		}
+		
+		private void LogDataSeriesInfo()
+		{
+		    Print($"Data Series Info:");
+		    Print($"  Primary (BarsArray[0]): {BarsArray[0].Count} bars, Current: {Close[0]:F2}");
+		    
+		    if (BarsArray.Length > 1)
+		        Print($"  15m (BarsArray[1]): {BarsArray[1].Count} bars, Current: {(BarsArray[1].Count > 0 ? Closes[1][0].ToString("F2") : "N/A")}");
+		    
+		    if (BarsArray.Length > 2)
+		        Print($"  5m (BarsArray[2]): {BarsArray[2].Count} bars, Current: {(BarsArray[2].Count > 0 ? Closes[2][0].ToString("F2") : "N/A")}");
+		        
+		    if (BarsArray.Length > 3)
+		        Print($"  1m (BarsArray[3]): {BarsArray[3].Count} bars, Current: {(BarsArray[3].Count > 0 ? Closes[3][0].ToString("F2") : "N/A")}");
+		        
+		    Print($"  Lists - 1m: {prices1m.Count}, 5m: {prices5m.Count}, 15m: {prices15m.Count}");
+		}
         
         private void UpdateList(List<double> list, double value, int maxSize)
         {
@@ -215,38 +281,56 @@ namespace NinjaTrader.NinjaScript.Strategies
                 list.RemoveAt(0);
         }
         
-        private void ConnectToPython()
-        {
-            try
-            {
-                dataClient = new TcpClient("localhost", 5556);
-                signalClient = new TcpClient("localhost", 5557);
-                isConnected = true;
-                Print("Connected to Python AI system");
-            }
-            catch (Exception ex)
-            {
-                Print($"Connection failed: {ex.Message}");
-                isConnected = false;
-            }
-        }
+		private void ConnectToPython()
+		{
+		    try
+		    {
+		        Print("Attempting to connect to Python AI system...");
+		        
+		        dataClient = new TcpClient("localhost", 5556);
+		        signalClient = new TcpClient("localhost", 5557);
+		        isConnected = true;
+		        
+		        Print("Connected to Python AI system successfully");
+		        
+		        // Log initial data series info for debugging
+		        LogDataSeriesInfo();
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Connection failed: {ex.Message}");
+		        isConnected = false;
+		    }
+		}
         
-        private void SendDataToPython()
-        {
-            if (!isConnected || dataClient?.Connected != true)
-                return;
-                
-            try
-            {
-                var json = BuildMarketDataJson();
-                SendJsonMessage(json);
-            }
-            catch (Exception ex)
-            {
-                Print($"Data send error: {ex.Message}");
-                isConnected = false;
-            }
-        }
+		private void SendDataToPython()
+		{
+		    if (!isConnected || dataClient?.Connected != true)
+		    {
+		        Print("Cannot send data - not connected to Python");
+		        return;
+		    }
+		        
+		    try
+		    {
+		        var json = BuildMarketDataJson();
+		        
+		        if (string.IsNullOrEmpty(json))
+		        {
+		            Print("Cannot send data - JSON is empty");
+		            return;
+		        }
+		        
+		        SendJsonMessage(json);
+		        
+		        Print($"Data send #{dataSendCount} - Lists: 1m={prices1m.Count}, 5m={prices5m.Count}, 15m={prices15m.Count}");
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Data send error: {ex.Message}");
+		        isConnected = false;
+		    }
+		}
         
         private void SendJsonMessage(string json)
         {
@@ -258,40 +342,54 @@ namespace NinjaTrader.NinjaScript.Strategies
             stream.Write(jsonBytes, 0, jsonBytes.Length);
         }
         
-        private string BuildMarketDataJson()
-        {
-            var sb = new StringBuilder();
-            sb.Append("{");
-            
-            sb.Append($"\"type\":\"live_data\",");
-            sb.Append($"\"price_1m\":{SerializeDoubleArray(prices1m)},");
-            sb.Append($"\"price_5m\":{SerializeDoubleArray(prices5m)},");
-            sb.Append($"\"price_15m\":{SerializeDoubleArray(prices15m)},");
-            sb.Append($"\"volume_1m\":{SerializeDoubleArray(volumes1m)},");
-            sb.Append($"\"volume_5m\":{SerializeDoubleArray(volumes5m)},");
-            sb.Append($"\"volume_15m\":{SerializeDoubleArray(volumes15m)},");
-            
-            // Enhanced account data
-            double currentBalance = Account.Get(AccountItem.CashValue, Currency.UsDollar);
-            double currentBuyingPower = Account.Get(AccountItem.BuyingPower, Currency.UsDollar);
-            double totalPnL = Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
-            double dailyPnL = sessionStartSet ? (totalPnL - sessionStartPnL) : 0;
-            double netLiquidation = Account.Get(AccountItem.NetLiquidation, Currency.UsDollar);
-            double marginUsed = Account.Get(AccountItem.InitialMargin, Currency.UsDollar);
-            double availableMargin = currentBuyingPower - marginUsed;
-            
-            sb.Append($"\"account_balance\":{currentBalance.ToString(CultureInfo.InvariantCulture)},");
-            sb.Append($"\"buying_power\":{currentBuyingPower.ToString(CultureInfo.InvariantCulture)},");
-            sb.Append($"\"daily_pnl\":{dailyPnL.ToString(CultureInfo.InvariantCulture)},");
-            sb.Append($"\"net_liquidation\":{netLiquidation.ToString(CultureInfo.InvariantCulture)},");
-            sb.Append($"\"margin_used\":{marginUsed.ToString(CultureInfo.InvariantCulture)},");
-            sb.Append($"\"available_margin\":{availableMargin.ToString(CultureInfo.InvariantCulture)},");
-            sb.Append($"\"open_positions\":{Position.Quantity},");
-            sb.Append($"\"timestamp\":{DateTime.Now.Ticks}");
-            
-            sb.Append("}");
-            return sb.ToString();
-        }
+		private string BuildMarketDataJson()
+		{
+		    try
+		    {
+		        var sb = new StringBuilder();
+		        sb.Append("{");
+		        
+		        sb.Append($"\"type\":\"live_data\",");
+		        sb.Append($"\"price_1m\":{SerializeDoubleArray(prices1m)},");
+		        sb.Append($"\"price_5m\":{SerializeDoubleArray(prices5m)},");
+		        sb.Append($"\"price_15m\":{SerializeDoubleArray(prices15m)},");
+		        sb.Append($"\"volume_1m\":{SerializeDoubleArray(volumes1m)},");
+		        sb.Append($"\"volume_5m\":{SerializeDoubleArray(volumes5m)},");
+		        sb.Append($"\"volume_15m\":{SerializeDoubleArray(volumes15m)},");
+		        
+		        // Enhanced account data with validation
+		        double currentBalance = Account.Get(AccountItem.CashValue, Currency.UsDollar);
+		        double currentBuyingPower = Account.Get(AccountItem.BuyingPower, Currency.UsDollar);
+		        double totalPnL = Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
+		        double dailyPnL = sessionStartSet ? (totalPnL - sessionStartPnL) : 0;
+		        double netLiquidation = Account.Get(AccountItem.NetLiquidation, Currency.UsDollar);
+		        double marginUsed = Account.Get(AccountItem.InitialMargin, Currency.UsDollar);
+		        double availableMargin = Math.Max(0, currentBuyingPower - marginUsed);
+		        
+		        // Validate account data
+		        if (currentBalance <= 0) currentBalance = 25000; // Default fallback
+		        if (currentBuyingPower <= 0) currentBuyingPower = currentBalance;
+		        if (netLiquidation <= 0) netLiquidation = currentBalance;
+		        
+		        sb.Append($"\"account_balance\":{currentBalance.ToString(CultureInfo.InvariantCulture)},");
+		        sb.Append($"\"buying_power\":{currentBuyingPower.ToString(CultureInfo.InvariantCulture)},");
+		        sb.Append($"\"daily_pnl\":{dailyPnL.ToString(CultureInfo.InvariantCulture)},");
+		        sb.Append($"\"net_liquidation\":{netLiquidation.ToString(CultureInfo.InvariantCulture)},");
+		        sb.Append($"\"margin_used\":{marginUsed.ToString(CultureInfo.InvariantCulture)},");
+		        sb.Append($"\"available_margin\":{availableMargin.ToString(CultureInfo.InvariantCulture)},");
+		        sb.Append($"\"open_positions\":{Position.Quantity},");
+		        sb.Append($"\"current_price\":{Close[0].ToString(CultureInfo.InvariantCulture)},"); // Add current price
+		        sb.Append($"\"timestamp\":{DateTime.Now.Ticks}");
+		        
+		        sb.Append("}");
+		        return sb.ToString();
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Error building market data JSON: {ex.Message}");
+		        return string.Empty;
+		    }
+		}
         
         private string SerializeDoubleArray(List<double> array)
         {
