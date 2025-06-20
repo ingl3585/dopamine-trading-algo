@@ -1,4 +1,13 @@
 // ResearchStrategy.cs
+// Advanced AI Trading Strategy with Multi-Entry Scaling and Position Reversal Capability
+//
+// Key Features:
+// - Supports up to 5 entries per direction for position scaling
+// - Automatic position reversals (long to short, short to long)
+// - Each entry gets unique signal name for proper tracking
+// - Individual stop loss and profit target management per entry
+// - Enhanced position and execution tracking with safety limits
+// - Real-time data streaming to Python AI system
 
 using System;
 using System.Collections.Generic;
@@ -39,6 +48,11 @@ namespace NinjaTrader.NinjaScript.Strategies
         private DateTime lastDataSent = DateTime.MinValue;
         private int dataSendCount = 0;
         
+        // Track entry counter for unique signal names when scaling in
+        private int entryCounter = 0;
+        private DateTime lastEntryTime = DateTime.MinValue;
+        private int entriesThisMinute = 0;
+        
         protected override void OnStateChange()
         {
             switch (State)
@@ -48,6 +62,10 @@ namespace NinjaTrader.NinjaScript.Strategies
 				    Name = "ResearchStrategy";
 				    Calculate = Calculate.OnBarClose;
 				    BarsRequiredToTrade = 1;
+				    
+				    // CRITICAL: Allow multiple entries in same direction for scaling
+				    EntriesPerDirection = 5;  // Allow up to 5 entries per direction
+				    EntryHandling = EntryHandling.AllEntries;  // Process all entries until limit reached
 				    break;
 				
 				case State.Configure:
@@ -464,36 +482,106 @@ namespace NinjaTrader.NinjaScript.Strategies
                 bool useTarget = signal.Item6;
                 double targetPrice = signal.Item7;
                 
-                string entryName = $"AI_{DateTime.Now:HHmmss}";
+                // Safety check: Limit entries per minute to prevent overtrading
+                DateTime currentTime = DateTime.Now;
+                if (currentTime.Minute != lastEntryTime.Minute)
+                {
+                    entriesThisMinute = 0;  // Reset counter for new minute
+                }
                 
+                if (entriesThisMinute >= 3)  // Max 3 entries per minute
+                {
+                    Print($"Entry rate limit reached ({entriesThisMinute} entries this minute). Signal ignored.");
+                    return;
+                }
+                
+                // Check position size limits (max 15 contracts total)
+                int currentPosition = Math.Abs(Position.Quantity);
+                if (currentPosition >= 15)
+                {
+                    Print($"Maximum position size reached ({currentPosition} contracts). Entry signal ignored.");
+                    return;
+                }
+                
+                // Generate unique entry name for scaling capability
+                entryCounter++;
+                string entryName = $"AI_{DateTime.Now:HHmmss}_{entryCounter}";
+                
+                // Enhanced logic: Handle scaling in same direction vs position reversals
                 switch (action)
                 {
-                    case 1: // Buy
-                        if (Position.MarketPosition == MarketPosition.Short)
-                            ExitShort(entryName + "_Cover");
+                    case 1: // Buy Signal
+                        if (Position.MarketPosition == MarketPosition.Long)
+                        {
+                            // Scaling into existing long position
+                            Print($"Scaling into LONG position: +{size} contracts (Current: {Position.Quantity})");
+                        }
+                        else if (Position.MarketPosition == MarketPosition.Short)
+                        {
+                            // Reversing from short to long - NinjaTrader handles this automatically
+                            int totalSize = Math.Abs(Position.Quantity) + size;
+                            Print($"REVERSING position: Short {Math.Abs(Position.Quantity)} -> Long {size} (Total Long: {size})");
+                        }
+                        else
+                        {
+                            // New long position from flat
+                            Print($"New LONG position: {size} contracts");
+                        }
                         
                         if (size > 0)
+                        {
                             EnterLong(size, entryName);
+                            entriesThisMinute++;
+                            lastEntryTime = currentTime;
+                        }
                         break;
                         
-                    case 2: // Sell
-                        if (Position.MarketPosition == MarketPosition.Long)
-                            ExitLong(entryName + "_Exit");
+                    case 2: // Sell Signal
+                        if (Position.MarketPosition == MarketPosition.Short)
+                        {
+                            // Scaling into existing short position
+                            Print($"Scaling into SHORT position: +{size} contracts (Current: {Position.Quantity})");
+                        }
+                        else if (Position.MarketPosition == MarketPosition.Long)
+                        {
+                            // Reversing from long to short - NinjaTrader handles this automatically
+                            int totalSize = Math.Abs(Position.Quantity) + size;
+                            Print($"REVERSING position: Long {Math.Abs(Position.Quantity)} -> Short {size} (Total Short: {size})");
+                        }
+                        else
+                        {
+                            // New short position from flat
+                            Print($"New SHORT position: {size} contracts");
+                        }
                         
                         if (size > 0)
+                        {
                             EnterShort(size, entryName);
+                            entriesThisMinute++;
+                            lastEntryTime = currentTime;
+                        }
                         break;
                 }
                 
+                // Set stop loss and profit target for this specific entry
                 if (useStop && stopPrice > 0)
+                {
                     SetStopLoss(entryName, CalculationMode.Price, stopPrice, false);
-					Print($"Stop set at {stopPrice:F2}");
+                    Print($"Stop set for {entryName} at {stopPrice:F2}");
+                }
                     
                 if (useTarget && targetPrice > 0)
+                {
                     SetProfitTarget(entryName, CalculationMode.Price, targetPrice);
-					Print($"Target set at {targetPrice:F2}");
+                    Print($"Target set for {entryName} at {targetPrice:F2}");
+                }
                 
-                Print($"AI Signal: {(action == 1 ? "BUY" : "SELL")} {size} contracts (Conf: {confidence:P0})");
+                Print($"AI Signal Processed: {(action == 1 ? "BUY" : "SELL")} {size} contracts " +
+                      $"(Entry: {entryName}, Conf: {confidence:P0}, New Position: {Position.Quantity})");
+                
+                // Reset counter periodically to prevent overflow
+                if (entryCounter > 999)
+                    entryCounter = 0;
                 
             }
             catch (Exception ex)
@@ -599,9 +687,16 @@ namespace NinjaTrader.NinjaScript.Strategies
                                                 double price, int quantity, MarketPosition marketPosition, 
                                                 string orderId, DateTime time)
         {
-            if (execution.Order?.Name?.Contains("AI_") == true && marketPosition == MarketPosition.Flat)
+            // Track completion of any AI-generated order (for scaling positions)
+            if (execution.Order?.Name?.Contains("AI_") == true)
             {
-                SendTradeCompletion(execution, price);
+                Print($"Execution: {execution.Order.Name}, Price: {price:F2}, Qty: {quantity}, Position: {marketPosition}");
+                
+                // Send completion data when position is completely flat
+                if (marketPosition == MarketPosition.Flat)
+                {
+                    SendTradeCompletion(execution, price);
+                }
             }
         }
         
