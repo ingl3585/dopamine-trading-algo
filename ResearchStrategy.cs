@@ -52,6 +52,7 @@ namespace NinjaTrader.NinjaScript.Strategies
         private int entryCounter = 0;
         private DateTime lastEntryTime = DateTime.MinValue;
         private int entriesThisMinute = 0;
+		private int lastTradeCount = 0;
         
         protected override void OnStateChange()
         {
@@ -683,78 +684,90 @@ namespace NinjaTrader.NinjaScript.Strategies
             return false;
         }
         
-        protected override void OnExecutionUpdate(Execution execution, string executionId, 
-                                                double price, int quantity, MarketPosition marketPosition, 
-                                                string orderId, DateTime time)
-        {
-            // Track completion of any AI-generated order (for scaling positions)
-            if (execution.Order?.Name?.Contains("AI_") == true)
-            {
-                Print($"Execution: {execution.Order.Name}, Price: {price:F2}, Qty: {quantity}, Position: {marketPosition}");
-                
-                // Send completion data when position is completely flat
-                if (marketPosition == MarketPosition.Flat)
-                {
-                    SendTradeCompletion(execution, price);
-                }
-            }
-        }
+		protected override void OnExecutionUpdate(Execution execution, string executionId, 
+		                                        double price, int quantity, MarketPosition marketPosition, 
+		                                        string orderId, DateTime time)
+		{
+		    // Track completion of any AI-generated order (for scaling positions)
+		    if (execution.Order?.Name?.Contains("AI_") == true)
+		    {
+		        Print($"Execution: {execution.Order.Name}, Price: {price:F2}, Qty: {quantity}, Position: {marketPosition}");
+		        
+		        // ENHANCED: Check for completed trades instead of just flat positions
+		        CheckForCompletedTrades();
+		    }
+		}
+		
+		private void CheckForCompletedTrades()
+		{
+		    int currentTradeCount = SystemPerformance.AllTrades.Count;
+		    
+		    // If we have new completed trades
+		    if (currentTradeCount > lastTradeCount)
+		    {
+		        // Send completion data for each new completed trade
+		        for (int i = lastTradeCount; i < currentTradeCount; i++)
+		        {
+		            var completedTrade = SystemPerformance.AllTrades[i];
+		            SendTradeCompletionForTrade(completedTrade);
+		        }
+		        
+		        lastTradeCount = currentTradeCount;
+		    }
+		}
         
-        private void SendTradeCompletion(Execution execution, double exitPrice)
-        {
-            if (!isConnected || dataClient?.Connected != true)
-                return;
-                
-            try
-            {
-                double pnl = 0.0;
-                double entryPrice = 0.0;
-                int quantity = 0;
-                DateTime entryTime = DateTime.Now;
-                
-                if (SystemPerformance.AllTrades.Count > 0)
-                {
-                    var lastTrade = SystemPerformance.AllTrades[SystemPerformance.AllTrades.Count - 1];
-                    pnl = lastTrade.ProfitCurrency;
-                    entryPrice = lastTrade.Entry.Price;
-                    quantity = lastTrade.Quantity;
-                    entryTime = lastTrade.Entry.Time;
-                }
-                
-                string exitReason = execution.Order.Name.Contains("Stop") ? "stop_hit" :
-                                   execution.Order.Name.Contains("Target") ? "target_hit" : "ai_exit";
-                
-                // Enhanced trade completion data for advanced risk analysis
-                double currentBalance = Account.Get(AccountItem.CashValue, Currency.UsDollar);
-                double netLiquidation = Account.Get(AccountItem.NetLiquidation, Currency.UsDollar);
-                double marginUsed = Account.Get(AccountItem.InitialMargin, Currency.UsDollar);
-                double totalPnL = Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
-                double dailyPnL = sessionStartSet ? (totalPnL - sessionStartPnL) : 0;
-                
-                var json = $"{{" +
-                          $"\"type\":\"trade_completion\"," +
-                          $"\"final_pnl\":{pnl.ToString(CultureInfo.InvariantCulture)}," +
-                          $"\"exit_price\":{exitPrice.ToString(CultureInfo.InvariantCulture)}," +
-                          $"\"entry_price\":{entryPrice.ToString(CultureInfo.InvariantCulture)}," +
-                          $"\"quantity\":{quantity}," +
-                          $"\"exit_reason\":\"{exitReason}\"," +
-                          $"\"entry_time\":{entryTime.Ticks}," +
-                          $"\"exit_time\":{DateTime.Now.Ticks}," +
-                          $"\"account_balance\":{currentBalance.ToString(CultureInfo.InvariantCulture)}," +
-                          $"\"net_liquidation\":{netLiquidation.ToString(CultureInfo.InvariantCulture)}," +
-                          $"\"margin_used\":{marginUsed.ToString(CultureInfo.InvariantCulture)}," +
-                          $"\"daily_pnl\":{dailyPnL.ToString(CultureInfo.InvariantCulture)}," +
-                          $"\"timestamp\":{DateTime.Now.Ticks}" +
-                          $"}}";
-                
-                SendJsonMessage(json);
-                Print($"Trade completed: P&L ${pnl:F2} ({exitReason}) - Balance: ${currentBalance:F0}");
-            }
-            catch (Exception ex)
-            {
-                Print($"Completion send error: {ex.Message}");
-            }
-        }
+		private void SendTradeCompletionForTrade(Trade completedTrade)
+		{
+		    if (!isConnected || dataClient?.Connected != true)
+		        return;
+		        
+		    try
+		    {
+		        double pnl = completedTrade.ProfitCurrency;
+		        double entryPrice = completedTrade.Entry.Price;
+		        double exitPrice = completedTrade.Exit.Price;
+		        int quantity = completedTrade.Quantity;
+		        DateTime entryTime = completedTrade.Entry.Time;
+		        DateTime exitTime = completedTrade.Exit.Time;
+		        
+		        // Determine exit reason
+		        string exitReason = "ai_exit"; // Default
+		        if (completedTrade.Exit.Name.Contains("Stop"))
+		            exitReason = "stop_hit";
+		        else if (completedTrade.Exit.Name.Contains("Target"))
+		            exitReason = "target_hit";
+		        
+		        // Enhanced trade completion data
+		        double currentBalance = Account.Get(AccountItem.CashValue, Currency.UsDollar);
+		        double netLiquidation = Account.Get(AccountItem.NetLiquidation, Currency.UsDollar);
+		        double marginUsed = Account.Get(AccountItem.InitialMargin, Currency.UsDollar);
+		        double totalPnL = Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
+		        double dailyPnL = sessionStartSet ? (totalPnL - sessionStartPnL) : 0;
+		        
+		        var json = $"{{" +
+		                  $"\"type\":\"trade_completion\"," +
+		                  $"\"final_pnl\":{pnl.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"exit_price\":{exitPrice.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"entry_price\":{entryPrice.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"quantity\":{quantity}," +
+		                  $"\"exit_reason\":\"{exitReason}\"," +
+		                  $"\"entry_time\":{entryTime.Ticks}," +
+		                  $"\"exit_time\":{exitTime.Ticks}," +
+		                  $"\"account_balance\":{currentBalance.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"net_liquidation\":{netLiquidation.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"margin_used\":{marginUsed.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"daily_pnl\":{dailyPnL.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"timestamp\":{DateTime.Now.Ticks}" +
+		                  $"}}";
+		        
+		        SendJsonMessage(json);
+		        Print($"Trade completion sent: P&L ${pnl:F2} ({exitReason}) - Balance: ${currentBalance:F0}");
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Trade completion send error: {ex.Message}");
+		    }
+		}
         
         private void Cleanup()
         {
