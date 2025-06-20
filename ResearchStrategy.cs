@@ -357,17 +357,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        sb.Append($"\"volume_5m\":{SerializeDoubleArray(volumes5m)},");
 		        sb.Append($"\"volume_15m\":{SerializeDoubleArray(volumes15m)},");
 		
-		        double currentBalance = Account.Get(AccountItem.CashValue, Currency.UsDollar);
-		        double currentBuyingPower = Account.Get(AccountItem.IntradayMargin, Currency.UsDollar);
-		        double totalPnL = Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
-		        double dailyPnL = sessionStartSet ? (totalPnL - sessionStartPnL) : 0;
-		        double netLiquidation = Account.Get(AccountItem.NetLiquidation, Currency.UsDollar);
-		        double marginUsed = Account.Get(AccountItem.InitialMargin, Currency.UsDollar);
-		        double availableMargin = Math.Max(0, currentBuyingPower - marginUsed);
+		        double currentBalance     = Account.Get(AccountItem.CashValue,             Currency.UsDollar);
+		        double currentBuyingPower = Account.Get(AccountItem.ExcessIntradayMargin,  Currency.UsDollar);
+		        double totalPnL           = Account.Get(AccountItem.RealizedProfitLoss,    Currency.UsDollar);
+		        double dailyPnL           = sessionStartSet ? (totalPnL - sessionStartPnL) : 0;
+		        double netLiquidation     = Account.Get(AccountItem.NetLiquidation,        Currency.UsDollar);
+		        double marginUsed         = Account.Get(AccountItem.InitialMargin,         Currency.UsDollar);
+		        double availableMargin    = currentBuyingPower;
 		
-		        if (currentBalance <= 0) currentBalance = 25000;
+		        if (currentBalance     <= 0) currentBalance     = 25000;
 		        if (currentBuyingPower <= 0) currentBuyingPower = currentBalance;
-		        if (netLiquidation <= 0) netLiquidation = currentBalance;
+		        if (netLiquidation     <= 0) netLiquidation     = currentBalance;
 		
 		        sb.Append($"\"account_balance\":{currentBalance.ToString(CultureInfo.InvariantCulture)},");
 		        sb.Append($"\"buying_power\":{currentBuyingPower.ToString(CultureInfo.InvariantCulture)},");

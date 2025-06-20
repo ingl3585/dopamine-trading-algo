@@ -176,40 +176,42 @@ class TCPServer:
         
         return enhanced
     
+    def _json_default(self, obj):
+        if hasattr(obj, 'item'):
+            return obj.item()
+        if isinstance(obj, (set, bytes)):
+            return list(obj)
+        raise TypeError
+
     def send_signal(self, order: Order) -> bool:
         if not self.running or not self.signal_socket:
             return False
-            
         try:
-            # Enhanced signal with better validation
             signal = {
-                "action": 1 if order.action == 'buy' else 2,  # NinjaTrader expects 1=buy, 2=sell
-                "confidence": max(0.0, min(1.0, order.confidence)),  # Clamp to [0,1]
-                "position_size": max(1, int(order.size)),  # Ensure positive integer
-                "use_stop": order.stop_price > 0,
-                "stop_price": order.stop_price if order.stop_price > 0 else 0.0,
-                "use_target": order.target_price > 0,
-                "target_price": order.target_price if order.target_price > 0 else 0.0,
+                "action": 1 if order.action == 'buy' else 2,
+                "confidence": float(order.confidence),
+                "position_size": int(max(1, order.size)),
+                "use_stop": bool(order.stop_price > 0),
+                "stop_price": float(order.stop_price) if order.stop_price > 0 else 0.0,
+                "use_target": bool(order.target_price > 0),
+                "target_price": float(order.target_price) if order.target_price > 0 else 0.0,
                 "tool_used": getattr(order, 'primary_tool', 'ai_agent'),
-                "risk_adjusted": True,  # Indicate this order went through advanced risk management
-                "kelly_optimized": True,  # Indicate Kelly optimization was applied
-                "timestamp": int(time.time() * 10000000 + 621355968000000000)  # .NET ticks
+                "risk_adjusted": True,
+                "kelly_optimized": True,
+                "timestamp": int(time.time() * 1e7 + 621355968000000000),
             }
-            
-            # Validate signal before sending
+
             if not self._validate_signal(signal, order):
                 logger.warning(f"Invalid signal rejected: {signal}")
                 return False
-            
-            data = json.dumps(signal).encode()
+
+            data = json.dumps(signal, default=self._json_default).encode()
             header = struct.pack('<I', len(data))
             self.signal_socket.sendall(header + data)
-            
             self.signals_sent += 1
-            logger.info(f"Signal sent: {order.action.upper()} {order.size} @ {order.price:.2f} (Conf: {order.confidence:.2f})")
-            
+            logger.info(f"Signal sent: {order.action.upper()} {order.size} @ {order.price:.2f} "
+                        f"(Conf: {order.confidence:.2f})")
             return True
-            
         except Exception as e:
             logger.error(f"Signal send error: {e}")
             return False

@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Optional, Dict
 import logging
+import math
 
 from trading_agent import Decision
 from data_processor import MarketData
@@ -94,56 +95,41 @@ class RiskManager:
         )
     
     def _calculate_adaptive_position_size(self, decision: Decision, market_data: MarketData) -> int:
-        # Use enhanced account data from NinjaTrader
         available_margin = market_data.available_margin
-        account_balance = market_data.account_balance
-        buying_power = market_data.buying_power
-        
-        # Learned position sizing factors
-        position_factor = self.meta_learner.get_parameter('position_size_factor')
-        max_position_factor = self.meta_learner.get_parameter('max_position_factor')
-        
-        # Calculate based on confidence and available capital
+        account_balance  = market_data.account_balance
+        buying_power     = market_data.buying_power
+
+        position_factor      = self.meta_learner.get_parameter('position_size_factor')
+        max_position_factor  = self.meta_learner.get_parameter('max_position_factor')
         confidence_multiplier = decision.confidence
-        
-        # Multiple sizing approaches - use the most conservative
-        sizing_approaches = []
-        
-        # 1. Based on available margin
+
+        est_margin = 500
+        sizing = []
+
         if available_margin > 0:
-            # Margin per contract for MNQ
-            estimated_margin_per_contract = 500
-            max_by_margin = int((available_margin * position_factor * confidence_multiplier) / estimated_margin_per_contract)
-            sizing_approaches.append(max_by_margin)
-        
-        # 2. Based on account balance percentage
-        max_risk_per_trade = account_balance * position_factor * confidence_multiplier
-        estimated_margin_per_contract = 500
-        max_by_balance = int(max_risk_per_trade / estimated_margin_per_contract)
-        sizing_approaches.append(max_by_balance)
-        
-        # 3. Based on buying power (more conservative)
+            sizing.append(math.ceil(available_margin * position_factor *
+                                    confidence_multiplier / est_margin))
+
+        max_risk = account_balance * position_factor * confidence_multiplier
+        sizing.append(math.ceil(max_risk / est_margin))
+
         if buying_power > 0:
-            max_by_buying_power = int((buying_power * position_factor * 0.5 * confidence_multiplier) / estimated_margin_per_contract)
-            sizing_approaches.append(max_by_buying_power)
-        
-        # 4. Apply maximum position factor limit
-        max_contracts_absolute = int(account_balance * max_position_factor / estimated_margin_per_contract)
-        sizing_approaches.append(max_contracts_absolute)
-        
-        # 5. Use decision size as upper bound
-        sizing_approaches.append(int(decision.size))
-        
-        # Take the minimum (most conservative)
-        final_size = max(0, min(sizing_approaches)) if sizing_approaches else 0
-        
-        # Additional safety: never risk more than 2% of account per trade
-        max_safe_size = max(1, int(account_balance * 0.02 / estimated_margin_per_contract))
-        final_size = min(final_size, max_safe_size)
-        
+            sizing.append(math.ceil(buying_power * position_factor * 0.5 *
+                                    confidence_multiplier / est_margin))
+
+        sizing.append(math.floor(account_balance * max_position_factor / est_margin))
+        sizing.append(max(1, math.ceil(decision.size)))
+
+        sizing = [s for s in sizing if s > 0]
+        final_size = min(sizing) if sizing else 0
+
+        max_safe = max(1, math.floor(account_balance * 0.1 / est_margin))
+        final_size = min(final_size, max_safe)
+
         if final_size != int(decision.size):
-            logger.info(f"Position size adjusted: {decision.size} -> {final_size} (Account: ${account_balance:.0f}, Available: ${available_margin:.0f})")
-        
+            logger.info(f"Position size adjusted: {decision.size} -> {final_size} "
+                        f"(Account: ${account_balance:.0f}, Available: ${available_margin:.0f})")
+
         return final_size
     
     def _calculate_adaptive_levels(self, decision: Decision, market_data: MarketData) -> tuple:
