@@ -96,34 +96,30 @@ class RiskManager:
     
     def _calculate_adaptive_position_size(self, decision: Decision, market_data: MarketData) -> int:
         available_margin = market_data.available_margin
-        account_balance  = market_data.account_balance
-        buying_power     = market_data.buying_power
+        account_balance = market_data.account_balance
+        buying_power = market_data.buying_power
 
-        position_factor      = self.meta_learner.get_parameter('position_size_factor')
-        max_position_factor  = self.meta_learner.get_parameter('max_position_factor')
-        confidence_multiplier = decision.confidence
+        position_factor = self.meta_learner.get_parameter('position_size_factor')
+        max_position_factor = self.meta_learner.get_parameter('max_position_factor')
 
         est_margin = 500
-        sizing = []
+        sizes = []
 
         if available_margin > 0:
-            sizing.append(math.ceil(available_margin * position_factor *
-                                    confidence_multiplier / est_margin))
+            sizes.append(math.ceil(available_margin / est_margin))
 
-        max_risk = account_balance * position_factor * confidence_multiplier
-        sizing.append(math.ceil(max_risk / est_margin))
+        sizes.append(math.ceil(account_balance * position_factor / est_margin))
 
         if buying_power > 0:
-            sizing.append(math.ceil(buying_power * position_factor * 0.5 *
-                                    confidence_multiplier / est_margin))
+            sizes.append(math.ceil(buying_power * position_factor / est_margin))
 
-        sizing.append(math.floor(account_balance * max_position_factor / est_margin))
-        sizing.append(max(1, math.ceil(decision.size)))
+        sizes.append(math.floor(account_balance * max_position_factor / est_margin))
+        sizes.append(max(1, math.ceil(decision.size)))
 
-        sizing = [s for s in sizing if s > 0]
-        final_size = min(sizing) if sizing else 0
+        sizes = [s for s in sizes if s > 0]
+        final_size = min(sizes) if sizes else 0
 
-        max_safe = max(1, math.floor(account_balance * 0.1 / est_margin))
+        max_safe = max(1, math.floor(available_margin / est_margin))
         final_size = min(final_size, max_safe)
 
         if final_size != int(decision.size):
