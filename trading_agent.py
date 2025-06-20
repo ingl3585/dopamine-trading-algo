@@ -538,96 +538,193 @@ class TradingAgent:
         return primary_tool
     
     def learn_from_trade(self, trade):
-        """Enhanced learning with catastrophic forgetting prevention"""
-        if not hasattr(trade, 'intelligence_data'):
-            return
-        
-        # Update statistics
-        if trade.pnl > 0:
-            self.successful_trades += 1
-        self.total_pnl += trade.pnl
-        
-        # Track strategy performance
-        strategy = getattr(trade, 'adaptation_strategy', 'conservative')
-        if strategy in self.strategy_performance:
-            self.strategy_performance[strategy].append(trade.pnl)
-        
-        # Enhanced trade data for meta-learning
-        trade_data = {
-            'pnl': trade.pnl,
-            'account_balance': getattr(trade.market_data, 'account_balance', 25000),
-            'hold_time': trade.exit_time - trade.entry_time,
-            'was_exploration': getattr(trade, 'exploration', False),
-            'subsystem_contributions': torch.tensor(trade.intelligence_data.get('subsystem_signals', [0,0,0,0,0]), dtype=torch.float64),
-            'subsystem_agreement': self._calculate_enhanced_subsystem_agreement(trade.intelligence_data),
-            'confidence': getattr(trade, 'confidence', 0.5),
-            'primary_tool': getattr(trade, 'primary_tool', 'unknown'),
-            'stop_used': getattr(trade, 'stop_used', False),
-            'target_used': getattr(trade, 'target_used', False),
-            'adaptation_strategy': getattr(trade, 'adaptation_strategy', 'conservative'),
-            'uncertainty_estimate': getattr(trade, 'uncertainty_estimate', 0.5),
-            'regime_confidence': trade.intelligence_data.get('regime_context', {}).get('regime_confidence', 0.5)
-        }
-        
-        # Compute enhanced reward
-        reward = self.meta_learner.compute_reward(trade_data)
-        
-        # Store experience with priority
-        if hasattr(trade, 'state_features') and trade.state_features:
-            experience = {
-                'state_features': trade.state_features,
-                'action': ['hold', 'buy', 'sell'].index(trade.action),
-                'reward': reward,
-                'done': True,
-                'trade_data': trade_data,
-                'uncertainty': trade_data['uncertainty_estimate'],
-                'regime_confidence': trade_data['regime_confidence']
-            }
+        """Enhanced learning with comprehensive error handling and debugging"""
+        try:
+            logger.info(f"=== LEARNING FROM TRADE START ===")
+            logger.info(f"Trade PnL: {trade.pnl}, Entry: {trade.entry_price}, Exit: {trade.exit_price}")
             
-            # Prioritize unusual or high-impact experiences
-            if abs(reward) > 0.5 or trade_data['uncertainty_estimate'] > 0.7:
-                self.priority_buffer.append(experience)
-            else:
-                self.experience_buffer.append(experience)
-        
-        # Catastrophic forgetting prevention
-        if len(self.experience_buffer) > 1000:
-            # Store some experiences as previous task data
-            sample_size = min(50, len(self.experience_buffer) // 20)
-            sampled_experiences = np.random.choice(
-                list(self.experience_buffer), size=sample_size, replace=False
-            )
-            for exp in sampled_experiences:
-                self.previous_task_buffer.append(exp)
-                # Add to network's previous task data with device specification
-                state_tensor = torch.tensor(exp['state_features'], dtype=torch.float64, device=self.device)
-                target_tensor = torch.tensor([exp['reward']], dtype=torch.float64, device=self.device)
-                self.network.add_previous_task_data(state_tensor, target_tensor)
-        
-        # Meta-learning update
-        self.meta_learner.learn_from_outcome(trade_data)
-        
-        # Real-time adaptation update
-        adaptation_context = trade.intelligence_data.get('regime_context', {})
-        adaptation_context['predicted_confidence'] = trade_data['confidence']
-        self.adaptation_engine.update_from_outcome(reward, adaptation_context)
-        
-        # Network performance tracking
-        self.network.record_performance(reward)
-        
-        # Train networks if enough experience
-        if len(self.experience_buffer) >= 64 or len(self.priority_buffer) >= 32:
-            self._train_enhanced_networks()
-        
-        # Update learning rate based on performance
-        recent_rewards = [exp['reward'] for exp in list(self.experience_buffer)[-20:]]
-        if len(recent_rewards) >= 10:
-            avg_reward = np.mean(recent_rewards)
-            self.scheduler.step(avg_reward)
-        
-        # Periodic parameter adaptation
-        if self.total_decisions % 50 == 0:
-            self.meta_learner.adapt_parameters()
+            if not hasattr(trade, 'intelligence_data'):
+                logger.warning("Trade missing intelligence_data - creating minimal data")
+                trade.intelligence_data = {'subsystem_signals': [0,0,0,0,0]}
+            
+            # Update statistics
+            if trade.pnl > 0:
+                self.successful_trades += 1
+                logger.info(f"Successful trade recorded. Total successful: {self.successful_trades}")
+            self.total_pnl += trade.pnl
+            
+            # Track strategy performance
+            strategy = getattr(trade, 'adaptation_strategy', 'conservative')
+            if strategy in self.strategy_performance:
+                self.strategy_performance[strategy].append(trade.pnl)
+                logger.info(f"Strategy {strategy} performance updated")
+            
+            # Enhanced trade data for meta-learning
+            try:
+                account_balance = getattr(trade.market_data, 'account_balance', 1000) if hasattr(trade, 'market_data') else 1000
+                
+                trade_data = {
+                    'pnl': float(trade.pnl),
+                    'account_balance': float(account_balance),
+                    'hold_time': float(trade.exit_time - trade.entry_time),
+                    'was_exploration': bool(getattr(trade, 'exploration', False)),
+                    'subsystem_contributions': torch.tensor([0,0,0,0,0], dtype=torch.float64),  # Safe default
+                    'subsystem_agreement': 0.5,  # Safe default
+                    'confidence': float(getattr(trade, 'confidence', 0.5)),
+                    'primary_tool': str(getattr(trade, 'primary_tool', 'unknown')),
+                    'stop_used': bool(getattr(trade, 'stop_used', False)),
+                    'target_used': bool(getattr(trade, 'target_used', False)),
+                    'adaptation_strategy': str(getattr(trade, 'adaptation_strategy', 'conservative')),
+                    'uncertainty_estimate': float(getattr(trade, 'uncertainty_estimate', 0.5)),
+                    'regime_confidence': 0.5  # Safe default
+                }
+                
+                # Safely extract subsystem contributions
+                if hasattr(trade, 'intelligence_data') and trade.intelligence_data:
+                    signals = trade.intelligence_data.get('subsystem_signals', [0,0,0,0,0])
+                    if isinstance(signals, (list, tuple)) and len(signals) >= 3:
+                        trade_data['subsystem_contributions'] = torch.tensor(signals[:5] + [0]*(5-len(signals)), dtype=torch.float64)
+                        trade_data['subsystem_agreement'] = self._calculate_enhanced_subsystem_agreement(trade.intelligence_data)
+                        trade_data['regime_confidence'] = trade.intelligence_data.get('regime_context', {}).get('regime_confidence', 0.5)
+                
+                logger.info(f"Trade data prepared: PnL={trade_data['pnl']}, Confidence={trade_data['confidence']}")
+                
+            except Exception as e:
+                logger.error(f"Error preparing trade data: {e}")
+                # Use minimal safe trade data
+                trade_data = {
+                    'pnl': float(trade.pnl),
+                    'account_balance': 1000.0,
+                    'hold_time': 60.0,
+                    'was_exploration': False,
+                    'subsystem_contributions': torch.tensor([0,0,0,0,0], dtype=torch.float64),
+                    'subsystem_agreement': 0.5,
+                    'confidence': 0.5,
+                    'primary_tool': 'unknown',
+                    'stop_used': False,
+                    'target_used': False,
+                    'adaptation_strategy': 'conservative',
+                    'uncertainty_estimate': 0.5,
+                    'regime_confidence': 0.5
+                }
+            
+            # Meta-learning update with error handling
+            try:
+                logger.info("Starting meta-learner update...")
+                old_total_updates = self.meta_learner.total_updates
+                old_successful_adaptations = self.meta_learner.successful_adaptations
+                
+                # Compute enhanced reward
+                reward = self.meta_learner.compute_reward(trade_data)
+                logger.info(f"Computed reward: {reward}")
+                
+                # Meta-learning update
+                self.meta_learner.learn_from_outcome(trade_data)
+                
+                new_total_updates = self.meta_learner.total_updates
+                new_successful_adaptations = self.meta_learner.successful_adaptations
+                
+                logger.info(f"Meta-learner updates: {old_total_updates} -> {new_total_updates}")
+                logger.info(f"Successful adaptations: {old_successful_adaptations} -> {new_successful_adaptations}")
+                
+                if new_total_updates > old_total_updates:
+                    logger.info("✅ Meta-learner successfully updated!")
+                else:
+                    logger.warning("❌ Meta-learner update failed - no increment in total_updates")
+                    
+            except Exception as e:
+                logger.error(f"Meta-learner update failed: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
+            
+            # Real-time adaptation update with error handling
+            try:
+                logger.info("Starting adaptation engine update...")
+                adaptation_context = trade.intelligence_data.get('regime_context', {}) if hasattr(trade, 'intelligence_data') and trade.intelligence_data else {}
+                adaptation_context['predicted_confidence'] = trade_data['confidence']
+                self.adaptation_engine.update_from_outcome(reward, adaptation_context)
+                logger.info("✅ Adaptation engine updated!")
+            except Exception as e:
+                logger.error(f"Adaptation engine update failed: {e}")
+            
+            # Network performance tracking
+            try:
+                self.network.record_performance(reward)
+                logger.info(f"✅ Network performance recorded: {reward}")
+            except Exception as e:
+                logger.error(f"Network performance recording failed: {e}")
+            
+            # Store experience with priority
+            try:
+                if hasattr(trade, 'state_features') and trade.state_features:
+                    experience = {
+                        'state_features': trade.state_features,
+                        'action': ['hold', 'buy', 'sell'].index(trade.action) if trade.action in ['hold', 'buy', 'sell'] else 0,
+                        'reward': reward,
+                        'done': True,
+                        'trade_data': {k: (v.detach().cpu().numpy().tolist() if hasattr(v, 'detach') else v) 
+                                    for k, v in trade_data.items()},  # Convert tensors for storage
+                        'uncertainty': trade_data['uncertainty_estimate'],
+                        'regime_confidence': trade_data['regime_confidence']
+                    }
+                    
+                    # Prioritize unusual or high-impact experiences
+                    if abs(reward) > 0.5 or trade_data['uncertainty_estimate'] > 0.7:
+                        self.priority_buffer.append(experience)
+                        logger.info("Experience added to priority buffer")
+                    else:
+                        self.experience_buffer.append(experience)
+                        logger.info("Experience added to regular buffer")
+                        
+                else:
+                    logger.warning("Trade missing state_features - skipping experience storage")
+                    
+            except Exception as e:
+                logger.error(f"Experience storage failed: {e}")
+            
+            # Train networks if enough experience
+            try:
+                if len(self.experience_buffer) >= 64 or len(self.priority_buffer) >= 32:
+                    logger.info("Starting network training...")
+                    self._train_enhanced_networks()
+                    logger.info("✅ Network training completed!")
+            except Exception as e:
+                logger.error(f"Network training failed: {e}")
+            
+            # Update learning rate based on performance
+            try:
+                recent_rewards = [exp['reward'] for exp in list(self.experience_buffer)[-20:]]
+                if len(recent_rewards) >= 10:
+                    avg_reward = np.mean(recent_rewards)
+                    self.scheduler.step(avg_reward)
+                    logger.info(f"Learning rate updated based on avg reward: {avg_reward}")
+            except Exception as e:
+                logger.error(f"Learning rate update failed: {e}")
+            
+            # Periodic parameter adaptation
+            try:
+                if self.total_decisions % 50 == 0:
+                    logger.info("Running periodic parameter adaptation...")
+                    self.meta_learner.adapt_parameters()
+                    logger.info("✅ Parameter adaptation completed!")
+            except Exception as e:
+                logger.error(f"Parameter adaptation failed: {e}")
+            
+            # Log final learning stats
+            try:
+                current_efficiency = self.meta_learner.get_learning_efficiency()
+                logger.info(f"Current learning efficiency: {current_efficiency:.2%}")
+                logger.info(f"Total meta-learner updates: {self.meta_learner.total_updates}")
+                logger.info(f"Successful adaptations: {self.meta_learner.successful_adaptations}")
+            except Exception as e:
+                logger.error(f"Error getting learning stats: {e}")
+            
+            logger.info(f"=== LEARNING FROM TRADE COMPLETE ===")
+            
+        except Exception as e:
+            logger.error(f"CRITICAL: Overall learn_from_trade failed: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
     
     def _calculate_enhanced_subsystem_agreement(self, intelligence_data: Dict) -> float:
         """Enhanced subsystem agreement calculation"""
