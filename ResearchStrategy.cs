@@ -577,8 +577,6 @@ namespace NinjaTrader.NinjaScript.Strategies
             {
                 Print($"Cleanup error: {ex.Message}");
             }
-            
-            Print("Strategy cleanup complete");
         }
     }
     
