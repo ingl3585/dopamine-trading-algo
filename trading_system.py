@@ -171,8 +171,8 @@ class TradingSystem:
                         
                         # Log with account context
                         account_risk = (order.size * 500) / market_data.account_balance * 100
-                        logger.info(f"✓ Order placed: {order.action.upper()} {order.size} @ {order.price:.2f} "
-                                  f"(Risk: {account_risk:.1f}%, Balance: ${market_data.account_balance:.0f})")
+                        logger.info(f"Order placed: {order.action.upper()} {order.size} @ {order.price:.2f} "
+                                    f"(Risk: {account_risk:.1f}%, Balance: ${market_data.account_balance:.0f})")
                     else:
                         logger.warning("Failed to send signal to NinjaTrader")
                 else:
@@ -320,7 +320,7 @@ class TradingSystem:
         
         # Check account risk percentage
         account_risk_pct = estimated_margin / market_data.account_balance
-        max_risk_pct = 0.1 if market_data.account_balance < 10000 else 0.2
+        max_risk_pct = 0.6 if market_data.account_balance < 10000 else 0.7
         
         if account_risk_pct > max_risk_pct:
             logger.warning(f"Order rejected: Risk too high "
