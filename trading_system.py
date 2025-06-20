@@ -26,12 +26,17 @@ class TradingSystem:
         self.tcp_server = TCPServer()
         self.tcp_server.on_market_data = self._process_market_data
         self.tcp_server.on_trade_completion = self._process_trade_completion
-        self.tcp_server.on_historical_data = self._process_historical_data  # New callback
+        self.tcp_server.on_historical_data = self._process_historical_data
         
         self.running = False
         self.last_save = time.time()
         self.last_account_update = time.time()
         self.ready_for_trading = False
+        
+        # Enhanced tracking
+        self.total_decisions = 0
+        self.data_updates_received = 0
+        self.last_detailed_log = time.time()
         
         # Account monitoring
         self.last_account_balance = 0.0
@@ -64,15 +69,21 @@ class TradingSystem:
                     self._log_bootstrap_summary()
                 continue
             
+            # Enhanced status logging every 2 minutes during live trading
+            current_time = time.time()
+            if current_time - self.last_detailed_log > 120:  # Every 2 minutes
+                self._log_detailed_status()
+                self.last_detailed_log = current_time
+            
             # Save state every 5 minutes
-            if time.time() - self.last_save > 300:
+            if current_time - self.last_save > 300:
                 self._save_state()
-                self.last_save = time.time()
+                self.last_save = current_time
             
             # Log performance summary every 30 minutes
-            if time.time() - self.last_account_update > 1800:
+            if current_time - self.last_account_update > 1800:
                 self._log_performance_summary()
-                self.last_account_update = time.time()
+                self.last_account_update = current_time
 
     def _process_historical_data(self, historical_data):
         """Process historical data for pattern bootstrapping"""
@@ -93,23 +104,54 @@ class TradingSystem:
         if not self.ready_for_trading:
             return
             
+        self.data_updates_received += 1
+            
         try:
+            # Enhanced logging for debugging
+            if self.data_updates_received % 20 == 0:  # Log every 20 data updates
+                logger.info(f"Processing market data update #{self.data_updates_received}")
+            
             market_data = self.data_processor.process(raw_data)
             
             if not market_data:
+                logger.warning("Market data processing returned None")
                 return
+            
+            # Log market data quality every 10 updates
+            if self.data_updates_received % 10 == 0:
+                logger.info(f"Market data: Price={market_data.price:.2f}, "
+                           f"1m_bars={len(market_data.prices_1m)}, "
+                           f"5m_bars={len(market_data.prices_5m)}, "
+                           f"15m_bars={len(market_data.prices_15m)}")
             
             # Check for significant account changes and adapt
             self._check_account_adaptation(market_data)
                 
             features = self.intelligence.extract_features(market_data)
             
+            # Log intelligence analysis every 5 updates
+            if self.data_updates_received % 5 == 0:
+                logger.info(f"Intelligence: DNA={features.dna_signal:.3f}, "
+                           f"Temporal={features.temporal_signal:.3f}, "
+                           f"Immune={features.immune_signal:.3f}, "
+                           f"Overall={features.overall_signal:.3f}, "
+                           f"Confidence={features.confidence:.3f}")
+            
             decision = self.agent.decide(features, market_data)
+            self.total_decisions += 1
+            
+            # Always log decision details
+            logger.info(f"Decision #{self.total_decisions}: {decision.action.upper()} "
+                       f"(Size: {decision.size:.1f}, Conf: {decision.confidence:.3f}, "
+                       f"Tool: {decision.primary_tool}, Exploration: {decision.exploration})")
+            
             if decision.action == 'hold':
                 return
                 
             order = self.risk_manager.validate_order(decision, market_data)
             if order:
+                logger.info(f"Risk manager approved order: {order.action.upper()} {order.size}")
+                
                 # Enhanced order validation with account context
                 if self._validate_order_with_account_context(order, market_data):
                     success = self.tcp_server.send_signal(order)
@@ -128,17 +170,23 @@ class TradingSystem:
                         self.portfolio.add_pending_order(order)
                         
                         # Log with account context
-                        account_risk = (order.size * 600) / market_data.account_balance * 100
-                        logger.info(f"Order placed: {order.action.upper()} {order.size} @ {order.price:.2f} "
+                        account_risk = (order.size * 500) / market_data.account_balance * 100
+                        logger.info(f"✓ Order placed: {order.action.upper()} {order.size} @ {order.price:.2f} "
                                   f"(Risk: {account_risk:.1f}%, Balance: ${market_data.account_balance:.0f})")
                     else:
-                        logger.warning("Failed to send signal to NinjaTrader")
+                        logger.warning("❌ Failed to send signal to NinjaTrader")
                 else:
-                    logger.info("Order rejected by account context validation")
+                    logger.info("❌ Order rejected by account context validation")
+            else:
+                logger.info(f"❌ Risk manager rejected order")
                 
         except Exception as e:
+            import traceback
             logger.error(f"Error processing market data: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            logger.error(f"Raw data keys: {list(raw_data.keys()) if isinstance(raw_data, dict) else 'Not a dict'}")
 
+    # Rest of the methods remain the same...
     def _process_trade_completion(self, completion_data):
         try:
             trade = self.portfolio.complete_trade(completion_data)
@@ -194,6 +242,40 @@ class TradingSystem:
         except Exception as e:
             logger.error(f"Error logging bootstrap summary: {e}")
 
+    def _log_detailed_status(self):
+        """Log detailed system status during live trading"""
+        try:
+            logger.info("=== SYSTEM STATUS ===")
+            logger.info(f"Data updates received: {self.data_updates_received}")
+            logger.info(f"Total decisions made: {self.total_decisions}")
+            
+            # Portfolio status
+            portfolio_summary = self.portfolio.get_summary()
+            logger.info(f"Portfolio: {portfolio_summary['total_trades']} trades, "
+                       f"Win rate: {portfolio_summary['win_rate']:.1%}, "
+                       f"Daily P&L: ${portfolio_summary['daily_pnl']:.2f}")
+            
+            # Agent status
+            agent_stats = self.agent.get_stats()
+            logger.info(f"Agent: {agent_stats['total_decisions']} decisions, "
+                       f"Success rate: {agent_stats['success_rate']:.1%}, "
+                       f"Learning efficiency: {agent_stats['learning_efficiency']:.1%}")
+            
+            # Intelligence status
+            intelligence_stats = self.intelligence.get_stats()
+            logger.info(f"Intelligence: DNA={intelligence_stats['dna_patterns']}, "
+                       f"Micro={intelligence_stats['micro_patterns']}, "
+                       f"Temporal={intelligence_stats['temporal_patterns']}")
+            
+            # Connection status
+            logger.info(f"TCP: {self.tcp_server.data_received} data messages, "
+                       f"{self.tcp_server.signals_sent} signals sent")
+            
+            logger.info("=" * 20)
+            
+        except Exception as e:
+            logger.error(f"Error logging detailed status: {e}")
+
     def _check_account_adaptation(self, market_data):
         """Check if we need to adapt to account balance changes"""
         current_balance = market_data.account_balance
@@ -228,7 +310,7 @@ class TradingSystem:
         """Additional validation with account context"""
         
         # Estimated margin requirement for order
-        estimated_margin = order.size * 600
+        estimated_margin = order.size * 500
         
         # Check available margin
         if estimated_margin > market_data.available_margin * 0.8:
@@ -262,7 +344,7 @@ class TradingSystem:
             intelligence_stats = self.intelligence.get_stats()
             risk_summary = self.risk_manager.get_risk_summary()
             
-            logger.info("=== Performance Summary ===")
+            logger.info("=== PERFORMANCE SUMMARY ===")
             logger.info(f"Account Balance: ${portfolio_summary.get('current_balance', 0):.2f}")
             logger.info(f"Session Return: {portfolio_summary.get('session_return_pct', 0):.2f}%")
             logger.info(f"Max Drawdown: {portfolio_summary.get('max_drawdown_pct', 0):.2f}%")
@@ -311,6 +393,8 @@ class TradingSystem:
                 'last_account_balance': self.last_account_balance,
                 'account_change_threshold': self.account_change_threshold,
                 'ready_for_trading': self.ready_for_trading,
+                'total_decisions': self.total_decisions,
+                'data_updates_received': self.data_updates_received,
                 'saved_at': time.time()
             }
             
@@ -333,6 +417,8 @@ class TradingSystem:
                     system_state = json.load(f)
                     self.last_account_balance = system_state.get('last_account_balance', 0.0)
                     self.account_change_threshold = system_state.get('account_change_threshold', 0.05)
+                    self.total_decisions = system_state.get('total_decisions', 0)
+                    self.data_updates_received = system_state.get('data_updates_received', 0)
                     # Don't restore ready_for_trading - always wait for fresh historical data
             except FileNotFoundError:
                 pass

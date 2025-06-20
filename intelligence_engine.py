@@ -286,7 +286,31 @@ class IntelligenceEngine:
         volatility = np.std(prices) / np.mean(prices) if np.mean(prices) > 0 else 0
         
         now = datetime.fromtimestamp(data.timestamp)
-        time_of_day = (now.hour * 60 + now.minute) / 1440
+
+        # With this enhanced error handling:
+        try:
+            # Try direct timestamp conversion first
+            now = datetime.fromtimestamp(data.timestamp)
+            time_of_day = (now.hour * 60 + now.minute) / 1440
+        except (OSError, ValueError, OverflowError) as e:
+            # Fallback: try .NET ticks conversion
+            try:
+                if data.timestamp > 1e15:  # Likely .NET ticks
+                    unix_timestamp = (data.timestamp - 621355968000000000) / 10000000
+                    # Additional safety check
+                    if unix_timestamp < 0 or unix_timestamp > 2147483647:
+                        raise ValueError("Timestamp out of range")
+                    now = datetime.fromtimestamp(unix_timestamp)
+                    time_of_day = (now.hour * 60 + now.minute) / 1440
+                else:
+                    raise ValueError("Invalid timestamp format")
+            except:
+                # Final fallback: use current time
+                import time as time_module
+                now = datetime.fromtimestamp(time_module.time())
+                time_of_day = (now.hour * 60 + now.minute) / 1440
+                logger.warning(f"Using current time as fallback due to invalid timestamp: {data.timestamp}")
+                time_of_day = (now.hour * 60 + now.minute) / 1440
         
         # Enhanced market features
         market_features = {

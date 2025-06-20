@@ -7,7 +7,9 @@ import numpy as np
 from typing import List, Dict, Any
 import time
 from datetime import datetime
+import logging
 
+logger = logging.getLogger(__name__)
 
 class DynamicLayer(nn.Module):
     def __init__(self, input_size: int, output_size: int, dropout_rate: float = 0.1):
@@ -218,21 +220,35 @@ class StateEncoder:
         # Convert .NET Ticks to Unix timestamp
         timestamp = market_data.timestamp
         
-        # .NET Ticks: 100-nanosecond intervals since January 1, 0001
-        # Unix timestamp: seconds since January 1, 1970
-        if timestamp > 1e15:  # Definitely .NET ticks (very large number)
-            unix_timestamp = (timestamp - 621355968000000000) / 10000000
-        else:
-            unix_timestamp = timestamp  # Already Unix timestamp
-        
-        # Validate timestamp (reasonable range: 1970-2030)
-        if unix_timestamp < 0 or unix_timestamp > 1893456000:
-            unix_timestamp = time.time()  # Use current time as fallback
-        
-        current_time = datetime.fromtimestamp(unix_timestamp)
-        hour_norm = current_time.hour / 24.0
-        minute_norm = current_time.minute / 60.0
-        weekday_norm = current_time.weekday() / 6.0
+        # Safe timestamp conversion with better error handling
+        try:
+            # .NET Ticks: 100-nanosecond intervals since January 1, 0001
+            # Unix timestamp: seconds since January 1, 1970
+            if timestamp > 1e15:  # Definitely .NET ticks (very large number)
+                unix_timestamp = (timestamp - 621355968000000000) / 10000000
+            else:
+                unix_timestamp = timestamp  # Already Unix timestamp
+            
+            # Validate timestamp (reasonable range: 1970-2030)
+            if unix_timestamp < 0 or unix_timestamp > 1893456000:
+                unix_timestamp = time.time()  # Use current time as fallback
+            
+            # Additional validation for datetime conversion
+            if unix_timestamp > 2147483647:  # Max 32-bit timestamp
+                unix_timestamp = time.time()
+                
+            current_time = datetime.fromtimestamp(unix_timestamp)
+            hour_norm = current_time.hour / 24.0
+            minute_norm = current_time.minute / 60.0
+            weekday_norm = current_time.weekday() / 6.0
+            
+        except (ValueError, OSError, OverflowError) as e:
+            # Fallback to current time if conversion fails
+            logger.warning(f"Timestamp conversion failed: {e}, using current time")
+            current_time = datetime.now()
+            hour_norm = current_time.hour / 24.0
+            minute_norm = current_time.minute / 60.0
+            weekday_norm = current_time.weekday() / 6.0
         
         features.extend([hour_norm, minute_norm, weekday_norm])
         
