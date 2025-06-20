@@ -358,7 +358,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        sb.Append($"\"volume_15m\":{SerializeDoubleArray(volumes15m)},");
 		
 		        double currentBalance = Account.Get(AccountItem.CashValue, Currency.UsDollar);
-		        double currentBuyingPower = Account.Get(AccountItem.BuyingPower, Currency.UsDollar);
+		        double currentBuyingPower = Account.Get(AccountItem.IntradayMargin, Currency.UsDollar);
 		        double totalPnL = Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
 		        double dailyPnL = sessionStartSet ? (totalPnL - sessionStartPnL) : 0;
 		        double netLiquidation = Account.Get(AccountItem.NetLiquidation, Currency.UsDollar);

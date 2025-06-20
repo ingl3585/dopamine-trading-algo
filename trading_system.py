@@ -174,11 +174,11 @@ class TradingSystem:
                         logger.info(f"✓ Order placed: {order.action.upper()} {order.size} @ {order.price:.2f} "
                                   f"(Risk: {account_risk:.1f}%, Balance: ${market_data.account_balance:.0f})")
                     else:
-                        logger.warning("❌ Failed to send signal to NinjaTrader")
+                        logger.warning("Failed to send signal to NinjaTrader")
                 else:
-                    logger.info("❌ Order rejected by account context validation")
+                    logger.info("Order rejected by account context validation")
             else:
-                logger.info(f"❌ Risk manager rejected order")
+                logger.info(f"Risk manager rejected order")
                 
         except Exception as e:
             import traceback
