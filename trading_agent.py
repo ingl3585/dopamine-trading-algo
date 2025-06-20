@@ -494,7 +494,7 @@ class TradingAgent:
         
         frequency_limit = self.meta_learner.get_parameter('trade_frequency_base')
         time_since_last = market_data.timestamp - self.last_trade_time
-        if time_since_last < (3600 / frequency_limit):
+        if time_since_last < (300 / frequency_limit):
             return False
         
         # Enhanced regime-based constraints

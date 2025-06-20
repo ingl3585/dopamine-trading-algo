@@ -487,9 +487,11 @@ namespace NinjaTrader.NinjaScript.Strategies
                 
                 if (useStop && stopPrice > 0)
                     SetStopLoss(entryName, CalculationMode.Price, stopPrice, false);
+					Print($"Stop set at {stopPrice:F2}");
                     
                 if (useTarget && targetPrice > 0)
                     SetProfitTarget(entryName, CalculationMode.Price, targetPrice);
+					Print($"Target set at {targetPrice:F2}");
                 
                 Print($"AI Signal: {(action == 1 ? "BUY" : "SELL")} {size} contracts (Conf: {confidence:P0})");
                 
