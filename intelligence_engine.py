@@ -506,6 +506,10 @@ class IntelligenceEngine:
         }
         
         try:
+            import os
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            
             with open(filepath, 'w') as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
@@ -553,13 +557,23 @@ class IntelligenceEngine:
         orchestrator_stats = self.orchestrator.get_comprehensive_stats()
         adaptation_stats = self.adaptation_engine.get_comprehensive_stats()
         
-        # Legacy stats
+        # Extract subsystem pattern counts for compatibility
+        dna_stats = orchestrator_stats.get('dna_evolution', {})
+        immune_stats = orchestrator_stats.get('immune_system', {})
+        temporal_cycles = orchestrator_stats.get('temporal_cycles', 0)
+        
+        # Legacy stats with expected keys
         legacy_stats = {
             'total_patterns': len(self.patterns),
             'recent_performance': np.mean(self.recent_outcomes) if self.recent_outcomes else 0,
             'pattern_count': sum(len(outcomes) for outcomes in self.patterns.values()),
             'historical_processed': self.historical_processed,
-            'bootstrap_stats': self.bootstrap_stats
+            'bootstrap_stats': self.bootstrap_stats,
+            # Expected keys for trading_system compatibility
+            'dna_patterns': dna_stats.get('total_sequences', 0),
+            'micro_patterns': len(self.patterns),  # Legacy micro patterns
+            'temporal_patterns': temporal_cycles,
+            'immune_patterns': immune_stats.get('total_antibodies', 0)
         }
         
         # Enhanced stats

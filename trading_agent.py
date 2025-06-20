@@ -808,6 +808,10 @@ class TradingAgent:
     
     def save_model(self, filepath: str):
         """Enhanced model saving"""
+        import os
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
         torch.save({
             'network_state': self.network.state_dict(),
             'target_network_state': self.target_network.state_dict(),
@@ -827,11 +831,18 @@ class TradingAgent:
         }, filepath)
         
         # Save meta-learner and adaptation engine separately
-        self.meta_learner.save_state(filepath.replace('.pt', '_meta.pt'))
+        meta_filepath = filepath.replace('.pt', '_meta.pt')
+        adaptation_filepath = filepath.replace('.pt', '_adaptation.pt')
+        
+        # Ensure directories exist for additional files
+        os.makedirs(os.path.dirname(meta_filepath), exist_ok=True)
+        os.makedirs(os.path.dirname(adaptation_filepath), exist_ok=True)
+        
+        self.meta_learner.save_state(meta_filepath)
         
         # Save adaptation engine state
         adaptation_stats = self.adaptation_engine.get_comprehensive_stats()
-        torch.save(adaptation_stats, filepath.replace('.pt', '_adaptation.pt'))
+        torch.save(adaptation_stats, adaptation_filepath)
     
     def load_model(self, filepath: str):
         """Enhanced model loading"""

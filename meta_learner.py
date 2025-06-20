@@ -319,6 +319,10 @@ class MetaLearner:
         return self.successful_adaptations / self.total_updates
     
     def save_state(self, filepath: str):
+        import os
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
         torch.save({
             'parameters': {name: (param.value, param.bounds) for name, param in self.parameters.items()},
             'subsystem_weights': self.subsystem_weights.state_dict(),

@@ -295,6 +295,13 @@ class TradingSystem:
 
     def _save_state(self):
         try:
+            import os
+            import json
+            
+            # Ensure directories exist
+            os.makedirs('models', exist_ok=True)
+            os.makedirs('data', exist_ok=True)
+            
             self.agent.save_model('models/agent.pt')
             self.intelligence.save_patterns('data/patterns.json')
             self.portfolio.save_state('data/portfolio.json')
@@ -307,7 +314,6 @@ class TradingSystem:
                 'saved_at': time.time()
             }
             
-            import json
             with open('data/system_state.json', 'w') as f:
                 json.dump(system_state, f)
             
