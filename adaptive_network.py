@@ -27,6 +27,9 @@ class AdaptiveTradingNetwork(nn.Module):
         self.hidden_sizes = hidden_sizes
         
         self._build_network()
+        
+        # Convert to double precision
+        self.double()
     
     def _build_network(self):
         layers = []
@@ -98,9 +101,12 @@ class FeatureLearner(nn.Module):
             nn.Linear(learned_feature_dim * 2, learned_feature_dim)
         )
         
+        # Convert to double precision
+        self.double()
+        
         # Feature importance tracking
-        self.feature_importance = nn.Parameter(torch.ones(raw_feature_dim))
-        self.usage_counts = torch.zeros(raw_feature_dim)
+        self.feature_importance = nn.Parameter(torch.ones(raw_feature_dim, dtype=torch.float64))
+        self.usage_counts = torch.zeros(raw_feature_dim, dtype=torch.float64)
     
     def forward(self, raw_features: torch.Tensor) -> torch.Tensor:
         # Apply learned feature selection
@@ -255,21 +261,31 @@ class StateEncoder:
     def create_full_state(self, market_data, intelligence_features, meta_context) -> torch.Tensor:
         market_state = self.encode_market_data(market_data)
         intelligence_state = self.encode_intelligence_features(intelligence_features)
-
+        
+        # Enhanced meta-learning context with account-aware features
         meta_state = torch.tensor([
             meta_context.get('recent_performance', 0.0),
             meta_context.get('consecutive_losses', 0.0) / 10.0,
             meta_context.get('trades_today', 0.0) / 20.0,
             meta_context.get('learning_efficiency', 0.0),
             meta_context.get('architecture_generation', 0.0) / 10.0,
+            # Additional account context
             min(1.0, meta_context.get('position_count', 0.0) / 5.0),
             np.tanh(meta_context.get('time_since_last_trade', 0.0))
         ], dtype=torch.float32)
-
-        full_state = torch.cat([market_state, intelligence_state, meta_state])
+        
+        # Combine all features
+        full_state = torch.cat([
+            market_state,
+            intelligence_state,
+            meta_state
+        ])
+        
+        # Pad or truncate to exactly 50 features for raw input
         if len(full_state) < 50:
-            full_state = torch.cat([full_state, torch.zeros(50 - len(full_state))])
+            padding = torch.zeros(50 - len(full_state), dtype=torch.float64)
+            full_state = torch.cat([full_state, padding])
         else:
             full_state = full_state[:50]
-
+        
         return full_state

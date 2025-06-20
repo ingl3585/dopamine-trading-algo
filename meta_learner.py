@@ -36,8 +36,12 @@ class MetaParameter:
 class AdaptiveWeights(nn.Module):
     def __init__(self, num_components: int, initial_temp: float = 1.0):
         super().__init__()
-        self.logits = nn.Parameter(torch.zeros(num_components))
-        self.temperature = nn.Parameter(torch.tensor(initial_temp))
+        self.logits = nn.Parameter(torch.zeros(num_components, dtype=torch.float64))
+        self.temperature = nn.Parameter(torch.tensor(initial_temp, dtype=torch.float64))
+        
+        # Convert to double precision
+        self.double()
+        
         self.outcomes = deque(maxlen=100)
     
     def forward(self) -> torch.Tensor:
@@ -60,6 +64,10 @@ class ExplorationStrategy(nn.Module):
             nn.Linear(32, 1),
             nn.Sigmoid()
         )
+        
+        # Convert to double precision
+        self.double()
+        
         self.recent_outcomes = deque(maxlen=20)
     
     def should_explore(self, state_features: torch.Tensor, recent_performance: float, 
@@ -70,7 +78,7 @@ class ExplorationStrategy(nn.Module):
         ])
         
         exploration_prob = self.net(context)
-        return torch.rand(1) < exploration_prob
+        return torch.rand(1, dtype=torch.float64) < exploration_prob
     
     def update_from_outcome(self, was_exploration: bool, outcome: float):
         self.recent_outcomes.append((was_exploration, outcome))
@@ -320,8 +328,10 @@ class MetaLearner:
     
     def save_state(self, filepath: str):
         import os
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        # Ensure directory exists with proper error handling
+        dir_path = os.path.dirname(filepath)
+        if dir_path and not os.path.exists(dir_path):
+            os.makedirs(dir_path, exist_ok=True)
         
         torch.save({
             'parameters': {name: (param.value, param.bounds) for name, param in self.parameters.items()},

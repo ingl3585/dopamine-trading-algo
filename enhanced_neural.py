@@ -25,7 +25,7 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
         
         # Learnable temperature for attention scaling
-        self.temperature = nn.Parameter(torch.ones(1))
+        self.temperature = nn.Parameter(torch.ones(1, dtype=torch.float64))
         
     def forward(self, x: torch.Tensor, mask: Optional[torch.Tensor] = None) -> torch.Tensor:
         batch_size, seq_len, _ = x.shape
@@ -135,9 +135,9 @@ class AdaptiveMemoryLSTM(nn.Module):
         )
         
         # Pattern persistence tracking with learnable memory bank
-        self.pattern_memory = nn.Parameter(torch.randn(100, hidden_size) * 0.1)
-        self.pattern_ages = nn.Parameter(torch.zeros(100))
-        self.memory_importance = nn.Parameter(torch.ones(100))
+        self.pattern_memory = nn.Parameter(torch.randn(100, hidden_size, dtype=torch.float64) * 0.1)
+        self.pattern_ages = nn.Parameter(torch.zeros(100, dtype=torch.float64))
+        self.memory_importance = nn.Parameter(torch.ones(100, dtype=torch.float64))
         
         # Memory consolidation mechanism
         self.consolidation_threshold = 0.8
@@ -181,7 +181,7 @@ class AdaptiveMemoryLSTM(nn.Module):
 
 
 class SelfEvolvingNetwork(nn.Module):
-    def __init__(self, input_size: int = 64, initial_sizes: List[int] = [128, 64], 
+    def __init__(self, input_size: int = 64, initial_sizes: List[int] = [128, 64],
                  evolution_frequency: int = 1000):
         super().__init__()
         self.input_size = input_size
@@ -198,8 +198,11 @@ class SelfEvolvingNetwork(nn.Module):
         # Build initial network
         self._build_network()
         
+        # Convert to double precision
+        self.double()
+        
         # Evolution tracking with performance history
-        self.layer_usage = torch.zeros(len(self.current_sizes))
+        self.layer_usage = torch.zeros(len(self.current_sizes), dtype=torch.float64)
         self.layer_performance = deque(maxlen=200)
         self.architecture_history = []
         
@@ -324,7 +327,7 @@ class SelfEvolvingNetwork(nn.Module):
             self._transfer_weights_with_importance(old_state)
             
             # Reset evolution tracking
-            self.layer_usage = torch.zeros(len(self.current_sizes))
+            self.layer_usage = torch.zeros(len(self.current_sizes), dtype=torch.float64)
             
     def _calculate_importance_weights(self):
         """Calculate importance weights for parameters to prevent catastrophic forgetting"""
@@ -473,6 +476,9 @@ class FewShotLearner(nn.Module):
         # Attention mechanism for prototype weighting
         self.attention = nn.MultiheadAttention(feature_dim, num_heads=4, batch_first=True)
         
+        # Convert to double precision
+        self.double()
+        
         # Support set storage
         self.support_features = deque(maxlen=support_size * 10)
         self.support_labels = deque(maxlen=support_size * 10)
@@ -480,11 +486,11 @@ class FewShotLearner(nn.Module):
     def forward(self, query_features: torch.Tensor) -> torch.Tensor:
         if len(self.support_features) < self.support_size:
             # Not enough support examples, return zero prediction
-            return torch.zeros(query_features.shape[0], 1)
+            return torch.zeros(query_features.shape[0], 1, dtype=torch.float64, device=query_features.device)
         
-        # Get recent support examples
-        support_batch = torch.stack(list(self.support_features)[-self.support_size:])
-        support_labels_batch = torch.tensor(list(self.support_labels)[-self.support_size:])
+        # Get recent support examples with consistent dtypes
+        support_batch = torch.stack(list(self.support_features)[-self.support_size:]).to(dtype=torch.float64, device=query_features.device)
+        support_labels_batch = torch.tensor(list(self.support_labels)[-self.support_size:], dtype=torch.float64, device=query_features.device)
         
         # Generate prototypes
         prototypes = self.prototype_network(support_batch)

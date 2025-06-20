@@ -136,19 +136,19 @@ class TradingAgent:
         # Few-shot learning prediction
         few_shot_prediction = self.few_shot_learner(learned_state)
         
-        # Enhanced subsystem contributions
+        # Enhanced subsystem contributions with explicit dtype
         subsystem_signals = torch.tensor([
-            features.dna_signal,
-            features.temporal_signal,
-            features.immune_signal,
-            features.microstructure_signal,  # Enhanced with microstructure
-            features.regime_adjusted_signal
-        ], device=self.device)
+            float(features.dna_signal),
+            float(features.temporal_signal),
+            float(features.immune_signal),
+            float(features.microstructure_signal),  # Enhanced with microstructure
+            float(features.regime_adjusted_signal)
+        ], dtype=torch.float64, device=self.device)
         
         subsystem_weights = self.meta_learner.get_subsystem_weights()
         # Expand weights to match signals if needed
         if len(subsystem_weights) < len(subsystem_signals):
-            additional_weights = torch.ones(len(subsystem_signals) - len(subsystem_weights), device=self.device) * 0.1
+            additional_weights = torch.ones(len(subsystem_signals) - len(subsystem_weights), dtype=torch.float64, device=self.device) * 0.1
             subsystem_weights = torch.cat([subsystem_weights, additional_weights])
         
         weighted_signal = torch.sum(subsystem_signals * subsystem_weights[:len(subsystem_signals)])
@@ -402,48 +402,48 @@ class TradingAgent:
         # Base state from encoder
         base_state = self.state_encoder.create_full_state(market_data, features, meta_context)
         
-        # Enhanced features
+        # Enhanced features with explicit float conversion
         enhanced_features = torch.tensor([
             # Microstructure features
-            features.microstructure_signal,
-            features.regime_adjusted_signal,
-            features.smart_money_flow,
-            features.liquidity_depth,
-            features.regime_confidence,
+            float(features.microstructure_signal),
+            float(features.regime_adjusted_signal),
+            float(features.smart_money_flow),
+            float(features.liquidity_depth),
+            float(features.regime_confidence),
             
             # Regime and adaptation features
-            features.adaptation_quality,
-            meta_context.get('regime_transitions', 0.0),
-            meta_context.get('adaptation_events', 0.0),
+            float(features.adaptation_quality),
+            float(meta_context.get('regime_transitions', 0.0)),
+            float(meta_context.get('adaptation_events', 0.0)),
             
             # Account context
-            min(1.0, market_data.account_balance / 50000),
-            market_data.margin_utilization,
-            market_data.buying_power_ratio,
+            float(min(1.0, market_data.account_balance / 50000)),
+            float(market_data.margin_utilization),
+            float(market_data.buying_power_ratio),
             
             # Time-based features
-            np.sin(2 * np.pi * features.time_of_day),  # Cyclical time
-            np.cos(2 * np.pi * features.time_of_day),
+            float(np.sin(2 * np.pi * features.time_of_day)),  # Cyclical time
+            float(np.cos(2 * np.pi * features.time_of_day)),
             
             # Volatility regime features
-            min(1.0, features.volatility / 0.05),  # Normalized volatility
-            np.tanh(features.price_momentum * 10),  # Bounded momentum
+            float(min(1.0, features.volatility / 0.05)),  # Normalized volatility
+            float(np.tanh(features.price_momentum * 10)),  # Bounded momentum
             
             # Pattern strength indicators
-            features.pattern_score,
-            features.confidence,
+            float(features.pattern_score),
+            float(features.confidence),
             
             # Cross-timeframe features (if available)
-            getattr(features, 'tf_5m_momentum', 0.0),
-            getattr(features, 'tf_15m_momentum', 0.0)
-        ], dtype=torch.float32)
+            float(getattr(features, 'tf_5m_momentum', 0.0)),
+            float(getattr(features, 'tf_15m_momentum', 0.0))
+        ], dtype=torch.float64, device=self.device)
         
         # Combine base state with enhanced features
         full_state = torch.cat([base_state, enhanced_features])
         
         # Pad or truncate to exactly 100 features
         if len(full_state) < 100:
-            padding = torch.zeros(100 - len(full_state))
+            padding = torch.zeros(100 - len(full_state), dtype=torch.float64, device=self.device)
             full_state = torch.cat([full_state, padding])
         else:
             full_state = full_state[:100]
@@ -558,7 +558,7 @@ class TradingAgent:
             'account_balance': getattr(trade.market_data, 'account_balance', 25000),
             'hold_time': trade.exit_time - trade.entry_time,
             'was_exploration': getattr(trade, 'exploration', False),
-            'subsystem_contributions': torch.tensor(trade.intelligence_data.get('subsystem_signals', [0,0,0,0,0])),
+            'subsystem_contributions': torch.tensor(trade.intelligence_data.get('subsystem_signals', [0,0,0,0,0]), dtype=torch.float64),
             'subsystem_agreement': self._calculate_enhanced_subsystem_agreement(trade.intelligence_data),
             'confidence': getattr(trade, 'confidence', 0.5),
             'primary_tool': getattr(trade, 'primary_tool', 'unknown'),
@@ -599,9 +599,9 @@ class TradingAgent:
             )
             for exp in sampled_experiences:
                 self.previous_task_buffer.append(exp)
-                # Add to network's previous task data
-                state_tensor = torch.tensor(exp['state_features'], dtype=torch.float32)
-                target_tensor = torch.tensor([exp['reward']], dtype=torch.float32)
+                # Add to network's previous task data with device specification
+                state_tensor = torch.tensor(exp['state_features'], dtype=torch.float64, device=self.device)
+                target_tensor = torch.tensor([exp['reward']], dtype=torch.float64, device=self.device)
                 self.network.add_previous_task_data(state_tensor, target_tensor)
         
         # Meta-learning update
@@ -683,15 +683,15 @@ class TradingAgent:
         if len(batch) < 16:
             return
         
-        # Prepare tensors
-        states = torch.tensor([exp['state_features'] for exp in batch], 
-                            dtype=torch.float32, device=self.device)
-        actions = torch.tensor([exp['action'] for exp in batch], 
+        # Prepare tensors with explicit dtype conversion
+        states = torch.tensor([exp['state_features'] for exp in batch],
+                            dtype=torch.float64, device=self.device)
+        actions = torch.tensor([exp['action'] for exp in batch],
                              dtype=torch.long, device=self.device)
-        rewards = torch.tensor([exp['reward'] for exp in batch], 
-                             dtype=torch.float32, device=self.device)
+        rewards = torch.tensor([exp['reward'] for exp in batch],
+                             dtype=torch.float64, device=self.device)
         uncertainties = torch.tensor([exp.get('uncertainty', 0.5) for exp in batch],
-                                   dtype=torch.float32, device=self.device)
+                                   dtype=torch.float64, device=self.device)
         
         # Enhanced feature learning
         learned_features = self.feature_learner(states)
@@ -811,8 +811,10 @@ class TradingAgent:
     def save_model(self, filepath: str):
         """Enhanced model saving"""
         import os
-        # Ensure directory exists
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        # Ensure directory exists with proper error handling
+        dir_path = os.path.dirname(filepath)
+        if dir_path and not os.path.exists(dir_path):
+            os.makedirs(dir_path, exist_ok=True)
         
         torch.save({
             'network_state': self.network.state_dict(),
@@ -836,9 +838,11 @@ class TradingAgent:
         meta_filepath = filepath.replace('.pt', '_meta.pt')
         adaptation_filepath = filepath.replace('.pt', '_adaptation.pt')
         
-        # Ensure directories exist for additional files
-        os.makedirs(os.path.dirname(meta_filepath), exist_ok=True)
-        os.makedirs(os.path.dirname(adaptation_filepath), exist_ok=True)
+        # Ensure directories exist for additional files with proper error handling
+        for path in [meta_filepath, adaptation_filepath]:
+            dir_path = os.path.dirname(path)
+            if dir_path and not os.path.exists(dir_path):
+                os.makedirs(dir_path, exist_ok=True)
         
         self.meta_learner.save_state(meta_filepath)
         

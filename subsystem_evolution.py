@@ -496,7 +496,7 @@ class FFTTemporalSubsystem:
             return 0.0
         
         # Combine signals from different timeframes
-        combined_signal = np.mean(signals)
+        combined_signal = float(np.mean(signals))
         
         # Add seasonal and lunar analysis if timestamps available
         if timestamps:
@@ -569,10 +569,10 @@ class FFTTemporalSubsystem:
         self.dominant_cycles.append(cycle_info)
         
         # Normalize and combine signals
-        normalized_signal = np.tanh(signal_strength / len(prices))
+        normalized_signal = float(np.tanh(signal_strength / len(prices)))
         final_signal = normalized_signal + interference_signal
         
-        return final_signal
+        return float(final_signal)
     
     def _analyze_cycle_interference(self, cycles: List[Dict]) -> float:
         """Advanced cycle interference analysis"""
@@ -607,7 +607,7 @@ class FFTTemporalSubsystem:
                     amplitude_diff = abs(cycle1['amplitude'] - cycle2['amplitude'])
                     interference_score -= amplitude_diff * 0.05
         
-        return np.tanh(interference_score)
+        return float(np.tanh(interference_score))
     
     def _analyze_seasonal_patterns(self, prices: List[float], timestamps: List[float]) -> float:
         """Analyze seasonal market patterns"""
@@ -646,7 +646,7 @@ class FFTTemporalSubsystem:
         except Exception as e:
             logger.warning(f"Seasonal analysis error: {e}")
         
-        return np.tanh(signal)
+        return float(np.tanh(signal))
     
     def _analyze_lunar_influence(self, prices: List[float], timestamps: List[float]) -> float:
         """Analyze lunar cycle influence on markets"""
@@ -676,7 +676,7 @@ class FFTTemporalSubsystem:
                 
                 # Current lunar influence
                 lunar_signal = correlation * np.sin(2 * np.pi * lunar_phase)
-                return np.tanh(lunar_signal)
+                return float(np.tanh(lunar_signal))
         
         except Exception as e:
             logger.warning(f"Lunar analysis error: {e}")

@@ -389,7 +389,7 @@ class IntelligenceEngine:
         while len(features) < 64:
             features.append(0.0)
         
-        return torch.tensor(features[:64], dtype=torch.float32)
+        return torch.tensor(features[:64], dtype=torch.float64, device='cpu')
     
     def _recognize_patterns(self, prices: np.ndarray, volumes: np.ndarray) -> float:
         """Enhanced pattern recognition"""
