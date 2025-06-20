@@ -52,19 +52,21 @@ class TradingAgent:
         # Enhanced neural architecture with self-evolution
         initial_sizes = self.meta_learner.architecture_evolver.current_sizes
         self.network = SelfEvolvingNetwork(
-            input_size=64, 
+            input_size=64,
             initial_sizes=initial_sizes,
             evolution_frequency=500
         ).to(self.device)
-        
+
         self.target_network = SelfEvolvingNetwork(
-            input_size=64, 
+            input_size=64,
             initial_sizes=initial_sizes
         ).to(self.device)
-        self.target_network.load_state_dict(self.network.state_dict())
         
         # Enhanced feature learning with catastrophic forgetting prevention
-        self.feature_learner = FeatureLearner(raw_feature_dim=100, learned_feature_dim=64).to(self.device)
+        self.feature_learner = FeatureLearner(
+            raw_feature_dim=100, 
+            learned_feature_dim=64,
+        ).to(self.device)
         self.state_encoder = StateEncoder()
         
         # Few-shot learning capability

@@ -193,7 +193,7 @@ class SelfEvolvingNetwork(nn.Module):
         self.timeframe_attention = CrossTimeframeAttention()
         
         # Enhanced memory system
-        self.memory_lstm = AdaptiveMemoryLSTM(input_size)
+        self.memory_lstm = AdaptiveMemoryLSTM(input_size, hidden_size=input_size)
         
         # Build initial network
         self._build_network()

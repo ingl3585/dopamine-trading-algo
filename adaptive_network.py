@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from typing import List, Dict, Any
+import time
+from datetime import datetime
 
 
 class DynamicLayer(nn.Module):
@@ -92,6 +94,7 @@ class FeatureLearner(nn.Module):
         self.feature_combiner = nn.Sequential(
             nn.Linear(raw_feature_dim, learned_feature_dim * 2),
             nn.ReLU(),
+            nn.Dropout(0.1),
             nn.Linear(learned_feature_dim * 2, learned_feature_dim)
         )
         
@@ -206,11 +209,21 @@ class StateEncoder:
             min(1.0, market_data.available_margin / 25000)
         ])
         
-        # Time features
-        import time
-        from datetime import datetime
+        # Convert .NET Ticks to Unix timestamp
+        timestamp = market_data.timestamp
         
-        current_time = datetime.fromtimestamp(market_data.timestamp)
+        # .NET Ticks: 100-nanosecond intervals since January 1, 0001
+        # Unix timestamp: seconds since January 1, 1970
+        if timestamp > 1e15:  # Definitely .NET ticks (very large number)
+            unix_timestamp = (timestamp - 621355968000000000) / 10000000
+        else:
+            unix_timestamp = timestamp  # Already Unix timestamp
+        
+        # Validate timestamp (reasonable range: 1970-2030)
+        if unix_timestamp < 0 or unix_timestamp > 1893456000:
+            unix_timestamp = time.time()  # Use current time as fallback
+        
+        current_time = datetime.fromtimestamp(unix_timestamp)
         hour_norm = current_time.hour / 24.0
         minute_norm = current_time.minute / 60.0
         weekday_norm = current_time.weekday() / 6.0
