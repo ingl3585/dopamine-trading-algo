@@ -111,14 +111,14 @@ class RiskManager:
         
         # 1. Based on available margin
         if available_margin > 0:
-            # Estimate margin per contract for MNQ (typically $500-800)
-            estimated_margin_per_contract = 600
+            # Margin per contract for MNQ
+            estimated_margin_per_contract = 500
             max_by_margin = int((available_margin * position_factor * confidence_multiplier) / estimated_margin_per_contract)
             sizing_approaches.append(max_by_margin)
         
         # 2. Based on account balance percentage
         max_risk_per_trade = account_balance * position_factor * confidence_multiplier
-        estimated_margin_per_contract = 600
+        estimated_margin_per_contract = 500
         max_by_balance = int(max_risk_per_trade / estimated_margin_per_contract)
         sizing_approaches.append(max_by_balance)
         
