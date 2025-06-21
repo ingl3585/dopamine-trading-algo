@@ -1,49 +1,51 @@
 # config.py
 
-from dataclasses import dataclass, field
-from typing import List
-
-@dataclass
-class ResearchConfig:
-    """Research-aligned configuration with enhanced features"""
+class Config:
+    def __init__(self):
+        # Minimal configuration - most parameters should be meta-learned
+        self.settings = {
+            # System operational settings (not trading logic)
+            'tcp_port': 8080,
+            'tcp_host': 'localhost',
+            'model_save_interval': 300,  # 5 minutes
+            'log_level': 'INFO',
+            'data_directory': 'data',
+            'models_directory': 'models',
+            'logs_directory': 'logs',
+            
+            # Market-specific constants (not decision parameters)
+            'mnq_point_value': 2.0,  # MNQ futures point value
+            'mnq_tick_size': 0.25,   # MNQ minimum tick size
+            
+            # Bootstrap settings
+            'min_historical_bars': 1000,  # Minimum bars needed for bootstrap
+            'bootstrap_timeout': 300,     # Max time to wait for historical data
+            
+            # Emergency safety limits (learned parameters override these)
+            'emergency_max_margin_usage': 0.95,  # Hard stop at 95% margin
+            'emergency_max_drawdown': 0.20,      # Hard stop at 20% drawdown
+        }
     
-    # Core indicators based on academic research
-    RSI_PERIOD: int = 14
-    BB_PERIOD: int = 20
-    BB_STD: float = 2.0
-    EMA_PERIOD: int = 20
-    SMA_PERIOD: int = 50
-    VOLUME_PERIOD: int = 20
+    def get(self, key: str, default=None):
+        return self.settings.get(key, default)
     
-    # Multi-timeframe settings
-    TIMEFRAMES: List[str] = field(default_factory=lambda: ["15m", "5m"])
+    def update_setting(self, key: str, value):
+        """Allow runtime updates to configuration"""
+        self.settings[key] = value
     
-    # Logistic Regression parameters
-    ML_LOOKBACK: int = 100
-    ML_RETRAIN_FREQUENCY: int = 12
-    MIN_TRAINING_SAMPLES: int = 20
-    
-    # Enhanced signal thresholds (research-aligned)
-    CONFIDENCE_THRESHOLD: float = 0.5          # Minimum to send any signal
-    CONFIDENCE_HIGH: float = 0.8               # Excellent signals
-    CONFIDENCE_MODERATE: float = 0.7           # Good signals  
-    CONFIDENCE_LOW: float = 0.6                # Fair signals
-    
-    # Volume analysis thresholds
-    VOLUME_BREAKOUT_THRESHOLD: float = 1.5     # Volume spike threshold
-    VOLUME_CONFIRM_THRESHOLD: float = 1.2      # Volume confirmation
-    VOLUME_WEAK_THRESHOLD: float = 0.8         # Below average volume
-    
-    # TCP Configuration
-    TCP_HOST: str = "localhost"
-    FEATURE_PORT: int = 5556
-    SIGNAL_PORT: int = 5557
-    
-    # Model persistence
-    MODEL_PATH: str = "models/logistic_model.joblib"
-    SCALER_PATH: str = "models/feature_scaler.joblib"
-    
-    def __post_init__(self):
-        """Ensure model directory exists"""
-        import os
-        os.makedirs(os.path.dirname(self.MODEL_PATH), exist_ok=True)
+    def get_learnable_parameters(self):
+        """Return parameters that should be meta-learned rather than hardcoded"""
+        return [
+            'max_daily_loss_factor',      # Learned from account size and performance
+            'max_position_size_factor',   # Learned from volatility and account
+            'min_confidence_threshold',   # Learned from historical performance
+            'risk_per_trade_factor',      # Learned via Kelly criterion
+            'max_trades_per_hour',        # Learned from market conditions
+            'stop_preference',            # Learned from stop effectiveness
+            'target_preference',          # Learned from target effectiveness
+            'loss_tolerance_factor',      # Learned from drawdown recovery
+            'consecutive_loss_tolerance', # Learned from streak analysis
+            'position_size_factor',       # Learned from risk-adjusted returns
+            'stop_distance_factor',       # Learned from volatility patterns
+            'target_distance_factor',     # Learned from profit optimization
+        ]

@@ -1,430 +1,438 @@
 // ResearchStrategy.cs
+// Advanced AI Trading Strategy with Multi-Entry Scaling and Position Reversal Capability
+//
+// Key Features:
+// - Supports up to 5 entries per direction for position scaling
+// - Automatic position reversals (long to short, short to long)
+// - Each entry gets unique signal name for proper tracking
+// - Individual stop loss and profit target management per entry
+// - Enhanced position and execution tracking with safety limits
+// - Real-time data streaming to Python AI system
 
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.ComponentModel.DataAnnotations;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
-using System.Xml.Serialization;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
 using NinjaTrader.NinjaScript;
 using NinjaTrader.NinjaScript.Strategies;
-using NinjaTrader.NinjaScript.Indicators;
-using NinjaTrader.Gui.Tools;
-using NinjaTrader.NinjaScript.DrawingTools;
-using System.Windows.Media;
+using System.Globalization;
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
     public class ResearchStrategy : Strategy
     {
-        #region Properties
-        
-        [NinjaScriptProperty]
-        [Range(0.001, 0.1)]
-        [Display(Name = "Risk Percent", Description = "Risk percentage per trade", Order = 1, GroupName = "Risk Management")]
-        public double RiskPercent { get; set; }
-        
-        [NinjaScriptProperty] 
-        [Range(1, 100)]
-        [Display(Name = "Stop Loss Ticks", Description = "Stop loss distance in ticks", Order = 2, GroupName = "Risk Management")]
-        public int StopLossTicks { get; set; }
-        
-        [NinjaScriptProperty]
-        [Range(1, 200)]
-        [Display(Name = "Take Profit Ticks", Description = "Take profit distance in ticks", Order = 3, GroupName = "Risk Management")]
-        public int TakeProfitTicks { get; set; }
-		
-		[NinjaScriptProperty]
-		[Display(Name = "Allow Scale In", Description = "Allow scaling into positions", Order = 7, GroupName = "Risk Management")]
-		public bool AllowScaleIn { get; set; }
-		
-		[NinjaScriptProperty]
-		[Range(2, 5)]
-		[Display(Name = "Max Position Pieces", Description = "Maximum scaling pieces", Order = 8, GroupName = "Risk Management")]
-		public int MaxPositionPieces { get; set; }
-        
-        [NinjaScriptProperty]
-        [Range(0.1, 1.0)]
-        [Display(Name = "Min Confidence", Description = "Minimum ML confidence threshold", Order = 4, GroupName = "ML Settings")]
-        public double MinConfidence { get; set; }
-        
-        [NinjaScriptProperty]
-        [Range(1, 10)]
-        [Display(Name = "Max Position Size", Description = "Maximum position size", Order = 5, GroupName = "Risk Management")]
-        public int MaxPositionSize { get; set; }
-		
-		[NinjaScriptProperty]
-		[Display(Name = "Show Indicators", Description = "Show indicators on chart", Order = 6, GroupName = "Display")]
-		public bool ShowIndicators { get; set; }
-        
-        #endregion
-        
-        #region Private Fields
-        
-        private TcpClient featureClient;
+        private TcpClient dataClient;
         private TcpClient signalClient;
         private Thread signalThread;
+        private bool isConnected;
         private bool isRunning;
+        private bool historicalDataSent = false;
         
-        // Data storage for Python communication
-        private List<double> prices15m = new List<double>();
-        private List<double> volumes15m = new List<double>();
+        private List<double> prices1m = new List<double>();
         private List<double> prices5m = new List<double>();
-        private List<double> volumes5m = new List<double>();
-		private List<double> prices1m = new List<double>();
+        private List<double> prices15m = new List<double>();
         private List<double> volumes1m = new List<double>();
+        private List<double> volumes5m = new List<double>();
+        private List<double> volumes15m = new List<double>();
         
-        // Position tracking
-        private double entryPrice;
-        private bool hasPosition;
-        private int signalCount;
-        private int tradesExecuted;
-        private int connectionAttempts;
-        private DateTime lastConnectionAttempt;
-		private DateTime lastTradeEntry;
-		private int tradeIdCounter = 0;
-		private string currentTradeId = "";
-        
-        // Connection status
-        private bool isConnectedToFeatureServer;
-        private bool isConnectedToSignalServer;
-        
-        #endregion
+        // Enhanced account tracking
+        private double lastAccountBalance = 0;
+        private double lastBuyingPower = 0;
+        private double sessionStartPnL = 0;
+        private bool sessionStartSet = false;
 		
-		#region Indicator Variables
-		
-		private EMA ema20;
-		private SMA sma50;
-		private Bollinger bb;
-		private RSI rsi14;
-		private VOL volumeIndicator;
-		private ATR atr14;
-		
-		#endregion
+		// Data sending tracking
+        private DateTime lastDataSent = DateTime.MinValue;
+        private int dataSendCount = 0;
         
-        #region Strategy Lifecycle
+        // Track entry counter for unique signal names when scaling in
+        private int entryCounter = 0;
+        private DateTime lastEntryTime = DateTime.MinValue;
+        private int entriesThisMinute = 0;
+		private int lastTradeCount = 0;
         
         protected override void OnStateChange()
         {
-            try
+            switch (State)
             {
-                switch (State)
-                {
-                    case State.SetDefaults:
-                        ConfigureDefaults();
-                        break;
-                        
-                    case State.Configure:
-                        ConfigureStrategy();
-                        break;
-                        
-                    case State.DataLoaded:
-		                if (BarsArray?.Length > 0 && CurrentBars[0] > 0)
-		                {
-		                    Print("Research Strategy data loaded - preparing for connection");
-		                }
-		                break;
-                        
-		            case State.Realtime:
-		                // Only print connection info ONCE when actually going live
-		                if (!isConnectedToFeatureServer || !isConnectedToSignalServer)
-		                {
-		                    Print("Research Strategy entering real-time mode");
-		                    ConnectToPython();
-		                    StartSignalReceiver();
-		                    
-		                    // Send initial historical data for training
-		                    if (isConnectedToFeatureServer)
-		                    {
-		                        Print($"Sending historical data: 15m={prices15m.Count}, 5m={prices5m.Count}, 1m={prices1m.Count}");
-		                        SendMarketDataToPython();
-		                    }
-		                }
-		                break;
-                        
-		            case State.Terminated:
-		                // Only print cleanup message if we were actually running
-		                if (signalCount > 0 || tradesExecuted > 0)
-		                {
-		                    CleanupWithStats();
-		                }
-		                else
-		                {
-		                    QuietCleanup(); // Silent cleanup for startup failures
-		                }
-		                break;
-                }
-            }
-            catch (Exception ex)
-            {
-                Print($"OnStateChange error in {State}: {ex.Message}");
+				case State.SetDefaults:
+				    Description = "Adaptive AI Trading Strategy with Historical Bootstrapping";
+				    Name = "ResearchStrategy";
+				    Calculate = Calculate.OnBarClose;
+				    BarsRequiredToTrade = 1;
+				    
+				    // CRITICAL: Allow multiple entries in same direction for scaling
+				    EntriesPerDirection = 5;  // Allow up to 5 entries per direction
+				    EntryHandling = EntryHandling.AllEntries;  // Process all entries until limit reached
+				    break;
+				
+				case State.Configure:
+				    AddDataSeries(BarsPeriodType.Minute, 15);
+				    AddDataSeries(BarsPeriodType.Minute, 5);
+				    AddDataSeries(BarsPeriodType.Minute, 1);
+				    break;
+                    
+                case State.Realtime:
+                    ConnectToPython();
+                    StartSignalReceiver();
+                    InitializeSession();
+                    break;
+                    
+                case State.Terminated:
+                    Cleanup();
+                    break;
             }
         }
         
-		private void ConfigureDefaults()
-		{
-		    Description = "Research-aligned strategy: RSI + BB + EMA/SMA + Volume (15m/5m)";
-		    Name = "ResearchStrategy";
-		    Calculate = Calculate.OnBarClose;
-		    
-		    // Research-backed default values
-		    RiskPercent = 0.02;        // 2% risk per trade (institutional standard)
-		    StopLossTicks = 50;        // Simple fixed stop
-		    TakeProfitTicks = 100;      // 2:1 reward-to-risk (research optimal)
-		    MinConfidence = 0.5;       // Research: 60% accuracy threshold
-		    MaxPositionSize = 10;       // Simple position limits
-			AllowScaleIn = true;
-			MaxPositionPieces = 3;
-		    
-		    // NinjaTrader settings aligned with research
-		    EntriesPerDirection = 1;                           // Simplicity
-		    EntryHandling = EntryHandling.AllEntries;         
-		    ExitOnSessionCloseSeconds = 30;                   
-		    IsFillLimitOnTouch = false;                       
-		    MaximumBarsLookBack = MaximumBarsLookBack.TwoHundredFiftySix; // Research: sufficient history
-		    OrderFillResolution = OrderFillResolution.Standard;          
-		    Slippage = 0;                                     
-		    StartBehavior = StartBehavior.WaitUntilFlat;      // Risk management
-		    TimeInForce = TimeInForce.Gtc;                    
-		    TraceOrders = false;                              // Reduce noise
-		    RealtimeErrorHandling = RealtimeErrorHandling.StopCancelClose; // Safety
-		    StopTargetHandling = StopTargetHandling.PerEntryExecution;     
-		    BarsRequiredToTrade = 0;
-			ShowIndicators = true;
-		}
-        
-        private void ConfigureStrategy()
+        private void InitializeSession()
         {
-            // Add multi-timeframe data series
-            AddDataSeries(BarsPeriodType.Minute, 15);  // BarsArray[1] - 15-minute
-            AddDataSeries(BarsPeriodType.Minute, 5);   // BarsArray[2] - 5-minute
-			AddDataSeries(BarsPeriodType.Minute, 1);   // BarsArray[3] - 1-minute
-			
-			if (ShowIndicators)
-			{
-			    // Initialize indicators
-			    ema20 = EMA(BarsArray[0], 20);
-			    sma50 = SMA(BarsArray[0], 50);
-			    bb = Bollinger(BarsArray[0], 2.0, 20);
-			    rsi14 = RSI(BarsArray[0], 14, 3);
-			    volumeIndicator = VOL(BarsArray[0]);
-				atr14 = ATR(BarsArray[0], 14);
-			    
-			    // Configure EMA plot
-			    ema20.Plots[0].Brush = Brushes.Orange;
-			    ema20.Plots[0].Width = 2;
-			    ema20.Plots[0].PlotStyle = PlotStyle.Line;
-			    
-			    // Configure SMA plot
-			    sma50.Plots[0].Brush = Brushes.Blue;
-			    sma50.Plots[0].Width = 2;
-			    sma50.Plots[0].PlotStyle = PlotStyle.Line;
-			    
-			    // Configure Bollinger Bands
-			    bb.Plots[0].Brush = Brushes.Red;  // Upper band
-			    bb.Plots[1].Brush = Brushes.Gray;  // Middle band
-			    bb.Plots[2].Brush = Brushes.Purple;  // Lower band
-			    bb.Plots[0].Width = 1;
-			    bb.Plots[1].Width = 1;
-			    bb.Plots[2].Width = 1;
-			    
-			    // Configure RSI
-			    rsi14.Plots[0].Brush = Brushes.Purple;
-			    rsi14.Plots[0].Width = 2;
-				
-				// Configure ATR
-				atr14.Plots[0].Brush = Brushes.Gray;
-			    
-			    // Add indicators to chart
-			    AddChartIndicator(ema20);
-			    AddChartIndicator(sma50);
-			    AddChartIndicator(bb);
-				AddChartIndicator(atr14);
-			    
-			    // RSI goes in separate panel
-			    AddChartIndicator(rsi14);
-			}
+            if (!sessionStartSet)
+            {
+                sessionStartPnL = Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
+                sessionStartSet = true;
+                Print($"Session initialized - Starting P&L: {sessionStartPnL:C}");
+            }
         }
         
 		protected override void OnBarUpdate()
 		{
-		    try
+		    // Only process on the primary series (BarsInProgress == 0)
+		    // OnBarUpdate gets called for each timeframe: 0=primary, 1=15m, 2=5m, 3=1m
+		    if (BarsInProgress != 0 || State != State.Realtime)
+		        return;
+		    
+		    // Update price data from all available series when processing primary series
+		    UpdatePriceData();
+		    
+		    if (!isConnected)
+		        return;
+		    
+		    // Send historical data once
+		    if (!historicalDataSent)
 		    {
-		        // Validate we have enough data on all timeframes before processing
-		        if (CurrentBars[0] < 1 || 
-		            (BarsArray.Length > 1 && CurrentBars[1] < 1) || 
-		            (BarsArray.Length > 2 && CurrentBars[2] < 1) ||
-		            (BarsArray.Length > 3 && CurrentBars[3] < 1))
-		        {
-		            return; // Wait until all timeframes have data
-		        }
+		        SendHistoricalData();
+		        historicalDataSent = true;
+		        return; // Don't send live data on the same bar as historical
+		    }
+		    
+		    // Send live data on every bar close of primary series
+		    if (HasValidData())
+		    {
+		        SendDataToPython();
+		        dataSendCount++;
 		        
-		        if (State == State.Historical)
+		        // Debug logging every 5 sends
+		        if (dataSendCount % 5 == 0)
 		        {
-		            // Collect data from all timeframes during historical processing
-		            UpdateMarketData();
+		            Print($"Live data sent #{dataSendCount} - Primary: {Close[0]:F2}, 15m: {(BarsArray.Length > 1 && BarsArray[1].Count > 0 ? Closes[1][0].ToString("F2") : "N/A")}, Time: {Time[0]:HH:mm:ss}");
 		        }
-		        else if (State == State.Realtime)
-		        {
-		            // Only send to Python on primary timeframe updates in real-time
-		            // This ensures all secondary timeframes have updated their latest values
-		            if (BarsInProgress == 0)
-		            {
-		                UpdateMarketData();
-						
-						if (ShowIndicators)
-		                {
-		                    UpdateChartIndicators();
-		                }
-		                
-		                if (isConnectedToFeatureServer)
-		                {
-		                    SendMarketDataToPython();
-		                }
-		            }
-		        }
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"OnBarUpdate error: {ex.Message}");
-		    }
-		}
-        
-		protected override void OnExecutionUpdate(Execution execution, string executionId, 
-		                                        double price, int quantity, MarketPosition marketPosition, 
-		                                        string orderId, DateTime time)
-		{
-		    try
-		    {
-		        if (execution.Order != null)
-		        {
-		            tradesExecuted++;
-		            
-		            // Create trade ID for ML entry orders
-		            if (execution.Order.Name.Contains("ML_") && 
-		                string.IsNullOrEmpty(currentTradeId) &&
-		                (execution.Order.OrderAction == OrderAction.Buy || execution.Order.OrderAction == OrderAction.SellShort))
-		            {
-		                lastTradeEntry = DateTime.Now;
-		                tradeIdCounter++;
-		                currentTradeId = $"trade_{tradeIdCounter}";
-		                entryPrice = price;
-		                hasPosition = true;
-		                Print($"Trade started: {currentTradeId} at {price:F2}");
-		            }
-		            
-		            // Handle position going flat
-		            if (marketPosition == MarketPosition.Flat)
-		            {
-		                hasPosition = false;
-		                entryPrice = 0;
-		                
-		                if (!string.IsNullOrEmpty(currentTradeId))
-		                {
-		                    int duration = (int)(DateTime.Now - lastTradeEntry).TotalMinutes;
-		                    string exitReason = DetermineExitReason(execution.Order.Name);
-		                    
-		                    NotifyTradeCompletion(currentTradeId, price, exitReason, duration);
-		                    Print($"Trade completed: {currentTradeId}, Exit: {price:F2}, Reason: {exitReason}");
-		                    currentTradeId = "";
-		                }
-		            }
-		        }
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Execution update error: {ex.Message}");
 		    }
 		}
 		
-		private string DetermineExitReason(string orderName)
+		private bool HasValidData()
 		{
-		    if (orderName.Contains("Stop"))
-		        return "stop_loss";
-		    else if (orderName.Contains("Target") || orderName.Contains("Profit"))
-		        return "take_profit";
-		    else if (orderName.Contains("Exit") || orderName.Contains("Reverse"))
-		        return "signal_exit";
-		    else
-		        return "market_close";
+		    // Check if we have valid data from primary series and at least some historical data
+		    bool primaryValid = Close[0] > 0 && Volume[0] > 0;
+		    bool listsHaveData = prices1m.Count > 0 && volumes1m.Count > 0;
+		    
+		    return primaryValid && listsHaveData;
 		}
-        
-        #endregion
-        
-        #region TCP Communication
-        
-        private void ConnectToPython()
+
+		private void SendHistoricalData()
 		{
 		    try
 		    {
-		        if (State == State.Realtime)
+		        Print("Sending historical data to Python...");
+		        
+		        // Wait for all series to have some data before sending
+		        if (BarsArray.Length < 3 || BarsArray[1].Count == 0 || BarsArray[2].Count == 0)
 		        {
-		            lastConnectionAttempt = DateTime.Now;
-		            connectionAttempts++;
+		            Print("Waiting for all timeframe data to load...");
+		            return;
 		        }
 		        
-		        if (!isConnectedToFeatureServer)
-		        {
-		            try
-		            {
-		                featureClient = new TcpClient("localhost", 5556);
-		                isConnectedToFeatureServer = true;
-		                Print("Connected to Python feature server (port 5556)");
-		            }
-		            catch (Exception ex)
-		            {
-		                Print($"Feature server connection failed: {ex.Message}");
-		                isConnectedToFeatureServer = false;
-		            }
-		        }
+		        // Get 10 days of data (approximately 1000+ bars for 15min)
+		        int historyDays = 10;
+		        int barsToSend15m = Math.Min(historyDays * 96, BarsArray[1].Count); // 96 15-min bars per day
+		        int barsToSend5m = Math.Min(historyDays * 288, BarsArray[2].Count); // 288 5-min bars per day
+		        int barsToSend1m = Math.Min(historyDays * 1440, BarsArray[0].Count); // 1440 1-min bars per day (using primary)
 		        
-		        if (!isConnectedToSignalServer)
+		        var historicalData = new
 		        {
-		            try
-		            {
-		                signalClient = new TcpClient("localhost", 5557);
-		                isConnectedToSignalServer = true;
-		                Print("Connected to Python signal server (port 5557)");
-		            }
-		            catch (Exception ex)
-		            {
-		                Print($"Signal server connection failed: {ex.Message}");
-		                isConnectedToSignalServer = false;
-		            }
-		        }
+		            type = "historical_data",
+		            bars_15m = GetHistoricalBars(BarsArray[1], barsToSend15m),
+		            bars_5m = GetHistoricalBars(BarsArray[2], barsToSend5m),
+		            bars_1m = GetHistoricalBars(BarsArray[0], barsToSend1m), // Using primary series as 1m data
+		            timestamp = DateTime.Now.Ticks
+		        };
 		        
-		        if (isConnectedToFeatureServer && isConnectedToSignalServer && State == State.Realtime)
-		        {
-		            // Connection message
-		            Print("Research strategy fully connected to Python ML system");
-		            Print("Using: RSI + Bollinger Bands + EMA + SMA + Volume (15m/5m/1m timeframes)");
-		            Print("ML Model: Enhanced Ensemble with 1-minute entry timing");
-		        }
+		        string json = SerializeHistoricalData(historicalData);
+		        SendJsonMessage(json);
+		        
+		        Print($"Historical data sent: {historicalData.bars_15m.Count} 15m bars, " +
+		              $"{historicalData.bars_5m.Count} 5m bars, {historicalData.bars_1m.Count} 1m bars");
+		              
+		        historicalDataSent = true;
 		    }
 		    catch (Exception ex)
 		    {
-		        Print($"Python connection error: {ex.Message}");
-		        isConnectedToFeatureServer = false;
-		        isConnectedToSignalServer = false;
+		        Print($"Historical data send error: {ex.Message}");
+		        // Don't set historicalDataSent = true on error, so it will retry
 		    }
 		}
         
+        private List<BarData> GetHistoricalBars(Bars bars, int count)
+        {
+            var barList = new List<BarData>();
+            
+            if (bars == null || bars.Count == 0)
+                return barList;
+            
+            int startIndex = Math.Max(0, bars.Count - count);
+            
+            for (int i = startIndex; i < bars.Count; i++)
+            {
+                barList.Add(new BarData
+                {
+                    timestamp = bars.GetTime(i).Ticks,
+                    open = bars.GetOpen(i),
+                    high = bars.GetHigh(i),
+                    low = bars.GetLow(i),
+                    close = bars.GetClose(i),
+                    volume = bars.GetVolume(i)
+                });
+            }
+            
+            return barList;
+        }
+        
+        private string SerializeHistoricalData(dynamic data)
+        {
+            var sb = new StringBuilder();
+            sb.Append("{");
+            sb.Append($"\"type\":\"historical_data\",");
+            sb.Append($"\"bars_15m\":{SerializeBarArray(data.bars_15m)},");
+            sb.Append($"\"bars_5m\":{SerializeBarArray(data.bars_5m)},");
+            sb.Append($"\"bars_1m\":{SerializeBarArray(data.bars_1m)},");
+            sb.Append($"\"timestamp\":{data.timestamp}");
+            sb.Append("}");
+            return sb.ToString();
+        }
+        
+        private string SerializeBarArray(List<BarData> bars)
+        {
+            var sb = new StringBuilder();
+            sb.Append("[");
+            
+            for (int i = 0; i < bars.Count; i++)
+            {
+                if (i > 0) sb.Append(",");
+                
+                var bar = bars[i];
+                sb.Append("{");
+                sb.Append($"\"timestamp\":{bar.timestamp},");
+                sb.Append($"\"open\":{bar.open.ToString(CultureInfo.InvariantCulture)},");
+                sb.Append($"\"high\":{bar.high.ToString(CultureInfo.InvariantCulture)},");
+                sb.Append($"\"low\":{bar.low.ToString(CultureInfo.InvariantCulture)},");
+                sb.Append($"\"close\":{bar.close.ToString(CultureInfo.InvariantCulture)},");
+                sb.Append($"\"volume\":{bar.volume}");
+                sb.Append("}");
+            }
+            
+            sb.Append("]");
+            return sb.ToString();
+        }
+        
+		private void UpdatePriceData()
+		{
+		    // Only update when processing the primary series to avoid duplicate updates
+		    if (BarsInProgress != 0) 
+		        return;
+		    
+		    // The primary series data (whatever timeframe the strategy is running on)
+		    // We'll treat this as our base timeframe
+		    UpdateList(prices1m, Close[0], 1000);
+		    UpdateList(volumes1m, Volume[0], 1000);
+		    
+		    // Update from additional series if they have data
+		    // BarsArray[1] = 15m series
+		    if (BarsArray.Length > 1 && BarsArray[1].Count > 0)
+		    {
+		        UpdateList(prices15m, Closes[1][0], 100);
+		        UpdateList(volumes15m, Volumes[1][0], 100);
+		    }
+		    
+		    // BarsArray[2] = 5m series  
+		    if (BarsArray.Length > 2 && BarsArray[2].Count > 0)
+		    {
+		        UpdateList(prices5m, Closes[2][0], 300);
+		        UpdateList(volumes5m, Volumes[2][0], 300);
+		    }
+		    
+		    // Note: BarsArray[3] would be 1m, but we're using the primary series as our minute data
+		    // If you want true 1m data separate from primary, you'd access it here as Closes[3][0]
+		}
+		
+		private void LogDataSeriesInfo()
+		{
+		    Print($"Data Series Info:");
+		    Print($"  Primary (BarsArray[0]): {BarsArray[0].Count} bars, Current: {Close[0]:F2}");
+		    
+		    if (BarsArray.Length > 1)
+		        Print($"  15m (BarsArray[1]): {BarsArray[1].Count} bars, Current: {(BarsArray[1].Count > 0 ? Closes[1][0].ToString("F2") : "N/A")}");
+		    
+		    if (BarsArray.Length > 2)
+		        Print($"  5m (BarsArray[2]): {BarsArray[2].Count} bars, Current: {(BarsArray[2].Count > 0 ? Closes[2][0].ToString("F2") : "N/A")}");
+		        
+		    if (BarsArray.Length > 3)
+		        Print($"  1m (BarsArray[3]): {BarsArray[3].Count} bars, Current: {(BarsArray[3].Count > 0 ? Closes[3][0].ToString("F2") : "N/A")}");
+		        
+		    Print($"  Lists - 1m: {prices1m.Count}, 5m: {prices5m.Count}, 15m: {prices15m.Count}");
+		}
+        
+        private void UpdateList(List<double> list, double value, int maxSize)
+        {
+            list.Add(value);
+            if (list.Count > maxSize)
+                list.RemoveAt(0);
+        }
+        
+		private void ConnectToPython()
+		{
+		    try
+		    {
+		        Print("Attempting to connect to Python AI system...");
+		        
+		        dataClient = new TcpClient("localhost", 5556);
+		        signalClient = new TcpClient("localhost", 5557);
+		        isConnected = true;
+		        
+		        Print("Connected to Python AI system successfully");
+		        
+		        // Log initial data series info for debugging
+		        LogDataSeriesInfo();
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Connection failed: {ex.Message}");
+		        isConnected = false;
+		    }
+		}
+        
+		private void SendDataToPython()
+		{
+		    if (!isConnected || dataClient?.Connected != true)
+		    {
+		        Print("Cannot send data - not connected to Python");
+		        return;
+		    }
+		        
+		    try
+		    {
+		        var json = BuildMarketDataJson();
+		        
+		        if (string.IsNullOrEmpty(json))
+		        {
+		            Print("Cannot send data - JSON is empty");
+		            return;
+		        }
+		        
+		        SendJsonMessage(json);
+		        
+		        Print($"Data send #{dataSendCount} - Lists: 1m={prices1m.Count}, 5m={prices5m.Count}, 15m={prices15m.Count}");
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Data send error: {ex.Message}");
+		        isConnected = false;
+		    }
+		}
+        
+        private void SendJsonMessage(string json)
+        {
+            byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
+            byte[] header = BitConverter.GetBytes(jsonBytes.Length);
+            
+            var stream = dataClient.GetStream();
+            stream.Write(header, 0, 4);
+            stream.Write(jsonBytes, 0, jsonBytes.Length);
+        }
+        
+		private string BuildMarketDataJson()
+		{
+		    try
+		    {
+		        var sb = new StringBuilder();
+		        sb.Append("{");
+		
+		        sb.Append($"\"type\":\"live_data\",");
+		        sb.Append($"\"price_1m\":{SerializeDoubleArray(prices1m)},");
+		        sb.Append($"\"price_5m\":{SerializeDoubleArray(prices5m)},");
+		        sb.Append($"\"price_15m\":{SerializeDoubleArray(prices15m)},");
+		        sb.Append($"\"volume_1m\":{SerializeDoubleArray(volumes1m)},");
+		        sb.Append($"\"volume_5m\":{SerializeDoubleArray(volumes5m)},");
+		        sb.Append($"\"volume_15m\":{SerializeDoubleArray(volumes15m)},");
+		
+		        double currentBalance     = Account.Get(AccountItem.CashValue,             Currency.UsDollar);
+		        double currentBuyingPower = Account.Get(AccountItem.ExcessIntradayMargin,  Currency.UsDollar);
+		        double totalPnL           = Account.Get(AccountItem.RealizedProfitLoss,    Currency.UsDollar);
+		        double dailyPnL           = sessionStartSet ? (totalPnL - sessionStartPnL) : 0;
+		        double netLiquidation     = Account.Get(AccountItem.NetLiquidation,        Currency.UsDollar);
+		        double marginUsed         = Account.Get(AccountItem.InitialMargin,         Currency.UsDollar);
+		        double availableMargin    = currentBuyingPower;
+		
+		        if (currentBalance     <= 0) currentBalance     = 25000;
+		        if (currentBuyingPower <= 0) currentBuyingPower = currentBalance;
+		        if (netLiquidation     <= 0) netLiquidation     = currentBalance;
+		
+		        sb.Append($"\"account_balance\":{currentBalance.ToString(CultureInfo.InvariantCulture)},");
+		        sb.Append($"\"buying_power\":{currentBuyingPower.ToString(CultureInfo.InvariantCulture)},");
+		        sb.Append($"\"daily_pnl\":{dailyPnL.ToString(CultureInfo.InvariantCulture)},");
+		        sb.Append($"\"net_liquidation\":{netLiquidation.ToString(CultureInfo.InvariantCulture)},");
+		        sb.Append($"\"margin_used\":{marginUsed.ToString(CultureInfo.InvariantCulture)},");
+		        sb.Append($"\"available_margin\":{availableMargin.ToString(CultureInfo.InvariantCulture)},");
+		        sb.Append($"\"open_positions\":{Position.Quantity},");
+		        sb.Append($"\"current_price\":{Close[0].ToString(CultureInfo.InvariantCulture)},");
+		        long unixSeconds = new DateTimeOffset(DateTime.UtcNow).ToUnixTimeSeconds();
+		        sb.Append($"\"timestamp\":{unixSeconds}");
+		
+		        sb.Append("}");
+		        return sb.ToString();
+		    }
+		    catch (Exception ex)
+		    {
+		        Print($"Error building market data JSON: {ex.Message}");
+		        return string.Empty;
+		    }
+		}
+        
+        private string SerializeDoubleArray(List<double> array)
+        {
+            if (array.Count == 0) return "[]";
+            
+            var sb = new StringBuilder();
+            sb.Append("[");
+            
+            for (int i = 0; i < array.Count; i++)
+            {
+                if (i > 0) sb.Append(",");
+                sb.Append(array[i].ToString(CultureInfo.InvariantCulture));
+            }
+            
+            sb.Append("]");
+            return sb.ToString();
+        }
+        
         private void StartSignalReceiver()
         {
-            if (isRunning) return; // Already started
+            if (isRunning) return;
             
             isRunning = true;
-            signalThread = new Thread(ReceiveSignals)
-            {
-                IsBackground = true,
-                Name = "ResearchSignalReceiver"
-            };
+            signalThread = new Thread(ReceiveSignals) { IsBackground = true };
             signalThread.Start();
-            Print("Signal receiver thread started");
         }
         
         private void ReceiveSignals()
@@ -439,243 +447,143 @@ namespace NinjaTrader.NinjaScript.Strategies
                         continue;
                     }
                     
-                    // Read signal header (4 bytes for message length)
-                    var headerBytes = new byte[4];
-                    int headerRead = 0;
+                    byte[] header = new byte[4];
+                    int bytesRead = signalClient.GetStream().Read(header, 0, 4);
+                    if (bytesRead != 4) continue;
                     
-                    while (headerRead < 4)
-                    {
-                        int bytesRead = signalClient.GetStream().Read(headerBytes, headerRead, 4 - headerRead);
-                        if (bytesRead == 0)
-                        {
-                            Print("Signal connection lost");
-                            isConnectedToSignalServer = false;
-                            return;
-                        }
-                        headerRead += bytesRead;
-                    }
+                    int messageLength = BitConverter.ToInt32(header, 0);
+                    if (messageLength <= 0 || messageLength > 10000) continue;
                     
-                    int messageLength = BitConverter.ToInt32(headerBytes, 0);
+                    byte[] messageBytes = new byte[messageLength];
+                    bytesRead = signalClient.GetStream().Read(messageBytes, 0, messageLength);
+                    if (bytesRead != messageLength) continue;
                     
-                    if (messageLength <= 0 || messageLength > 10000)
-                    {
-                        Print($"Invalid message length: {messageLength}");
-                        continue;
-                    }
-                    
-                    // Read signal data
-                    var messageBytes = new byte[messageLength];
-                    int totalRead = 0;
-                    
-                    while (totalRead < messageLength)
-                    {
-                        int bytesRead = signalClient.GetStream().Read(
-                            messageBytes, totalRead, messageLength - totalRead);
-                        if (bytesRead == 0)
-                        {
-                            Print("Signal data connection lost");
-                            isConnectedToSignalServer = false;
-                            return;
-                        }
-                        totalRead += bytesRead;
-                    }
-                    
-                    // Process the complete message
-                    string signalJson = Encoding.UTF8.GetString(messageBytes);
-                    ProcessSignal(signalJson);
+                    string json = Encoding.UTF8.GetString(messageBytes);
+                    ProcessSignal(json);
                 }
                 catch (Exception ex)
                 {
                     Print($"Signal receive error: {ex.Message}");
-                    isConnectedToSignalServer = false;
-                    Thread.Sleep(2000); // Wait before retry
+                    Thread.Sleep(2000);
                 }
-            }
-            
-            Print("Signal receiver thread stopped");
-        }
-        
-        private void SendMarketDataToPython()
-        {
-            if (featureClient?.Connected != true)
-            {
-                isConnectedToFeatureServer = false;
-                return;
-            }
-            
-            try
-            {
-                var jsonBuilder = new StringBuilder();
-                jsonBuilder.Append("{");
-                
-                // Add 15-minute price data
-                jsonBuilder.Append("\"price_15m\":[");
-                for (int i = 0; i < prices15m.Count; i++)
-                {
-                    if (i > 0) jsonBuilder.Append(",");
-                    jsonBuilder.Append(prices15m[i].ToString("F6"));
-                }
-                jsonBuilder.Append("],");
-                
-                // Add 15-minute volume data
-                jsonBuilder.Append("\"volume_15m\":[");
-                for (int i = 0; i < volumes15m.Count; i++)
-                {
-                    if (i > 0) jsonBuilder.Append(",");
-                    jsonBuilder.Append(volumes15m[i].ToString("F2"));
-                }
-                jsonBuilder.Append("],");
-                
-                // Add 5-minute price data
-                jsonBuilder.Append("\"price_5m\":[");
-                for (int i = 0; i < prices5m.Count; i++)
-                {
-                    if (i > 0) jsonBuilder.Append(",");
-                    jsonBuilder.Append(prices5m[i].ToString("F6"));
-                }
-                jsonBuilder.Append("],");
-                
-                // Add 5-minute volume data
-                jsonBuilder.Append("\"volume_5m\":[");
-                for (int i = 0; i < volumes5m.Count; i++)
-                {
-                    if (i > 0) jsonBuilder.Append(",");
-                    jsonBuilder.Append(volumes5m[i].ToString("F2"));
-                }
-                jsonBuilder.Append("],");
-                
-                // ENHANCED: Add 1-minute data
-                jsonBuilder.Append("\"price_1m\":[");
-                for (int i = 0; i < prices1m.Count; i++)
-                {
-                    if (i > 0) jsonBuilder.Append(",");
-                    jsonBuilder.Append(prices1m[i].ToString("F6"));
-                }
-                jsonBuilder.Append("],");
-                
-                jsonBuilder.Append("\"volume_1m\":[");
-                for (int i = 0; i < volumes1m.Count; i++)
-                {
-                    if (i > 0) jsonBuilder.Append(",");
-                    jsonBuilder.Append(volumes1m[i].ToString("F2"));
-                }
-                jsonBuilder.Append("],");
-                
-                // Add timestamp
-                jsonBuilder.Append($"\"timestamp\":{DateTime.Now.Ticks}");
-                jsonBuilder.Append("}");
-                
-                string json = jsonBuilder.ToString();
-                byte[] jsonBytes = Encoding.UTF8.GetBytes(json);
-                byte[] header = BitConverter.GetBytes(jsonBytes.Length);
-                
-                var stream = featureClient.GetStream();
-                stream.Write(header, 0, 4);
-                stream.Write(jsonBytes, 0, jsonBytes.Length);
-                
-                if (CurrentBar % 50 == 0)
-                {
-                    // ENHANCED: Update debug message
-                    Print($"Sent 3-timeframe data: 15m={prices15m.Count}, 5m={prices5m.Count}, 1m={prices1m.Count}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Print($"Data send error: {ex.Message}");
-                isConnectedToFeatureServer = false;
             }
         }
         
-        #endregion
-        
-        #region Data Management
-        
-		private void UpdateMarketData()
-		{
-		    try
-		    {
-		        // Update 15-minute data
-		        if (BarsArray.Length > 1 && CurrentBars[1] >= 0)
-		        {
-		            double price15m = Closes[1][0];
-		            double volume15m = Volumes[1][0];
-		            
-		            prices15m.Add(price15m);
-		            volumes15m.Add(volume15m);
-		            
-		            if (prices15m.Count > 2000)
-		            {
-		                prices15m.RemoveAt(0);
-		                volumes15m.RemoveAt(0);
-		            }
-		        }
-		        
-		        // Update 5-minute data
-		        if (BarsArray.Length > 2 && CurrentBars[2] >= 0)
-		        {
-		            double price5m = Closes[2][0];
-		            double volume5m = Volumes[2][0];
-		            
-		            prices5m.Add(price5m);
-		            volumes5m.Add(volume5m);
-		            
-		            if (prices5m.Count > 6000)
-		            {
-		                prices5m.RemoveAt(0);
-		                volumes5m.RemoveAt(0);
-		            }
-		        }
-		        
-		        // Add 1-minute data collection
-		        if (BarsArray.Length > 3 && CurrentBars[3] >= 0)
-		        {
-		            double price1m = Closes[3][0];
-		            double volume1m = Volumes[3][0];
-		            
-		            prices1m.Add(price1m);
-		            volumes1m.Add(volume1m);
-		            
-		            if (prices1m.Count > 30000)
-		            {
-		                prices1m.RemoveAt(0);
-		                volumes1m.RemoveAt(0);
-		            }
-		        }
-		        
-		        if (CurrentBar % 100 == 0 && State == State.Realtime)
-		        {
-		            // Include 1m data in debug output
-		            Print($"Data: 15m={prices15m.Count}, 5m={prices5m.Count}, 1m={prices1m.Count} bars");
-		        }
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Data update error: {ex.Message}");
-		    }
-		}
-        
-        #endregion
-        
-        #region Signal Processing
-        
-        private void ProcessSignal(string signalJson)
+        private void ProcessSignal(string json)
         {
             try
             {
-                // Parse JSON manually (simple parsing for our known structure)
-                var signal = ParseSignalJson(signalJson);
-                if (signal == null) return;
+                var signal = ParseSignalJson(json);
                 
-                signalCount++;
+                int action = signal.Item1;
+                double confidence = signal.Item2;
+                int size = signal.Item3;
+                bool useStop = signal.Item4;
+                double stopPrice = signal.Item5;
+                bool useTarget = signal.Item6;
+                double targetPrice = signal.Item7;
                 
-                Print($"ML Signal #{signalCount}: Action={GetActionName(signal.action)}, " +
-                      $"Confidence={signal.confidence:F3}, Quality={signal.quality}");
+                // Safety check: Limit entries per minute to prevent overtrading
+                DateTime currentTime = DateTime.Now;
+                if (currentTime.Minute != lastEntryTime.Minute)
+                {
+                    entriesThisMinute = 0;  // Reset counter for new minute
+                }
                 
-                // Validate signal
-                if (!IsValidSignal(signal)) return;
+                if (entriesThisMinute >= 3)  // Max 3 entries per minute
+                {
+                    Print($"Entry rate limit reached ({entriesThisMinute} entries this minute). Signal ignored.");
+                    return;
+                }
                 
-                // Execute trade based on signal
-                ExecuteMLSignal(signal);
+                // Check position size limits (max 15 contracts total)
+                int currentPosition = Math.Abs(Position.Quantity);
+                if (currentPosition >= 15)
+                {
+                    Print($"Maximum position size reached ({currentPosition} contracts). Entry signal ignored.");
+                    return;
+                }
+                
+                // Generate unique entry name for scaling capability
+                entryCounter++;
+                string entryName = $"AI_{DateTime.Now:HHmmss}_{entryCounter}";
+                
+                // Enhanced logic: Handle scaling in same direction vs position reversals
+                switch (action)
+                {
+                    case 1: // Buy Signal
+                        if (Position.MarketPosition == MarketPosition.Long)
+                        {
+                            // Scaling into existing long position
+                            Print($"Scaling into LONG position: +{size} contracts (Current: {Position.Quantity})");
+                        }
+                        else if (Position.MarketPosition == MarketPosition.Short)
+                        {
+                            // Reversing from short to long - NinjaTrader handles this automatically
+                            int totalSize = Math.Abs(Position.Quantity) + size;
+                            Print($"REVERSING position: Short {Math.Abs(Position.Quantity)} -> Long {size} (Total Long: {size})");
+                        }
+                        else
+                        {
+                            // New long position from flat
+                            Print($"New LONG position: {size} contracts");
+                        }
+                        
+                        if (size > 0)
+                        {
+                            EnterLong(size, entryName);
+                            entriesThisMinute++;
+                            lastEntryTime = currentTime;
+                        }
+                        break;
+                        
+                    case 2: // Sell Signal
+                        if (Position.MarketPosition == MarketPosition.Short)
+                        {
+                            // Scaling into existing short position
+                            Print($"Scaling into SHORT position: +{size} contracts (Current: {Position.Quantity})");
+                        }
+                        else if (Position.MarketPosition == MarketPosition.Long)
+                        {
+                            // Reversing from long to short - NinjaTrader handles this automatically
+                            int totalSize = Math.Abs(Position.Quantity) + size;
+                            Print($"REVERSING position: Long {Math.Abs(Position.Quantity)} -> Short {size} (Total Short: {size})");
+                        }
+                        else
+                        {
+                            // New short position from flat
+                            Print($"New SHORT position: {size} contracts");
+                        }
+                        
+                        if (size > 0)
+                        {
+                            EnterShort(size, entryName);
+                            entriesThisMinute++;
+                            lastEntryTime = currentTime;
+                        }
+                        break;
+                }
+                
+                // Set stop loss and profit target for this specific entry
+                if (useStop && stopPrice > 0)
+                {
+                    SetStopLoss(entryName, CalculationMode.Price, stopPrice, false);
+                    Print($"Stop set for {entryName} at {stopPrice:F2}");
+                }
+                    
+                if (useTarget && targetPrice > 0)
+                {
+                    SetProfitTarget(entryName, CalculationMode.Price, targetPrice);
+                    Print($"Target set for {entryName} at {targetPrice:F2}");
+                }
+                
+                Print($"AI Signal Processed: {(action == 1 ? "BUY" : "SELL")} {size} contracts " +
+                      $"(Entry: {entryName}, Conf: {confidence:P0}, New Position: {Position.Quantity})");
+                
+                // Reset counter periodically to prevent overflow
+                if (entryCounter > 999)
+                    entryCounter = 0;
+                
             }
             catch (Exception ex)
             {
@@ -683,493 +591,209 @@ namespace NinjaTrader.NinjaScript.Strategies
             }
         }
         
-		private SignalData ParseSignalJson(string json)
-		{
-		    try 
-		    {
-		        var signal = new SignalData();
-		        
-		        // Extract action
-		        var actionStart = json.IndexOf("\"action\":") + 9;
-		        var actionEnd = json.IndexOf(",", actionStart);
-		        signal.action = int.Parse(json.Substring(actionStart, actionEnd - actionStart));
-		        
-		        // Extract confidence
-		        var confStart = json.IndexOf("\"confidence\":") + 13;
-		        var confEnd = json.IndexOf(",", confStart);
-		        signal.confidence = double.Parse(json.Substring(confStart, confEnd - confStart));
-		        
-		        // Parsing with proper error handling
-		        var qualityPattern = "\"quality\":\"";
-		        var qualStart = json.IndexOf(qualityPattern);
-		        if (qualStart >= 0)
-		        {
-		            qualStart += qualityPattern.Length;
-		            var qualEnd = json.IndexOf("\"", qualStart);
-		            if (qualEnd > qualStart)
-		            {
-		                signal.quality = json.Substring(qualStart, qualEnd - qualStart);
-		            }
-		            else
-		            {
-		                signal.quality = "parsed_error";
-		            }
-		        }
-		        else
-		        {
-		            // Try alternative parsing - sometimes quality might be at the end
-		            var altPattern = "\"quality\": \"";
-		            qualStart = json.IndexOf(altPattern);
-		            if (qualStart >= 0)
-		            {
-		                qualStart += altPattern.Length;
-		                var qualEnd = json.IndexOf("\"", qualStart);
-		                if (qualEnd > qualStart)
-		                {
-		                    signal.quality = json.Substring(qualStart, qualEnd - qualStart);
-		                }
-		                else
-		                {
-		                    signal.quality = "alt_parse_error";
-		                }
-		            }
-		            else
-		            {
-		                signal.quality = "not_found";
-		            }
-		        }
-		        
-		        // Extract timestamp
-		        var timeStart = json.IndexOf("\"timestamp\":") + 12;
-		        var timeEnd = json.IndexOf("}", timeStart);
-		        if (timeEnd == -1) timeEnd = json.Length; // Handle end of string
-		        signal.timestamp = long.Parse(json.Substring(timeStart, timeEnd - timeStart));
-		        
-		        return signal;
-		    }
-		    catch (Exception ex) 
-		    {
-		        Print($"JSON parsing error: {ex.Message} - JSON: {json}");
-		        return null;
-		    }
-		}
-        
-		private bool IsValidSignal(SignalData signal)
-		{
-		    // Research principle: Quality over quantity
-		    // Your research.txt: "High-accuracy signals consistently outperform high-frequency, lower-quality signals"
-		    
-		    // Check confidence threshold
-		    if (signal.confidence < MinConfidence)
-		    {
-		        Print($"Signal confidence {signal.confidence:F3} below threshold {MinConfidence:F3}");
-		        return false;
-		    }
-		    
-		    // Research-aligned quality filter
-		    if (signal.quality == "poor")
-		    {
-		        Print("Signal quality too poor - skipping (research-aligned filtering)");
-		        return false;
-		    }
-		    
-		    // Prevent over-trading (research principle)
-		    if (Position.MarketPosition != MarketPosition.Flat && 
-		        (DateTime.Now - lastConnectionAttempt).TotalSeconds < 10) // Increased from 5 to 10
-		    {
-		        Print("Signal spacing filter - preventing over-trading");
-		        return false;
-		    }
-		    
-		    // Add signal age validation (research: signals have half-life)
-		    var signalAge = (DateTime.Now.Ticks - signal.timestamp) / TimeSpan.TicksPerSecond;
-		    if (signalAge > 30) // Signals older than 30 seconds are stale
-		    {
-		        Print($"Signal too old: {signalAge}s - skipping");
-		        return false;
-		    }
-		    
-		    return true;
-		}
-        
-		private void ExecuteMLSignal(SignalData signal)
-		{
-		    try
-		    {
-		        int positionSize = CalculatePositionSize(signal.confidence);
-		        
-		        if (positionSize <= 0) return;
-		        
-		        switch (signal.action)
-		        {
-		            case 1: // Buy signal
-		                if (Position.MarketPosition != MarketPosition.Long)
-		                {
-		                    if (Position.MarketPosition == MarketPosition.Short)
-		                        ExitShort("ML_Reverse");
-		                    
-		                    EnterLong(positionSize, "ML_Long");
-		                    Print($"LONG ENTRY: size={positionSize}, confidence={signal.confidence:F3}");
-		                    VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
-		                }
-		                else if (AllowScaleIn && signal.confidence > 0.75 && Position.Quantity < MaxPositionPieces)
-		                {
-		                    // Simple scale in - only if moving in our favor
-		                    if (Close[0] > Position.AveragePrice * 1.002) // 0.2% favorable
-		                    {
-		                        int scaleSize = Math.Max(1, positionSize / 2);
-		                        EnterLong(scaleSize, "ML_Long_Scale");
-		                        Print($"SCALE IN LONG: size={scaleSize}");
-		                    }
-		                }
-		                break;
-		                
-		            case 2: // Sell signal
-		                if (Position.MarketPosition != MarketPosition.Short)
-		                {
-		                    if (Position.MarketPosition == MarketPosition.Long)
-		                        ExitLong("ML_Reverse");
-		                    
-		                    EnterShort(positionSize, "ML_Short");
-		                    Print($"SHORT ENTRY: size={positionSize}, confidence={signal.confidence:F3}");
-		                    VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
-		                }
-		                else if (AllowScaleIn && signal.confidence > 0.75 && Position.Quantity < MaxPositionPieces)
-		                {
-		                    // Simple scale in - only if moving in our favor
-		                    if (Close[0] < Position.AveragePrice * 0.998) // 0.2% favorable
-		                    {
-		                        int scaleSize = Math.Max(1, positionSize / 2);
-		                        EnterShort(scaleSize, "ML_Short_Scale");
-		                        Print($"SCALE IN SHORT: size={scaleSize}");
-		                    }
-		                }
-		                break;
-		                
-		            case 0: // Hold signal
-		                if (Position.MarketPosition != MarketPosition.Flat)
-		                {
-		                    // Partial exit on low confidence
-		                    if (signal.confidence < 0.4 && Position.Quantity > 1)
-		                    {
-		                        int partialSize = Position.Quantity / 2;
-		                        if (Position.MarketPosition == MarketPosition.Long)
-		                            ExitLong(partialSize, "ML_Partial_Exit", "");
-		                        else
-		                            ExitShort(partialSize, "ML_Partial_Exit", "");
-		                        Print($"PARTIAL EXIT: {partialSize} contracts");
-		                    }
-		                    else
-		                    {
-		                        // Full exit
-		                        if (Position.MarketPosition == MarketPosition.Long)
-		                            ExitLong("ML_Exit");
-		                        else
-		                            ExitShort("ML_Exit");
-		                    }
-		                    VisualizeMLSignal(signal.action, signal.confidence, signal.quality);
-		                }
-		                break;
-		        }
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Enhanced signal execution error: {ex.Message}");
-		    }
-		}
-		
-		protected override void OnOrderUpdate(Order order, double limitPrice, double stopPrice, 
-                                    int quantity, int filled, double averageFillPrice, 
-                                    OrderState orderState, DateTime time, ErrorCode error, string comment)
-		{
-		    // Set exit orders when entry order is filled
-		    if (order.Name.Contains("ML_") && orderState == OrderState.Filled)
-		    {
-		        SetExitOrders(order.Name, averageFillPrice);
-		    }
-		}
-		
-		private void SetExitOrders(string entrySignal, double fillPrice)
-		{
-		    try
-		    {
-		        entryPrice = fillPrice;
-		        hasPosition = true;
-		        
-		        // Dynamic exit calculation
-		        double atrValue = atr14[0];
-		        double baseMultiplier = 2.5; // Base ATR multiplier
-		        
-		        // Calculate dynamic stops/targets
-		        int dynamicStop = Math.Max(30, (int)(atrValue / TickSize * baseMultiplier));
-		        int dynamicTarget = (int)(dynamicStop * 2.0); // 2:1 ratio
-		        
-		        // Cap maximum values
-		        dynamicStop = Math.Min(dynamicStop, 120);
-		        dynamicTarget = Math.Min(dynamicTarget, 240);
-		        
-		        Print($"Dynamic exits: Stop={dynamicStop} ticks, Target={dynamicTarget} ticks (ATR={atrValue:F2})");
-		        
-		        if (Position.MarketPosition == MarketPosition.Long)
-		        {
-		            SetStopLoss(entrySignal, CalculationMode.Ticks, dynamicStop, false);
-		            SetProfitTarget(entrySignal, CalculationMode.Ticks, dynamicTarget);
-		        }
-		        else if (Position.MarketPosition == MarketPosition.Short)
-		        {
-		            SetStopLoss(entrySignal, CalculationMode.Ticks, dynamicStop, false);
-		            SetProfitTarget(entrySignal, CalculationMode.Ticks, dynamicTarget);
-		        }
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Dynamic exit order setup error: {ex.Message}");
-		    }
-		}
-		
-		private string GetActionName(int action)
-		{
-		    switch (action)
-		    {
-		        case 1: return "BUY";
-		        case 2: return "SELL";
-		        default: return "HOLD";
-		    }
-		}
-		
-		private void NotifyTradeCompletion(string tradeId, double exitPrice, string exitReason, int durationMinutes)
-		{
-		    try
-		    {
-		        Print($"NotifyTradeCompletion called: {tradeId}");  // DEBUG LINE
-		        
-		        if (featureClient?.Connected != true) 
-		        {
-		            Print($"Cannot send trade completion - featureClient not connected");  // DEBUG LINE
-		            return;
-		        }
-		        
-		        Print($"Sending trade completion via feature client");  // DEBUG LINE
-		        
-		        // Create simple JSON manually
-		        var json = $"{{\"type\":\"trade_completion\",\"signal_id\":\"{tradeId}\",\"exit_price\":{exitPrice},\"exit_reason\":\"{exitReason}\",\"duration_minutes\":{durationMinutes},\"timestamp\":{DateTime.Now.Ticks}}}";
-		        
-		        Print($"JSON to send: {json}");  // DEBUG LINE
-		        
-		        byte[] data = Encoding.UTF8.GetBytes(json);
-		        byte[] header = BitConverter.GetBytes(data.Length);
-		        
-		        var stream = featureClient.GetStream();
-		        stream.Write(header, 0, 4);
-		        stream.Write(data, 0, data.Length);
-		        
-		        Print($"Trade completion SUCCESSFULLY sent: {tradeId}, Exit: {exitPrice:F2}, Duration: {durationMinutes}min");
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Trade completion ERROR: {ex.Message}");
-		    }
-		}
-        
-        #endregion
-        
-        #region Position Management
-        
-		private int CalculatePositionSize(double confidence)
-		{
-		    // Research-aligned tiered position sizing
-		    int baseSize = 1;
-		    
-		    if (confidence >= 0.9)
-				baseSize = 4;
-			else if (confidence >= 0.8)
-		        baseSize = 3;      
-		    else if (confidence >= 0.7)
-		        baseSize = 2;      
-		    else if (confidence >= 0.6)
-		        baseSize = 1;      
-		    else if (confidence >= 0.5)
-		        baseSize = 1;  
-		    
-		    return Math.Min(baseSize, MaxPositionSize);
-		}
-        
-        #endregion
-        
-        #region Cleanup
-        
-		private void CleanupWithStats()
-		{
-		    try
-		    {
-		        Print("Research Strategy shutting down...");
-		        
-		        isRunning = false;
-		        
-		        // Stop signal receiver thread
-		        if (signalThread?.IsAlive == true)
-		        {
-		            if (!signalThread.Join(2000))
-		            {
-		                Print("Signal thread did not stop gracefully");
-		            }
-		        }
-		        
-		        // Close TCP connections
-		        try
-		        {
-		            featureClient?.Close();
-		            signalClient?.Close();
-		            Print("TCP connections closed");
-		        }
-		        catch (Exception ex)
-		        {
-		            Print($"Connection cleanup error: {ex.Message}");
-		        }
-		        
-		        // Log final statistics ONLY if we actually traded
-		        Print($"Research Strategy Final Stats:");
-		        Print($"ML Signals Received: {signalCount}");
-		        Print($"Trades Executed: {tradesExecuted}");
-		        Print($"Connection Attempts: {connectionAttempts}");
-		        Print("Research Strategy stopped successfully");
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Cleanup error: {ex.Message}");
-		    }
-		}
-		
-		private void QuietCleanup()
-		{
-		    try
-		    {
-		        // Silent cleanup for initialization failures
-		        isRunning = false;
-		        
-		        if (signalThread?.IsAlive == true)
-		        {
-		            signalThread.Join(1000); // Shorter timeout
-		        }
-		        
-		        featureClient?.Close();
-		        signalClient?.Close();
-		        
-		        // No print statements for startup failures
-		    }
-		    catch
-		    {
-		        // Silent failure
-		    }
-		}
-        
-        #endregion
-        
-        #region Helper Classes
-        
-        public class SignalData
+        private Tuple<int, double, int, bool, double, bool, double> ParseSignalJson(string json)
         {
-            public int action { get; set; }
-            public double confidence { get; set; }
-            public string quality { get; set; }
-            public long timestamp { get; set; }
+            int action = 0;
+            double confidence = 0.0;
+            int size = 1;
+            bool useStop = false;
+            double stopPrice = 0.0;
+            bool useTarget = false;
+            double targetPrice = 0.0;
+            
+            try
+            {
+                action = ExtractIntValue(json, "action");
+                confidence = ExtractDoubleValue(json, "confidence");
+                size = ExtractIntValue(json, "position_size");
+                useStop = ExtractBoolValue(json, "use_stop");
+                stopPrice = ExtractDoubleValue(json, "stop_price");
+                useTarget = ExtractBoolValue(json, "use_target");
+                targetPrice = ExtractDoubleValue(json, "target_price");
+            }
+            catch (Exception ex)
+            {
+                Print($"JSON parsing error: {ex.Message}");
+            }
+            
+            return new Tuple<int, double, int, bool, double, bool, double>(
+                action, confidence, size, useStop, stopPrice, useTarget, targetPrice);
         }
         
-        #endregion
-		
-		#region Chart Updates
-		
-		private void UpdateChartIndicators()
+        private int ExtractIntValue(string json, string key)
+        {
+            string pattern = $"\"{key}\"";
+            int keyIndex = json.IndexOf(pattern);
+            if (keyIndex == -1) return 0;
+            
+            int colonIndex = json.IndexOf(":", keyIndex);
+            if (colonIndex == -1) return 0;
+            
+            int startIndex = colonIndex + 1;
+            while (startIndex < json.Length && (json[startIndex] == ' ' || json[startIndex] == '\t'))
+                startIndex++;
+            
+            int endIndex = startIndex;
+            while (endIndex < json.Length && char.IsDigit(json[endIndex]))
+                endIndex++;
+            
+            if (endIndex > startIndex && int.TryParse(json.Substring(startIndex, endIndex - startIndex), out int result))
+                return result;
+            
+            return 0;
+        }
+        
+        private double ExtractDoubleValue(string json, string key)
+        {
+            string pattern = $"\"{key}\"";
+            int keyIndex = json.IndexOf(pattern);
+            if (keyIndex == -1) return 0.0;
+            
+            int colonIndex = json.IndexOf(":", keyIndex);
+            if (colonIndex == -1) return 0.0;
+            
+            int startIndex = colonIndex + 1;
+            while (startIndex < json.Length && (json[startIndex] == ' ' || json[startIndex] == '\t'))
+                startIndex++;
+            
+            int endIndex = startIndex;
+            while (endIndex < json.Length && (char.IsDigit(json[endIndex]) || json[endIndex] == '.' || json[endIndex] == '-'))
+                endIndex++;
+            
+            if (endIndex > startIndex && double.TryParse(json.Substring(startIndex, endIndex - startIndex), NumberStyles.Float, CultureInfo.InvariantCulture, out double result))
+                return result;
+            
+            return 0.0;
+        }
+        
+        private bool ExtractBoolValue(string json, string key)
+        {
+            string pattern = $"\"{key}\"";
+            int keyIndex = json.IndexOf(pattern);
+            if (keyIndex == -1) return false;
+            
+            int colonIndex = json.IndexOf(":", keyIndex);
+            if (colonIndex == -1) return false;
+            
+            int trueIndex = json.IndexOf("true", colonIndex);
+            int falseIndex = json.IndexOf("false", colonIndex);
+            
+            if (trueIndex != -1 && (falseIndex == -1 || trueIndex < falseIndex))
+                return true;
+            
+            return false;
+        }
+        
+		protected override void OnExecutionUpdate(Execution execution, string executionId, 
+		                                        double price, int quantity, MarketPosition marketPosition, 
+		                                        string orderId, DateTime time)
 		{
-		    if (!ShowIndicators || State != State.Realtime)
+		    // Track completion of any AI-generated order (for scaling positions)
+		    if (execution.Order?.Name?.Contains("AI_") == true)
+		    {
+		        Print($"Execution: {execution.Order.Name}, Price: {price:F2}, Qty: {quantity}, Position: {marketPosition}");
+		        
+		        // ENHANCED: Check for completed trades instead of just flat positions
+		        CheckForCompletedTrades();
+		    }
+		}
+		
+		private void CheckForCompletedTrades()
+		{
+		    int currentTradeCount = SystemPerformance.AllTrades.Count;
+		    
+		    // If we have new completed trades
+		    if (currentTradeCount > lastTradeCount)
+		    {
+		        // Send completion data for each new completed trade
+		        for (int i = lastTradeCount; i < currentTradeCount; i++)
+		        {
+		            var completedTrade = SystemPerformance.AllTrades[i];
+		            SendTradeCompletionForTrade(completedTrade);
+		        }
+		        
+		        lastTradeCount = currentTradeCount;
+		    }
+		}
+        
+		private void SendTradeCompletionForTrade(Trade completedTrade)
+		{
+		    if (!isConnected || dataClient?.Connected != true)
 		        return;
 		        
 		    try
 		    {
-		        // Force indicator updates if needed
-		        if (ema20 != null) ema20.Update();
-		        if (sma50 != null) sma50.Update();
-		        if (bb != null) bb.Update();
-		        if (rsi14 != null) rsi14.Update();
+		        double pnl = completedTrade.ProfitCurrency;
+		        double entryPrice = completedTrade.Entry.Price;
+		        double exitPrice = completedTrade.Exit.Price;
+		        int quantity = completedTrade.Quantity;
+		        DateTime entryTime = completedTrade.Entry.Time;
+		        DateTime exitTime = completedTrade.Exit.Time;
 		        
-		        // Calculate volume ratio for display (we'll show this as text)
-		        if (volumeIndicator != null && CurrentBar > 20)
-		        {
-		            double currentVol = Volume[0];
-		            double avgVol = 0;
-		            for (int i = 0; i < 20; i++)
-		            {
-		                avgVol += Volume[i];
-		            }
-		            avgVol /= 20;
-		            
-		            double volRatio = avgVol > 0 ? currentVol / avgVol : 1.0;
-		            
-		            // Display volume ratio as text on chart every 10 bars to avoid clutter
-		            if (CurrentBar % 10 == 0)
-		            {
-		                Draw.TextFixed(this, $"VolRatio_{CurrentBar}", 
-		                    $"Vol Ratio: {volRatio:F2}", 
-		                    TextPosition.TopRight, 
-		                    Brushes.White, 
-		                    new SimpleFont("Arial", 10), 
-		                    Brushes.Transparent, 
-		                    Brushes.Transparent, 
-		                    0);
-		            }
-		        }
+		        // Determine exit reason
+		        string exitReason = "ai_exit"; // Default
+		        if (completedTrade.Exit.Name.Contains("Stop"))
+		            exitReason = "stop_hit";
+		        else if (completedTrade.Exit.Name.Contains("Target"))
+		            exitReason = "target_hit";
+		        
+		        // Enhanced trade completion data
+		        double currentBalance = Account.Get(AccountItem.CashValue, Currency.UsDollar);
+		        double netLiquidation = Account.Get(AccountItem.NetLiquidation, Currency.UsDollar);
+		        double marginUsed = Account.Get(AccountItem.InitialMargin, Currency.UsDollar);
+		        double totalPnL = Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
+		        double dailyPnL = sessionStartSet ? (totalPnL - sessionStartPnL) : 0;
+		        
+		        var json = $"{{" +
+		                  $"\"type\":\"trade_completion\"," +
+		                  $"\"final_pnl\":{pnl.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"exit_price\":{exitPrice.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"entry_price\":{entryPrice.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"quantity\":{quantity}," +
+		                  $"\"exit_reason\":\"{exitReason}\"," +
+		                  $"\"entry_time\":{entryTime.Ticks}," +
+		                  $"\"exit_time\":{exitTime.Ticks}," +
+		                  $"\"account_balance\":{currentBalance.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"net_liquidation\":{netLiquidation.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"margin_used\":{marginUsed.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"daily_pnl\":{dailyPnL.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"timestamp\":{DateTime.Now.Ticks}" +
+		                  $"}}";
+		        
+		        SendJsonMessage(json);
+		        Print($"Trade completion sent: P&L ${pnl:F2} ({exitReason}) - Balance: ${currentBalance:F0}");
 		    }
 		    catch (Exception ex)
 		    {
-		        Print($"Chart indicator update error: {ex.Message}");
+		        Print($"Trade completion send error: {ex.Message}");
 		    }
 		}
-		
-		private void VisualizeMLSignal(int action, double confidence, string quality)
-		{
-		    if (!ShowIndicators) return;
-		    
-		    try
-		    {
-		        string signalText = "";
-		        Brush signalColor = Brushes.Gray;
-		        
-		        switch (action)
-		        {
-		            case 1: // Buy
-		                signalText = $"BUY ({confidence:F2})";
-		                signalColor = Brushes.Green;
-		                Draw.ArrowUp(this, $"Buy_{CurrentBar}", false, 0, Low[0] - 2 * TickSize, signalColor);
-		                break;
-		            case 2: // Sell  
-		                signalText = $"SELL ({confidence:F2})";
-		                signalColor = Brushes.Red;
-		                Draw.ArrowDown(this, $"Sell_{CurrentBar}", false, 0, High[0] + 2 * TickSize, signalColor);
-		                break;
-		            case 0: // Hold/Exit
-		                if (Position.MarketPosition != MarketPosition.Flat)
-		                {
-		                    signalText = $"EXIT ({confidence:F2})";
-		                    signalColor = Brushes.Orange;
-		                    Draw.Diamond(this, $"Exit_{CurrentBar}", false, 0, Close[0], signalColor);
-		                }
-		                break;
-		        }
-		        
-		        // Add text label for signal
-		        if (!string.IsNullOrEmpty(signalText))
-		        {
-		            Draw.Text(this, $"Signal_{CurrentBar}", signalText, 0, 
-		                action == 2 ? High[0] + 4 * TickSize : Low[0] - 4 * TickSize, 
-		                signalColor);
-		        }
-		    }
-		    catch (Exception ex)
-		    {
-		        Print($"Signal visualization error: {ex.Message}");
-		    }
-		}
-		
-		#endregion
+        
+        private void Cleanup()
+        {
+            isRunning = false;
+            isConnected = false;
+            
+            try
+            {
+                dataClient?.Close();
+                signalClient?.Close();
+                signalThread?.Join(2000);
+            }
+            catch (Exception ex)
+            {
+                Print($"Cleanup error: {ex.Message}");
+            }
+        }
+    }
+    
+    public class BarData
+    {
+        public long timestamp;
+        public double open;
+        public double high;
+        public double low;
+        public double close;
+        public long volume;
     }
 }

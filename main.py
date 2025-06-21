@@ -1,40 +1,62 @@
 # main.py
 
-import sys
-import os
+import argparse
+import logging
+import shutil
 import signal
+import sys
+from pathlib import Path
 
-# Add project root to path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+from trading_system import TradingSystem
 
-from core.trading_system import TradingSystem
+def setup_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler('logs/trading.log'),
+            logging.StreamHandler()
+        ]
+    )
 
-# Global reference for signal handler
-trading_system = None
-
-def signal_handler(signum, frame):
-    """Handle Ctrl+C gracefully"""
-    global trading_system
-
-    if trading_system and hasattr(trading_system, 'shutdown_event'):
-        trading_system.shutdown_event.set()
+def reset_workspace():
+    dirs = ["models", "data", "logs"]
+    for d in dirs:
+        path = Path(d)
+        if path.exists():
+            shutil.rmtree(path)
+        path.mkdir(parents=True, exist_ok=True)
 
 def main():
-    """Main entry point"""
-    global trading_system
+    parser = argparse.ArgumentParser(description="Black Box Trading System")
+    parser.add_argument("--reset", action="store_true", help="Reset workspace")
+    args = parser.parse_args()
 
-    # Signal handler for shutdown
-    signal.signal(signal.SIGINT, signal_handler)
+    if args.reset:
+        reset_workspace()
+        print("Workspace reset complete")
+        return
+
+    # Ensure directories exist
+    for d in ["models", "data", "logs"]:
+        Path(d).mkdir(parents=True, exist_ok=True)
+
+    setup_logging()
+    
+    system = TradingSystem()
+    
+    def shutdown_handler(signum, frame):
+        system.shutdown()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, shutdown_handler)
+    signal.signal(signal.SIGTERM, shutdown_handler)
 
     try:
-        print("Initializing trading system...")
-        print("Press Ctrl+C to stop the system")
-        trading_system = TradingSystem()
-        trading_system.start()
-
+        system.start()
     except Exception as e:
-        print(f"System error: {e}")
-        return 1
+        logging.error(f"System failed: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    sys.exit(main()) 
+    main()
