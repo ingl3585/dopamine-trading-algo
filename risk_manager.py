@@ -46,17 +46,6 @@ class RiskManager:
             logger.info(f"Daily loss limit reached: {market_data.daily_pnl:.2f} <= -{max_loss:.2f}")
             return None
         
-        # Check learned consecutive loss tolerance
-        consecutive_tolerance = self.meta_learner.get_parameter('consecutive_loss_tolerance')
-        if self.portfolio.get_consecutive_losses() >= consecutive_tolerance:
-            logger.info(f"Consecutive loss limit reached: {self.portfolio.get_consecutive_losses()}")
-            return None
-        
-        # Enhanced margin utilization check
-        if market_data.margin_utilization > 0.8:  # Don't exceed 80% margin usage
-            logger.info(f"Margin utilization too high: {market_data.margin_utilization:.1%}")
-            return None
-        
         # Calculate position size using enhanced account data
         size = self._calculate_adaptive_position_size(decision, market_data)
         if size == 0:
@@ -114,7 +103,7 @@ class RiskManager:
             sizes.append(math.ceil(buying_power * position_factor / est_margin))
 
         sizes.append(math.floor(account_balance * max_position_factor / est_margin))
-        sizes.append(max(1, math.ceil(decision.size)))
+        sizes.append(max(1, round(decision.size)))
 
         sizes = [s for s in sizes if s > 0]
         final_size = min(sizes) if sizes else 0

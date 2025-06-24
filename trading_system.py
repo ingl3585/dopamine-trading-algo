@@ -152,31 +152,27 @@ class TradingSystem:
             if order:
                 logger.info(f"Risk manager approved order: {order.action.upper()} {order.size}")
                 
-                # Enhanced order validation with account context
-                if self._validate_order_with_account_context(order, market_data):
-                    success = self.tcp_server.send_signal(order)
+                success = self.tcp_server.send_signal(order)
                     
-                    if success:
-                        # Store enhanced order with intelligence data
-                        order.features = features
-                        order.market_data = market_data
-                        order.intelligence_data = decision.intelligence_data
-                        order.decision_data = {
-                            'primary_tool': decision.primary_tool,
-                            'exploration': decision.exploration,
-                            'state_features': decision.state_features
-                        }
+                if success:
+                    # Store enhanced order with intelligence data
+                    order.features = features
+                    order.market_data = market_data
+                    order.intelligence_data = decision.intelligence_data
+                    order.decision_data = {
+                        'primary_tool': decision.primary_tool,
+                        'exploration': decision.exploration,
+                        'state_features': decision.state_features
+                    }
                         
-                        self.portfolio.add_pending_order(order)
+                    self.portfolio.add_pending_order(order)
                         
-                        # Log with account context
-                        account_risk = (order.size * 100) / market_data.account_balance * 100
-                        logger.info(f"Order placed: {order.action.upper()} {order.size} @ {order.price:.2f} "
+                    # Log with account context
+                    account_risk = (order.size * 100) / market_data.account_balance * 100
+                    logger.info(f"Order placed: {order.action.upper()} {order.size} @ {order.price:.2f} "
                                     f"(Risk: {account_risk:.1f}%, Balance: ${market_data.account_balance:.0f})")
-                    else:
-                        logger.warning("Failed to send signal to NinjaTrader")
                 else:
-                    logger.info("Order rejected by account context validation")
+                    logger.warning("Failed to send signal to NinjaTrader")
             else:
                 logger.info(f"Risk manager rejected order")
                 
@@ -305,36 +301,6 @@ class TradingSystem:
                 logger.info(f"Account balance updated: ${self.last_account_balance:.2f} -> ${new_balance:.2f}")
         
         self.last_account_balance = new_balance
-    
-    def _validate_order_with_account_context(self, order, market_data) -> bool:
-        """Additional validation with account context"""
-        
-        # Estimated margin requirement for order
-        estimated_margin = order.size * 100
-        
-        # Check available margin
-        if estimated_margin > market_data.available_margin * 0.8:
-            logger.warning(f"Order rejected: Insufficient margin "
-                          f"(Need: ${estimated_margin:.0f}, Available: ${market_data.available_margin:.0f})")
-            return False
-        
-        # Check account risk percentage
-        account_risk_pct = estimated_margin / market_data.account_balance
-        max_risk_pct = 0.6 if market_data.account_balance < 10000 else 0.7
-        
-        if account_risk_pct > max_risk_pct:
-            logger.warning(f"Order rejected: Risk too high "
-                          f"({account_risk_pct:.1%} > {max_risk_pct:.1%} of account)")
-            return False
-        
-        # Check margin utilization after order
-        projected_margin_usage = (market_data.margin_used + estimated_margin) / market_data.net_liquidation
-        if projected_margin_usage > 0.8:
-            logger.warning(f"Order rejected: Total margin usage would be too high "
-                          f"({projected_margin_usage:.1%})")
-            return False
-        
-        return True
     
     def _log_performance_summary(self):
         """Log comprehensive performance summary with account metrics"""
