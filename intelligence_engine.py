@@ -379,6 +379,57 @@ class IntelligenceEngine:
                 urgency=0.3
             )
     
+    def _bootstrap_microstructure_training(self):
+        """Enhanced microstructure training during bootstrap"""
+        logger.info("Bootstrap training microstructure engine...")
+        
+        # Generate synthetic market scenarios for microstructure learning
+        scenarios = [
+            # High volatility scenarios
+            {'volatility': 0.08, 'volume_momentum': 0.5, 'price_momentum': 0.03, 'outcome': -0.3},
+            {'volatility': 0.09, 'volume_momentum': 0.8, 'price_momentum': -0.04, 'outcome': -0.4},
+            
+            # Low volatility scenarios
+            {'volatility': 0.005, 'volume_momentum': 0.1, 'price_momentum': 0.001, 'outcome': 0.2},
+            {'volatility': 0.008, 'volume_momentum': -0.1, 'price_momentum': -0.002, 'outcome': 0.1},
+            
+            # Normal market scenarios
+            {'volatility': 0.02, 'volume_momentum': 0.3, 'price_momentum': 0.01, 'outcome': 0.15},
+            {'volatility': 0.025, 'volume_momentum': -0.2, 'price_momentum': -0.01, 'outcome': -0.1},
+            
+            # Trending scenarios
+            {'volatility': 0.03, 'volume_momentum': 0.6, 'price_momentum': 0.02, 'outcome': 0.4},
+            {'volatility': 0.035, 'volume_momentum': 0.7, 'price_momentum': -0.025, 'outcome': 0.3},
+        ]
+        
+        for scenario in scenarios:
+            try:
+                # Create synthetic price/volume data
+                base_price = 100.0
+                prices = []
+                volumes = []
+                
+                for i in range(20):
+                    price_change = np.random.normal(scenario['price_momentum'], scenario['volatility'])
+                    volume_change = np.random.normal(scenario['volume_momentum'], 0.3)
+                    
+                    new_price = base_price * (1 + price_change)
+                    new_volume = max(100, 1000 * (1 + volume_change))
+                    
+                    prices.append(new_price)
+                    volumes.append(new_volume)
+                    base_price = new_price
+                
+                # Train microstructure engine
+                self.microstructure_engine.analyze_market_state(prices, volumes)
+                self.microstructure_engine.learn_from_outcome(scenario['outcome'])
+                
+            except Exception as e:
+                logger.warning(f"Error in microstructure bootstrap scenario: {e}")
+                continue
+        
+        logger.info("Microstructure bootstrap training completed")
+    
     def _count_total_patterns(self) -> int:
         """Count total patterns across all subsystems"""
         orchestrator_stats = self.orchestrator.get_comprehensive_stats()
@@ -552,7 +603,7 @@ class IntelligenceEngine:
             pattern_score=pattern_score,
             confidence=confidence,
             dna_signal=orchestrator_result.get('dna_signal', 0.0),
-            micro_signal=orchestrator_result.get('temporal_signal', 0.0),
+            micro_signal=orchestrator_result.get('microstructure_signal', 0.0),  # Fixed: use microstructure as micro
             temporal_signal=orchestrator_result.get('temporal_signal', 0.0),
             immune_signal=orchestrator_result.get('immune_signal', 0.0),
             overall_signal=orchestrator_result.get('overall_signal', 0.0),
