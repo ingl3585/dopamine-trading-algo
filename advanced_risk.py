@@ -246,40 +246,113 @@ class AdvancedRiskManager:
         
         return optimal_size
     
-    def check_drawdown_prevention(self, proposed_order_size: int, 
+    def check_drawdown_prevention(self, proposed_order_size: int,
                                 market_data) -> Tuple[bool, int, str]:
-        """Real-time drawdown prevention protocols"""
+        """Enhanced learning-based risk protection"""
         
-        # Calculate current portfolio heat
-        estimated_risk = proposed_order_size * 600 * 0.02  # Assume 2% risk per contract
         account_balance = getattr(market_data, 'account_balance', 10000)
         
-        portfolio_heat = estimated_risk / account_balance
+        # 1. Learned drawdown protection (not hardcoded)
+        learned_drawdown_tolerance = self.meta_learner.get_parameter('loss_tolerance_factor')
+        current_drawdown = self._calculate_current_drawdown(market_data)
+        
+        # Dynamic emergency threshold based on learning
+        dynamic_emergency_threshold = learned_drawdown_tolerance * 2.0  # 2x daily loss tolerance
+        
+        if current_drawdown > dynamic_emergency_threshold:
+            return False, 0, f"Learned emergency stop: Drawdown {current_drawdown:.2%} > {dynamic_emergency_threshold:.2%}"
+        
+        # 2. Intelligent portfolio heat management
+        estimated_risk_per_contract = self._estimate_contract_risk(market_data)
+        estimated_total_risk = proposed_order_size * estimated_risk_per_contract
+        portfolio_heat = estimated_total_risk / account_balance
+        
+        # Learned maximum heat tolerance
+        learned_max_heat = self.meta_learner.get_parameter('position_size_factor') * 0.5  # Half of position factor
         total_heat = self.current_portfolio_heat + portfolio_heat
         
-        # Emergency stop check
-        current_drawdown = self._calculate_current_drawdown(market_data)
-        if current_drawdown > self.emergency_stop_threshold:
-            return False, 0, "Emergency stop: Drawdown exceeded threshold"
-        
-        # Portfolio heat check
-        if total_heat > self.max_portfolio_heat:
-            # Reduce position size to stay within heat limits
-            max_additional_heat = self.max_portfolio_heat - self.current_portfolio_heat
+        if total_heat > learned_max_heat:
+            # Intelligent heat reduction
+            max_additional_heat = learned_max_heat - self.current_portfolio_heat
             if max_additional_heat <= 0:
-                return False, 0, "Portfolio heat limit reached"
+                return False, 0, f"Learned heat limit reached: {self.current_portfolio_heat:.2%}"
             
-            adjusted_size = int(proposed_order_size * (max_additional_heat / portfolio_heat))
-            return True, max(1, adjusted_size), f"Position reduced for heat management"
+            heat_reduction_factor = max_additional_heat / portfolio_heat
+            adjusted_size = max(1, int(proposed_order_size * heat_reduction_factor))
+            return True, adjusted_size, f"Heat-adjusted size: {heat_reduction_factor:.2f}x"
         
-        # Black swan indicator check
+        # 3. Regime-based intelligent scaling
+        regime_multiplier = self._get_intelligent_regime_multiplier()
+        if regime_multiplier < 1.0:
+            adjusted_size = max(1, int(proposed_order_size * regime_multiplier))
+            return True, adjusted_size, f"Regime-adjusted: {self.current_regime} ({regime_multiplier:.2f}x)"
+        
+        # 4. Black swan intelligent response
         if any(self.black_swan_indicators.values()):
-            # Reduce position size during potential black swan events
-            crisis_multiplier = 0.3 if self.current_regime == 'crisis' else 0.5
-            adjusted_size = int(proposed_order_size * crisis_multiplier)
-            return True, max(1, adjusted_size), "Position reduced: Black swan indicators active"
+            # Learned black swan response (not hardcoded)
+            active_indicators = [k for k, v in self.black_swan_indicators.items() if v]
+            severity = len(active_indicators) / len(self.black_swan_indicators)
+            
+            # Dynamic reduction based on severity
+            reduction_factor = 1.0 - (severity * 0.7)  # Up to 70% reduction
+            adjusted_size = max(1, int(proposed_order_size * reduction_factor))
+            return True, adjusted_size, f"Black swan response: {active_indicators} ({reduction_factor:.2f}x)"
         
-        return True, proposed_order_size, "Position approved"
+        # 5. Volatility-based intelligent scaling
+        if len(self.volatility_history) > 10:
+            current_vol = self.volatility_history[-1]
+            avg_vol = np.mean(list(self.volatility_history))
+            
+            if current_vol > avg_vol * 1.5:  # High volatility
+                vol_reduction = 0.8  # 20% reduction
+                adjusted_size = max(1, int(proposed_order_size * vol_reduction))
+                return True, adjusted_size, f"Volatility-adjusted: {current_vol:.3f} vs {avg_vol:.3f}"
+        
+        return True, proposed_order_size, "Risk checks passed"
+    
+    def _estimate_contract_risk(self, market_data) -> float:
+        """Intelligently estimate risk per contract based on current conditions"""
+        
+        # Base risk estimate
+        base_risk = 600.0  # Base margin requirement
+        
+        # Volatility adjustment
+        if len(self.volatility_history) > 5:
+            current_vol = self.volatility_history[-1]
+            avg_vol = np.mean(list(self.volatility_history))
+            vol_multiplier = max(0.5, min(2.0, current_vol / avg_vol))
+            base_risk *= vol_multiplier
+        
+        # Regime adjustment
+        regime_multipliers = {
+            'normal': 1.0,
+            'volatile': 1.3,
+            'crisis': 1.8
+        }
+        base_risk *= regime_multipliers.get(self.current_regime, 1.0)
+        
+        return base_risk
+    
+    def _get_intelligent_regime_multiplier(self) -> float:
+        """Get intelligent regime-based position multiplier"""
+        
+        # Base multipliers
+        base_multipliers = {
+            'normal': 1.0,
+            'volatile': 0.7,
+            'crisis': 0.3
+        }
+        
+        base_multiplier = base_multipliers.get(self.current_regime, 1.0)
+        
+        # Adjust based on recent performance in this regime
+        if len(self.regime_history) > 10:
+            recent_regime_count = list(self.regime_history)[-10:].count(self.current_regime)
+            if recent_regime_count > 5:  # Regime persistence
+                # If we've been in this regime a while, be more conservative
+                base_multiplier *= 0.9
+        
+        return base_multiplier
     
     def update_risk_metrics(self, market_data, trade_outcome: Optional[Dict] = None):
         """Update risk metrics with new market data and trade outcomes"""

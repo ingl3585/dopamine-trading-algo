@@ -15,9 +15,11 @@ from market_microstructure import MarketMicrostructureEngine
 from real_time_adaptation import RealTimeAdaptationEngine
 
 logger = logging.getLogger(__name__)
+# logger.setLevel(logging.DEBUG)  # Disable debug logging for cleaner output
 
 @dataclass
 class Features:
+    # Core market features
     price_momentum: float
     volume_momentum: float
     price_position: float
@@ -25,13 +27,16 @@ class Features:
     time_of_day: float
     pattern_score: float
     confidence: float
+    
+    # Subsystem signals
     dna_signal: float
     micro_signal: float
     temporal_signal: float
     immune_signal: float
+    microstructure_signal: float
     overall_signal: float
-    # Enhanced features
-    microstructure_signal: float = 0.0
+    
+    # Enhanced context
     regime_adjusted_signal: float = 0.0
     adaptation_quality: float = 0.0
     smart_money_flow: float = 0.0
@@ -42,7 +47,7 @@ class IntelligenceEngine:
     def __init__(self, memory_file="data/intelligence_memory.json"):
         self.memory_file = memory_file
         
-        # Enhanced subsystem orchestration
+        # Core subsystem orchestration
         self.orchestrator = EnhancedIntelligenceOrchestrator()
         
         # Market microstructure analysis
@@ -51,11 +56,11 @@ class IntelligenceEngine:
         # Real-time adaptation
         self.adaptation_engine = RealTimeAdaptationEngine(model_dim=64)
         
-        # Legacy pattern storage for compatibility
+        # Pattern storage
         self.patterns = defaultdict(list)
         self.recent_outcomes = deque(maxlen=100)
         
-        # Historical data processing state
+        # Bootstrap state
         self.historical_processed = False
         self.bootstrap_stats = {
             'total_bars_processed': 0,
@@ -63,20 +68,14 @@ class IntelligenceEngine:
             'bootstrap_time': 0
         }
         
-        # Enhanced feature tracking
-        self.feature_importance_history = deque(maxlen=200)
-        self.regime_transition_history = deque(maxlen=50)
-        self.adaptation_performance = deque(maxlen=100)
-        
         self.load_patterns(self.memory_file)
         
     def bootstrap_from_historical_data(self, historical_data):
-        """Enhanced bootstrap with microstructure and adaptation learning"""
-        logger.info("Starting enhanced historical data bootstrap...")
+        """Bootstrap subsystems with historical data"""
+        logger.info("Starting historical data bootstrap...")
         start_time = datetime.now()
         
         try:
-            # Process each timeframe
             total_bars = 0
             
             for timeframe in ['15m', '5m', '1m']:
@@ -87,10 +86,7 @@ class IntelligenceEngine:
                     total_bars += processed
                     logger.info(f"Processed {processed} {timeframe} bars")
             
-            # Enhanced pattern initialization with microstructure
-            self._generate_enhanced_synthetic_outcomes()
-            
-            # Initialize adaptation engine with historical patterns
+            # Initialize subsystems
             self._initialize_adaptation_engine()
             
             # Update bootstrap stats
@@ -100,11 +96,10 @@ class IntelligenceEngine:
             
             self.historical_processed = True
             
-            logger.info(f"Enhanced bootstrap complete: {total_bars} bars processed, "
+            logger.info(f"Bootstrap complete: {total_bars} bars processed, "
                        f"{self.bootstrap_stats['patterns_discovered']} patterns discovered "
                        f"in {self.bootstrap_stats['bootstrap_time']:.1f}s")
             
-            # Save bootstrapped patterns
             self.save_patterns(self.memory_file)
             
         except Exception as e:
@@ -112,17 +107,15 @@ class IntelligenceEngine:
             self.historical_processed = False
     
     def _process_historical_bars(self, bars, timeframe):
-        """Enhanced historical bar processing with microstructure analysis"""
+        """Process historical bars for pattern learning"""
         if not bars or len(bars) < 20:
             return 0
         
         prices = [bar['close'] for bar in bars]
         volumes = [bar['volume'] for bar in bars]
-        timestamps = [bar['timestamp'] / 10000000 - 62135596800 for bar in bars]  # Convert to Unix timestamp
+        timestamps = [bar['timestamp'] / 10000000 - 62135596800 for bar in bars]
         
         processed_count = 0
-        
-        # Process with sliding windows
         window_size = min(50, len(bars) // 4)
         
         for i in range(window_size, len(bars)):
@@ -130,12 +123,12 @@ class IntelligenceEngine:
             window_volumes = volumes[i-window_size:i+1]
             window_timestamps = timestamps[i-window_size:i+1]
             
-            # Enhanced market features for microstructure analysis
-            market_features = self._extract_enhanced_market_features(
+            # Extract market features
+            market_features = self._extract_market_features(
                 window_prices, window_volumes, window_timestamps
             )
             
-            # Process through enhanced orchestrator
+            # Process through orchestrator
             orchestrator_result = self.orchestrator.process_market_data(
                 window_prices, window_volumes, market_features, window_timestamps
             )
@@ -152,13 +145,13 @@ class IntelligenceEngine:
         
         return processed_count
     
-    def _extract_enhanced_market_features(self, prices: List[float], volumes: List[float], 
-                                        timestamps: List[float]) -> Dict:
-        """Extract enhanced market features for analysis"""
+    def _extract_market_features(self, prices: List[float], volumes: List[float],
+                                timestamps: List[float]) -> Dict:
+        """Extract market features for analysis"""
         if len(prices) < 10:
             return {}
         
-        # Basic features
+        # Price features
         price_changes = np.diff(prices)
         returns = price_changes / np.array(prices[:-1])
         
@@ -175,7 +168,7 @@ class IntelligenceEngine:
         else:
             time_of_day = 0.5
         
-        # Price position in range
+        # Price position
         price_range = max(prices) - min(prices)
         price_position = (prices[-1] - min(prices)) / price_range if price_range > 0 else 0.5
         
@@ -184,9 +177,7 @@ class IntelligenceEngine:
             'price_momentum': momentum,
             'volume_momentum': volume_momentum,
             'time_of_day': time_of_day,
-            'price_position': price_position,
-            'returns_skew': float(np.mean(returns**3)) if len(returns) > 2 else 0,
-            'returns_kurtosis': float(np.mean(returns**4)) if len(returns) > 3 else 0
+            'price_position': price_position
         }
     
     def _store_historical_patterns(self, orchestrator_result: Dict, microstructure_result: Dict, 
@@ -313,13 +304,67 @@ class IntelligenceEngine:
         }
 
         timestamps = [data.timestamp - i * 60 for i in range(len(prices))][::-1]
-        orchestrator_result = self.orchestrator.process_market_data(
-            data.prices_1m, data.volumes_1m, market_features, timestamps
-        )
+        
+        # Add error handling and validation for orchestrator result
+        try:
+            orchestrator_result = self.orchestrator.process_market_data(
+                data.prices_1m, data.volumes_1m, market_features, timestamps
+            )
+            
+            # Validate orchestrator result and provide fallbacks
+            if not orchestrator_result or not isinstance(orchestrator_result, dict):
+                logger.warning("Orchestrator returned invalid result, using fallback")
+                orchestrator_result = {
+                    'dna_signal': 0.0,
+                    'temporal_signal': 0.0,
+                    'immune_signal': 0.0,
+                    'overall_signal': 0.0,
+                    'consensus_strength': 0.5
+                }
+            
+            # Ensure all required keys exist with valid values
+            required_keys = ['dna_signal', 'temporal_signal', 'immune_signal', 'overall_signal']
+            for key in required_keys:
+                if key not in orchestrator_result or not isinstance(orchestrator_result[key], (int, float)):
+                    logger.warning(f"Missing or invalid {key} in orchestrator result, using 0.0")
+                    orchestrator_result[key] = 0.0
+                elif np.isnan(orchestrator_result[key]) or np.isinf(orchestrator_result[key]):
+                    logger.warning(f"NaN or Inf detected in {key}, using 0.0")
+                    orchestrator_result[key] = 0.0
+                    
+        except Exception as e:
+            logger.error(f"Orchestrator processing failed: {e}")
+            orchestrator_result = {
+                'dna_signal': 0.0,
+                'temporal_signal': 0.0,
+                'immune_signal': 0.0,
+                'overall_signal': 0.0,
+                'consensus_strength': 0.5
+            }
 
-        microstructure_result = self.microstructure_engine.analyze_market_state(
-            data.prices_1m, data.volumes_1m
-        )
+        # Add error handling for microstructure analysis
+        try:
+            microstructure_result = self.microstructure_engine.analyze_market_state(
+                data.prices_1m, data.volumes_1m
+            )
+            
+            if not microstructure_result or not isinstance(microstructure_result, dict):
+                logger.warning("Microstructure engine returned invalid result, using fallback")
+                microstructure_result = {
+                    'microstructure_signal': 0.0,
+                    'regime_adjusted_signal': 0.0,
+                    'order_flow': {},
+                    'regime_state': {'confidence': 0.5}
+                }
+                
+        except Exception as e:
+            logger.error(f"Microstructure analysis failed: {e}")
+            microstructure_result = {
+                'microstructure_signal': 0.0,
+                'regime_adjusted_signal': 0.0,
+                'order_flow': {},
+                'regime_state': {'confidence': 0.5}
+            }
 
         adaptation_context = {
             'volatility': volatility,
@@ -328,25 +373,35 @@ class IntelligenceEngine:
             'time_of_day': time_of_day
         }
 
-        feature_tensor = self._create_feature_tensor(market_features, orchestrator_result, microstructure_result)
-        adaptation_decision = self.adaptation_engine.get_adaptation_decision(feature_tensor, adaptation_context)
+        # Add error handling for adaptation engine
+        try:
+            feature_tensor = self._create_feature_tensor(market_features, orchestrator_result, microstructure_result)
+            adaptation_decision = self.adaptation_engine.get_adaptation_decision(feature_tensor, adaptation_context)
+        except Exception as e:
+            logger.error(f"Adaptation engine failed: {e}")
+            adaptation_decision = {'adaptation_quality': 0.5}
 
         pattern_score = self._recognize_patterns(prices, volumes)
-        signal_strength = abs(orchestrator_result['overall_signal'])
+        
+        # Ensure signal strength calculation is robust
+        signal_strength = abs(orchestrator_result.get('overall_signal', 0.0))
         momentum_strength = abs(price_momentum) + abs(volume_momentum)
-        microstructure_strength = abs(microstructure_result.get('microstructure_signal', 0))
+        microstructure_strength = abs(microstructure_result.get('microstructure_signal', 0.0))
         adaptation_quality = adaptation_decision.get('adaptation_quality', 0.5)
         pattern_boost = 0.15 if self.historical_processed else 0.0
         adaptation_boost = adaptation_quality * 0.1
-        confidence = min(
+        
+        # Ensure minimum confidence level
+        confidence = max(0.1, min(
             1.0,
             signal_strength + momentum_strength * 0.3 + microstructure_strength * 0.2 + pattern_boost + adaptation_boost
-        )
+        ))
 
         microstructure_features = microstructure_result.get('order_flow', {})
         regime_state = microstructure_result.get('regime_state', {})
 
-        return Features(
+        # Create features with validation
+        features = Features(
             price_momentum=price_momentum,
             volume_momentum=volume_momentum,
             price_position=price_position,
@@ -354,11 +409,11 @@ class IntelligenceEngine:
             time_of_day=time_of_day,
             pattern_score=pattern_score,
             confidence=confidence,
-            dna_signal=orchestrator_result['dna_signal'],
-            micro_signal=orchestrator_result['temporal_signal'],
-            temporal_signal=orchestrator_result['temporal_signal'],
-            immune_signal=orchestrator_result['immune_signal'],
-            overall_signal=orchestrator_result['overall_signal'],
+            dna_signal=orchestrator_result.get('dna_signal', 0.0),
+            micro_signal=orchestrator_result.get('temporal_signal', 0.0),
+            temporal_signal=orchestrator_result.get('temporal_signal', 0.0),
+            immune_signal=orchestrator_result.get('immune_signal', 0.0),
+            overall_signal=orchestrator_result.get('overall_signal', 0.0),
             microstructure_signal=microstructure_result.get('microstructure_signal', 0.0),
             regime_adjusted_signal=microstructure_result.get('regime_adjusted_signal', 0.0),
             adaptation_quality=adaptation_quality,
@@ -366,13 +421,40 @@ class IntelligenceEngine:
             liquidity_depth=microstructure_features.get('liquidity_depth', 0.5),
             regime_confidence=regime_state.get('confidence', 0.5)
         )
+        
+        # Log warning if all signals are zero
+        if (features.dna_signal == 0.0 and features.temporal_signal == 0.0 and
+            features.immune_signal == 0.0 and features.overall_signal == 0.0):
+            logger.warning("All intelligence signals are zero - potential subsystem issue")
+            
+        return features
     
-    def _create_feature_tensor(self, market_features: Dict, orchestrator_result: Dict, 
+    def _extract_time_of_day(self, timestamp: float) -> float:
+        """Extract time of day from timestamp with error handling"""
+        try:
+            now = datetime.fromtimestamp(timestamp)
+            return (now.hour * 60 + now.minute) / 1440
+        except (OSError, ValueError, OverflowError):
+            try:
+                if timestamp > 1e15:
+                    unix_timestamp = (timestamp - 621355968000000000) / 10000000
+                    if 0 < unix_timestamp < 2147483647:
+                        now = datetime.fromtimestamp(unix_timestamp)
+                        return (now.hour * 60 + now.minute) / 1440
+            except:
+                pass
+            
+            # Fallback to current time
+            import time as time_module
+            now = datetime.fromtimestamp(time_module.time())
+            logger.warning(f"Using current time as fallback due to invalid timestamp: {timestamp}")
+            return (now.hour * 60 + now.minute) / 1440
+    
+    def _create_feature_tensor(self, market_features: Dict, orchestrator_result: Dict,
                              microstructure_result: Dict):
         """Create feature tensor for adaptation engine"""
         import torch
         
-        # Combine all features into a tensor
         features = [
             market_features.get('volatility', 0),
             market_features.get('price_momentum', 0),
@@ -395,46 +477,37 @@ class IntelligenceEngine:
         return torch.tensor(features[:64], dtype=torch.float64, device='cpu')
     
     def _recognize_patterns(self, prices: np.ndarray, volumes: np.ndarray) -> float:
-        """Enhanced pattern recognition"""
+        """Simple pattern recognition"""
         if len(prices) < 10:
             return 0.0
             
         trend = (prices[-1] - prices[-10]) / prices[-10] if prices[-10] != 0 else 0
         vol_trend = (volumes[-1] - np.mean(volumes[-5:])) / np.mean(volumes[-5:]) if np.mean(volumes[-5:]) > 0 else 0
         
-        # Enhanced pattern strength calculation
+        # Pattern strength based on trend and volume confirmation
         if (trend > 0 and vol_trend > 0) or (trend < 0 and vol_trend < 0):
             pattern_strength = abs(trend) * (1 + abs(vol_trend))
         else:
             pattern_strength = abs(trend) * 0.5
-        
-        # Add volatility clustering detection
-        recent_volatility = np.std(prices[-5:]) if len(prices) >= 5 else 0
-        historical_volatility = np.std(prices[:-5]) if len(prices) >= 10 else recent_volatility
-        
-        if historical_volatility > 0:
-            volatility_ratio = recent_volatility / historical_volatility
-            if volatility_ratio > 1.5 or volatility_ratio < 0.5:
-                pattern_strength *= 1.2  # Boost for volatility clustering
             
         return np.tanh(pattern_strength * 10)
     
     def learn_from_outcome(self, trade):
-        """Enhanced learning with microstructure and adaptation feedback"""
+        """Learn from trade outcomes across all subsystems"""
         outcome = trade.pnl / abs(trade.entry_price * 0.01) if trade.entry_price != 0 else 0
         
-        # Enhanced orchestrator learning
+        # Orchestrator learning
         if hasattr(trade, 'intelligence_data'):
             self.orchestrator.learn_from_outcome(outcome, {
                 'dna_sequence': trade.intelligence_data.get('current_patterns', {}).get('dna_sequence', ''),
-                'cycles_info': [],  # Would extract from temporal data
+                'cycles_info': [],
                 'market_state': getattr(trade, 'market_features', {})
             })
         
         # Microstructure learning
         self.microstructure_engine.learn_from_outcome(outcome)
         
-        # Real-time adaptation learning
+        # Adaptation learning
         if hasattr(trade, 'market_features'):
             adaptation_context = {
                 'volatility': trade.market_features.get('volatility', 0.02),
@@ -445,15 +518,15 @@ class IntelligenceEngine:
             }
             self.adaptation_engine.update_from_outcome(outcome, adaptation_context)
         
-        # Process real-time adaptation event
-        urgency = min(1.0, abs(outcome) * 2.0)  # Higher urgency for larger outcomes
+        # Process adaptation event
+        urgency = min(1.0, abs(outcome) * 2.0)
         self.adaptation_engine.process_market_event(
             'trade_outcome',
             {'pnl': outcome, 'trade_data': trade},
             urgency=urgency
         )
         
-        # Legacy pattern learning for compatibility
+        # Pattern learning
         if hasattr(trade, 'features'):
             pattern_id = self._create_pattern_id(trade.features)
             self.patterns[pattern_id].append(outcome)
@@ -462,9 +535,6 @@ class IntelligenceEngine:
                 self.patterns[pattern_id] = self.patterns[pattern_id][-20:]
         
         self.recent_outcomes.append(outcome)
-        
-        # Track adaptation performance
-        self.adaptation_performance.append(outcome)
     
     def _create_pattern_id(self, features: Features) -> str:
         """Create pattern ID for legacy compatibility"""
@@ -475,42 +545,34 @@ class IntelligenceEngine:
         return f"p{momentum_bucket}_{position_bucket}_{vol_bucket}"
     
     def _default_features(self) -> Features:
-        """Default features with enhanced fields"""
+        """Default features when insufficient data"""
         return Features(
-            price_momentum=0, volume_momentum=0, price_position=0.5, volatility=0, 
-            time_of_day=0.5, pattern_score=0, confidence=0, dna_signal=0, 
-            micro_signal=0, temporal_signal=0, immune_signal=0, overall_signal=0,
-            microstructure_signal=0.0, regime_adjusted_signal=0.0, adaptation_quality=0.5,
+            price_momentum=0, volume_momentum=0, price_position=0.5, volatility=0,
+            time_of_day=0.5, pattern_score=0, confidence=0, dna_signal=0,
+            micro_signal=0, temporal_signal=0, immune_signal=0, microstructure_signal=0.0, overall_signal=0,
+            regime_adjusted_signal=0.0, adaptation_quality=0.5,
             smart_money_flow=0.0, liquidity_depth=0.5, regime_confidence=0.5
         )
     
     def save_patterns(self, filepath: str):
-        """Enhanced pattern saving with all subsystems"""
-        # Get comprehensive stats
+        """Save patterns from all subsystems"""
         orchestrator_stats = self.orchestrator.get_comprehensive_stats()
         microstructure_features = self.microstructure_engine.get_microstructure_features()
         adaptation_stats = self.adaptation_engine.get_comprehensive_stats()
         
         data = {
-            # Legacy compatibility
             'patterns': dict(self.patterns),
             'recent_outcomes': list(self.recent_outcomes),
             'historical_processed': self.historical_processed,
             'bootstrap_stats': self.bootstrap_stats,
-            
-            # Enhanced subsystem data
             'orchestrator_stats': orchestrator_stats,
             'microstructure_features': microstructure_features,
             'adaptation_stats': adaptation_stats,
-            'feature_importance_history': list(self.feature_importance_history),
-            'adaptation_performance': list(self.adaptation_performance),
-            
             'saved_at': datetime.now().isoformat()
         }
         
         try:
             import os
-            # Ensure directory exists
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
             
             with open(filepath, 'w') as f:
@@ -519,12 +581,11 @@ class IntelligenceEngine:
             logger.error(f"Error saving patterns: {e}")
     
     def load_patterns(self, filepath: str):
-        """Enhanced pattern loading with all subsystems"""
+        """Load patterns from all subsystems"""
         try:
             with open(filepath, 'r') as f:
                 data = json.load(f)
             
-            # Legacy compatibility
             self.patterns = defaultdict(list, data.get('patterns', {}))
             self.recent_outcomes = deque(data.get('recent_outcomes', []), maxlen=100)
             self.historical_processed = data.get('historical_processed', False)
@@ -534,17 +595,9 @@ class IntelligenceEngine:
                 'bootstrap_time': 0
             })
             
-            # Enhanced subsystem data
-            self.feature_importance_history = deque(
-                data.get('feature_importance_history', []), maxlen=200
-            )
-            self.adaptation_performance = deque(
-                data.get('adaptation_performance', []), maxlen=100
-            )
-            
             if self.historical_processed:
                 orchestrator_stats = data.get('orchestrator_stats', {})
-                logger.info(f"Loaded enhanced intelligence patterns: "
+                logger.info(f"Loaded intelligence patterns: "
                            f"DNA={orchestrator_stats.get('dna_evolution', {}).get('total_sequences', 0)}, "
                            f"Immune={orchestrator_stats.get('immune_system', {}).get('total_antibodies', 0)}, "
                            f"Temporal={orchestrator_stats.get('temporal_cycles', 0)}")
@@ -555,40 +608,31 @@ class IntelligenceEngine:
             logger.error(f"Error loading patterns: {e}")
     
     def get_stats(self) -> Dict:
-        """Enhanced statistics with all subsystems"""
-        # Get comprehensive stats from all subsystems
+        """Get statistics from all subsystems"""
         orchestrator_stats = self.orchestrator.get_comprehensive_stats()
         adaptation_stats = self.adaptation_engine.get_comprehensive_stats()
+        microstructure_features = self.microstructure_engine.get_microstructure_features()
         
-        # Extract subsystem pattern counts for compatibility
+        # Extract subsystem counts
         dna_stats = orchestrator_stats.get('dna_evolution', {})
         immune_stats = orchestrator_stats.get('immune_system', {})
         temporal_cycles = orchestrator_stats.get('temporal_cycles', 0)
         
-        # Legacy stats with expected keys
-        legacy_stats = {
+        # Count microstructure patterns
+        micro_patterns_count = 0
+        if isinstance(microstructure_features, dict):
+            micro_patterns_count = len(microstructure_features.get('patterns', {}))
+        
+        return {
             'total_patterns': len(self.patterns),
             'recent_performance': np.mean(self.recent_outcomes) if self.recent_outcomes else 0,
             'pattern_count': sum(len(outcomes) for outcomes in self.patterns.values()),
             'historical_processed': self.historical_processed,
             'bootstrap_stats': self.bootstrap_stats,
-            # Expected keys for trading_system compatibility
             'dna_patterns': dna_stats.get('total_sequences', 0),
-            'micro_patterns': len(self.patterns),  # Legacy micro patterns
+            'micro_patterns': micro_patterns_count,
             'temporal_patterns': temporal_cycles,
-            'immune_patterns': immune_stats.get('total_antibodies', 0)
-        }
-        
-        # Enhanced stats
-        enhanced_stats = {
+            'immune_patterns': immune_stats.get('total_antibodies', 0),
             'orchestrator': orchestrator_stats,
-            'adaptation': adaptation_stats,
-            'adaptation_performance': {
-                'mean': np.mean(self.adaptation_performance) if self.adaptation_performance else 0,
-                'std': np.std(self.adaptation_performance) if self.adaptation_performance else 0,
-                'count': len(self.adaptation_performance)
-            }
+            'adaptation': adaptation_stats
         }
-        
-        # Combine all stats
-        return {**legacy_stats, **enhanced_stats}

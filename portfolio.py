@@ -171,6 +171,39 @@ class Portfolio:
     def get_position_count(self) -> int:
         return len(self.pending_orders)
     
+    def get_total_position_size(self) -> int:
+        """Get total position size across all pending orders"""
+        total_long = 0
+        total_short = 0
+        
+        for order in self.pending_orders.values():
+            if order.action == 'buy':
+                total_long += order.size
+            elif order.action == 'sell':
+                total_short += order.size
+        
+        # Return net position (positive for long, negative for short)
+        return total_long - total_short
+    
+    def get_position_exposure(self) -> Dict:
+        """Get detailed position exposure information"""
+        total_long = 0
+        total_short = 0
+        
+        for order in self.pending_orders.values():
+            if order.action == 'buy':
+                total_long += order.size
+            elif order.action == 'sell':
+                total_short += order.size
+        
+        return {
+            'total_long': total_long,
+            'total_short': total_short,
+            'net_position': total_long - total_short,
+            'gross_exposure': total_long + total_short,
+            'position_count': len(self.pending_orders)
+        }
+    
     def get_consecutive_losses(self) -> int:
         return self.consecutive_losses
     

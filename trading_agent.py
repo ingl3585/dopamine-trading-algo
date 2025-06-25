@@ -343,41 +343,153 @@ class TradingAgent:
                 # Low confidence regime - be conservative
                 return 1 if weighted_signal > 0.2 else (2 if weighted_signal < -0.2 else 0)
     
-    def _calculate_enhanced_levels(self, action: str, market_data: MarketData, 
+    def _calculate_enhanced_levels(self, action: str, market_data: MarketData,
                                  use_stop: bool, stop_distance: float,
                                  use_target: bool, target_distance: float,
                                  features: Features) -> tuple:
-        """Enhanced stop and target calculation with regime awareness"""
+        """Intelligent stop and target calculation based on learning"""
         
-        # Base calculation from meta-learner
-        stop_distance_factor = self.meta_learner.get_parameter('stop_distance_factor')
-        target_distance_factor = self.meta_learner.get_parameter('target_distance_factor')
+        # Let the algorithm learn whether to use stops/targets at all
+        learned_stop_preference = self.meta_learner.get_parameter('stop_preference')
+        learned_target_preference = self.meta_learner.get_parameter('target_preference')
         
-        # Regime adjustments
-        regime_multiplier = 1.0
-        if features.regime_confidence < 0.5:
-            regime_multiplier = 0.8  # Tighter levels in uncertain regimes
-        elif features.volatility > 0.03:
-            regime_multiplier = 1.3  # Wider levels in high volatility
+        # Intelligent decision on whether to use stops/targets
+        # Based on recent performance with/without them
+        stop_effectiveness = self._evaluate_stop_effectiveness()
+        target_effectiveness = self._evaluate_target_effectiveness()
+        
+        # Dynamic decision making
+        should_use_stop = (use_stop and learned_stop_preference > 0.3 and stop_effectiveness > 0.0)
+        should_use_target = (use_target and learned_target_preference > 0.3 and target_effectiveness > 0.0)
         
         stop_price = 0.0
         target_price = 0.0
         
-        if use_stop:
-            adjusted_distance = stop_distance_factor * (1 + stop_distance) * regime_multiplier
-            if action == 'buy':
-                stop_price = market_data.price * (1 - adjusted_distance)
-            else:
-                stop_price = market_data.price * (1 + adjusted_distance)
+        if should_use_stop:
+            # Intelligent stop placement based on market conditions
+            stop_price = self._calculate_intelligent_stop(action, market_data, features, stop_distance)
         
-        if use_target:
-            adjusted_distance = target_distance_factor * (1 + target_distance) * regime_multiplier
-            if action == 'buy':
-                target_price = market_data.price * (1 + adjusted_distance)
-            else:
-                target_price = market_data.price * (1 - adjusted_distance)
+        if should_use_target:
+            # Intelligent target placement based on market conditions
+            target_price = self._calculate_intelligent_target(action, market_data, features, target_distance)
         
         return stop_price, target_price
+    
+    def _evaluate_stop_effectiveness(self) -> float:
+        """Evaluate how effective stops have been recently"""
+        if len(self.experience_buffer) < 20:
+            return 0.5  # Neutral when insufficient data
+        
+        recent_experiences = list(self.experience_buffer)[-50:]
+        
+        stop_used_outcomes = []
+        no_stop_outcomes = []
+        
+        for exp in recent_experiences:
+            trade_data = exp.get('trade_data', {})
+            if isinstance(trade_data, dict):
+                stop_used = trade_data.get('stop_used', False)
+                reward = exp.get('reward', 0)
+                
+                if stop_used:
+                    stop_used_outcomes.append(reward)
+                else:
+                    no_stop_outcomes.append(reward)
+        
+        if not stop_used_outcomes or not no_stop_outcomes:
+            return 0.5
+        
+        avg_with_stop = np.mean(stop_used_outcomes)
+        avg_without_stop = np.mean(no_stop_outcomes)
+        
+        # Return relative effectiveness (-1 to 1)
+        return np.tanh((avg_with_stop - avg_without_stop) * 5)
+    
+    def _evaluate_target_effectiveness(self) -> float:
+        """Evaluate how effective targets have been recently"""
+        if len(self.experience_buffer) < 20:
+            return 0.5  # Neutral when insufficient data
+        
+        recent_experiences = list(self.experience_buffer)[-50:]
+        
+        target_used_outcomes = []
+        no_target_outcomes = []
+        
+        for exp in recent_experiences:
+            trade_data = exp.get('trade_data', {})
+            if isinstance(trade_data, dict):
+                target_used = trade_data.get('target_used', False)
+                reward = exp.get('reward', 0)
+                
+                if target_used:
+                    target_used_outcomes.append(reward)
+                else:
+                    no_target_outcomes.append(reward)
+        
+        if not target_used_outcomes or not no_target_outcomes:
+            return 0.5
+        
+        avg_with_target = np.mean(target_used_outcomes)
+        avg_without_target = np.mean(no_target_outcomes)
+        
+        # Return relative effectiveness (-1 to 1)
+        return np.tanh((avg_with_target - avg_without_target) * 5)
+    
+    def _calculate_intelligent_stop(self, action: str, market_data: MarketData,
+                                  features: Features, base_distance: float) -> float:
+        """Calculate intelligent stop placement"""
+        
+        # Base distance from meta-learner
+        base_stop_distance = self.meta_learner.get_parameter('stop_distance_factor')
+        
+        # Volatility-based adjustment
+        vol_adjustment = 1.0 + (features.volatility * 10)  # Scale with volatility
+        
+        # Regime-based adjustment
+        regime_adjustment = 1.0
+        if features.regime_confidence < 0.4:
+            regime_adjustment = 0.7  # Tighter stops in uncertain regimes
+        elif features.volatility > 0.04:
+            regime_adjustment = 1.5  # Wider stops in high volatility
+        
+        # Time-based adjustment (wider stops during volatile hours)
+        time_adjustment = 1.0
+        if 0.35 < features.time_of_day < 0.65:  # Market open hours
+            time_adjustment = 1.2
+        
+        # Combined adjustment
+        final_distance = base_stop_distance * (1 + base_distance) * vol_adjustment * regime_adjustment * time_adjustment
+        final_distance = min(0.05, max(0.005, final_distance))  # Reasonable bounds
+        
+        if action == 'buy':
+            return market_data.price * (1 - final_distance)
+        else:
+            return market_data.price * (1 + final_distance)
+    
+    def _calculate_intelligent_target(self, action: str, market_data: MarketData,
+                                    features: Features, base_distance: float) -> float:
+        """Calculate intelligent target placement"""
+        
+        # Base distance from meta-learner
+        base_target_distance = self.meta_learner.get_parameter('target_distance_factor')
+        
+        # Trend strength adjustment
+        trend_adjustment = 1.0 + abs(features.price_momentum) * 5  # Wider targets in strong trends
+        
+        # Confidence adjustment
+        confidence_adjustment = 0.5 + features.confidence  # Wider targets with higher confidence
+        
+        # Pattern strength adjustment
+        pattern_adjustment = 1.0 + features.pattern_score * 0.5
+        
+        # Combined adjustment
+        final_distance = base_target_distance * (1 + base_distance) * trend_adjustment * confidence_adjustment * pattern_adjustment
+        final_distance = min(0.15, max(0.01, final_distance))  # Reasonable bounds
+        
+        if action == 'buy':
+            return market_data.price * (1 + final_distance)
+        else:
+            return market_data.price * (1 - final_distance)
     
     def _calculate_ensemble_uncertainty(self, ensemble_outputs: List[Dict]) -> float:
         """Calculate uncertainty from ensemble predictions"""

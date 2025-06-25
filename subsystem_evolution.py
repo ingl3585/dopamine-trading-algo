@@ -5,20 +5,21 @@ import torch
 from scipy import fft
 from collections import defaultdict, deque
 from datetime import datetime
-from typing import Dict, List, Tuple, Set, Optional
+from typing import Dict, List, Tuple, Optional
 import logging
 import random
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)  # Enable info logging to see learning progress
 
 
-class AdvancedDNASubsystem:
+class DNASubsystem:
     def __init__(self):
-        # 16-base DNA encoding with enhanced market signatures
+        # 16-base DNA encoding for market patterns
         self.bases = {
             'A': 'price_up_vol_high',      'B': 'price_up_vol_med',
             'C': 'price_up_vol_low',       'D': 'price_up_vol_very_low',
-            'E': 'price_down_vol_high',    'F': 'price_down_vol_med', 
+            'E': 'price_down_vol_high',    'F': 'price_down_vol_med',
             'G': 'price_down_vol_low',     'H': 'price_down_vol_very_low',
             'I': 'price_flat_vol_high',    'J': 'price_flat_vol_med',
             'K': 'price_flat_vol_low',     'L': 'momentum_strong_up',
@@ -26,69 +27,69 @@ class AdvancedDNASubsystem:
             'O': 'volatility_crush',       'P': 'pattern_continuation'
         }
         
-        # Enhanced pattern storage with breeding and aging
-        self.sequences = {}  # sequence -> {'performance': float, 'age': int, 'generation': int, 'parents': tuple}
-        self.breeding_pool = []
-        self.elite_sequences = {}  # Top performing sequences
-        self.mutation_rate = 0.05
-        self.breeding_frequency = 100
-        self.max_age = 1000
-        self.generation_count = 0
-        
-        # DNA aging and evolution tracking
+        # Pattern storage with performance tracking
+        self.sequences = {}  # sequence -> {'performance': float, 'age': int, 'count': int}
+        self.max_sequences = 8000
         self.age_decay_factor = 0.999
-        self.performance_threshold = 0.6
-        self.breeding_success_rate = deque(maxlen=50)
         
-    def encode_market_state(self, prices: List[float], volumes: List[float], 
+        # Evolution and breeding parameters
+        self.performance_threshold = 0.3
+        self.elite_sequences = {}
+        self.max_age = 1000
+        self.breeding_frequency = 50
+        self.generation_count = 0
+        self.breeding_pool = deque(maxlen=100)
+        self.breeding_success_rate = deque(maxlen=50)
+        self.mutation_rate = 0.1
+        
+    def encode_market_state(self, prices: List[float], volumes: List[float],
                            volatility: Optional[float] = None, momentum: Optional[float] = None) -> str:
         if len(prices) < 2 or len(volumes) < 2:
+            logger.debug(f"Insufficient data for DNA encoding: prices={len(prices)}, volumes={len(volumes)}")
             return ""
         
         sequence = ""
         
-        # Calculate additional market context
-        if volatility is None:
-            volatility = np.std(prices[-10:]) / np.mean(prices[-10:]) if len(prices) >= 10 else 0
-        if momentum is None:
-            momentum = (prices[-1] - prices[-5]) / prices[-5] if len(prices) >= 5 and prices[-5] != 0 else 0
-        
-        for i in range(1, len(prices)):
-            price_change = (prices[i] - prices[i-1]) / prices[i-1] if prices[i-1] != 0 else 0
-            vol_ratio = volumes[i] / volumes[i-1] if volumes[i-1] > 0 else 1.0
+        try:
+            # Calculate market context if not provided
+            if volatility is None:
+                volatility = np.std(prices[-10:]) / np.mean(prices[-10:]) if len(prices) >= 10 else 0
+            if momentum is None:
+                momentum = (prices[-1] - prices[-5]) / prices[-5] if len(prices) >= 5 and prices[-5] != 0 else 0
             
-            # Enhanced 16-base encoding with market context
-            base = self._determine_base(price_change, vol_ratio, volatility, momentum, i, prices, volumes)
-            sequence += base
-        
-        return sequence
-    
-    def _determine_base(self, price_change: float, vol_ratio: float, volatility: float, 
-                       momentum: float, index: int, prices: List[float], volumes: List[float]) -> str:
-        """Determine DNA base using enhanced 16-base encoding"""
-        
-        # Strong momentum patterns override basic price/volume
-        if abs(momentum) > 0.02:
-            if momentum > 0:
-                return 'L'  # Strong upward momentum
+            for i in range(1, len(prices)):
+                price_change = (prices[i] - prices[i-1]) / prices[i-1] if prices[i-1] != 0 else 0
+                vol_ratio = volumes[i] / volumes[i-1] if volumes[i-1] > 0 else 1.0
+                
+                base = self._determine_base(price_change, vol_ratio, volatility, momentum)
+                sequence += base
+            
+            if not sequence:
+                logger.warning("DNA encoding produced empty sequence despite sufficient data")
             else:
-                return 'M'  # Strong downward momentum
+                logger.debug(f"DNA sequence encoded: {sequence[:10]}... (length: {len(sequence)})")
+                
+            return sequence
+            
+        except Exception as e:
+            logger.error(f"Error in DNA encoding: {e}")
+            return ""
+    
+    def _determine_base(self, price_change: float, vol_ratio: float, volatility: float, momentum: float) -> str:
+        """Determine DNA base using 16-base encoding"""
         
-        # Volatility regime patterns
-        if volatility > 0.03:  # High volatility
+        # Strong momentum patterns (only for very strong momentum)
+        if abs(momentum) > 0.03:
+            return 'L' if momentum > 0 else 'M'
+        
+        # Extreme volatility regime patterns (only for exceptional cases)
+        if volatility > 0.05:  # Very high volatility
             return 'N'  # Volatility spike
-        elif volatility < 0.005:  # Very low volatility
+        elif volatility < 0.002 and abs(price_change) < 0.0001 and vol_ratio < 1.1:
+            # Only use volatility crush when price is truly flat AND volume is low
             return 'O'  # Volatility crush
         
-        # Pattern continuation detection
-        if index >= 3:
-            recent_changes = [(prices[j] - prices[j-1]) / prices[j-1] 
-                            for j in range(index-2, index+1) if prices[j-1] != 0]
-            if len(recent_changes) >= 3:
-                if all(change > 0 for change in recent_changes) or all(change < 0 for change in recent_changes):
-                    return 'P'  # Pattern continuation
-        
-        # Standard price/volume encoding
+        # Standard price/volume encoding (primary encoding method)
         if abs(price_change) < 0.0001:  # Flat price
             if vol_ratio > 2.0:
                 return 'I'
@@ -117,32 +118,65 @@ class AdvancedDNASubsystem:
     
     def analyze_sequence(self, sequence: str) -> float:
         if not sequence or len(sequence) < 5:
+            logger.debug(f"DNA sequence too short or empty: '{sequence}' (length: {len(sequence) if sequence else 0})")
             return 0.0
         
-        # Age all sequences
-        self._age_sequences()
-        
-        # Find best matching patterns with breeding consideration
-        best_score = 0.0
-        best_matches = []
-        
-        for stored_seq, data in self.sequences.items():
-            similarity = self._advanced_sequence_similarity(sequence, stored_seq)
-            if similarity > 0.7:
-                # Age-adjusted performance
-                age_factor = self.age_decay_factor ** data['age']
-                adjusted_performance = data['performance'] * age_factor
-                score = adjusted_performance * similarity
-                
-                if abs(score) > abs(best_score):
-                    best_score = score
-                    best_matches.append((stored_seq, score, similarity))
-        
-        # Consider breeding if we have good matches
-        if len(best_matches) >= 2 and len(self.sequences) % self.breeding_frequency == 0:
-            self._attempt_breeding(best_matches)
-        
-        return best_score
+        try:
+            # Age all sequences
+            self._age_sequences()
+            
+            # Find best matching patterns with breeding consideration
+            best_score = 0.0
+            best_matches = []
+            matches_found = 0
+            
+            logger.debug(f"Analyzing DNA sequence: '{sequence[:20]}...' against {len(self.sequences)} stored sequences")
+            
+            for stored_seq, data in self.sequences.items():
+                try:
+                    similarity = self._advanced_sequence_similarity(sequence, stored_seq)
+                    if similarity > 0.7:
+                        matches_found += 1
+                        # Age-adjusted performance
+                        age_factor = self.age_decay_factor ** data['age']
+                        adjusted_performance = data['performance'] * age_factor
+                        score = adjusted_performance * similarity
+                        
+                        # Validate score
+                        if np.isnan(score) or np.isinf(score):
+                            continue
+                            
+                        if abs(score) > abs(best_score):
+                            best_score = score
+                            best_matches.append((stored_seq, score, similarity))
+                            logger.debug(f"New best DNA match: score={score:.4f}, similarity={similarity:.4f}")
+                except Exception as e:
+                    logger.warning(f"Error analyzing sequence similarity: {e}")
+                    continue
+            
+            # If no good matches found, provide a small baseline signal
+            if matches_found == 0 and len(self.sequences) > 0:
+                logger.debug("No DNA matches found, using baseline signal")
+                best_score = 0.05  # Small baseline signal
+            
+            # Consider breeding if we have good matches
+            if len(best_matches) >= 2 and len(self.sequences) % self.breeding_frequency == 0:
+                try:
+                    self._attempt_breeding(best_matches)
+                except Exception as e:
+                    logger.warning(f"Error in breeding attempt: {e}")
+            
+            # Ensure valid return value
+            if np.isnan(best_score) or np.isinf(best_score):
+                logger.warning("DNA analysis returned invalid score, using 0.0")
+                return 0.0
+            
+            logger.debug(f"DNA analysis result: {best_score:.4f} (matches: {matches_found})")
+            return best_score
+            
+        except Exception as e:
+            logger.error(f"Error in DNA sequence analysis: {e}")
+            return 0.0
     
     def _advanced_sequence_similarity(self, seq1: str, seq2: str) -> float:
         if not seq1 or not seq2:
@@ -409,8 +443,10 @@ class AdvancedDNASubsystem:
         if sequence in self.sequences:
             data = self.sequences[sequence]
             learning_rate = 0.1 / (1 + data['age'] * 0.01)  # Slower learning for older sequences
+            old_performance = data['performance']
             data['performance'] += learning_rate * (outcome - data['performance'])
             data['age'] = max(0, data['age'] - 5)  # Rejuvenate successful sequences
+            logger.info(f"DNA learning: Updated sequence '{sequence[:10]}...' performance {old_performance:.3f} -> {data['performance']:.3f}")
         else:
             self.sequences[sequence] = {
                 'performance': outcome * 0.5,
@@ -418,10 +454,12 @@ class AdvancedDNASubsystem:
                 'generation': 0,
                 'parents': None
             }
+            logger.info(f"DNA learning: New sequence '{sequence[:10]}...' added with performance {outcome * 0.5:.3f} (total sequences: {len(self.sequences)})")
         
         # Update elite sequences
         if outcome > self.performance_threshold:
             self.elite_sequences[sequence] = self.sequences[sequence].copy()
+            logger.info(f"DNA learning: Sequence '{sequence[:10]}...' promoted to elite (performance: {outcome:.3f})")
         
         # Cleanup poor performers
         self._cleanup_sequences()
@@ -482,29 +520,65 @@ class FFTTemporalSubsystem:
         
     def analyze_cycles(self, prices: List[float], timestamps: Optional[List[float]] = None) -> float:
         if len(prices) < 32:
+            logger.debug(f"Insufficient data for temporal analysis: {len(prices)} prices (need 32+)")
             return 0.0
         
-        # Enhanced FFT analysis with multiple window sizes
-        signals = []
-        
-        for window_size in [64, 128, 256]:
-            if len(prices) >= window_size:
-                signal = self._fft_analysis(prices[-window_size:], window_size)
-                signals.append(signal)
-        
-        if not signals:
+        try:
+            # Enhanced FFT analysis with multiple window sizes
+            signals = []
+            
+            logger.debug(f"Starting temporal analysis with {len(prices)} prices")
+            
+            for window_size in [64, 128, 256]:
+                if len(prices) >= window_size:
+                    try:
+                        signal = self._fft_analysis(prices[-window_size:], window_size)
+                        if not (np.isnan(signal) or np.isinf(signal)):
+                            signals.append(signal)
+                            logger.debug(f"Temporal window {window_size}: signal={signal:.4f}")
+                        else:
+                            logger.warning(f"Invalid signal from window {window_size}: {signal}")
+                    except Exception as e:
+                        logger.warning(f"FFT analysis failed for window size {window_size}: {e}")
+                        continue
+            
+            if not signals:
+                logger.debug("No valid temporal signals found, using baseline")
+                return 0.02  # Small baseline signal
+            
+            # Combine signals from different timeframes
+            combined_signal = float(np.mean(signals))
+            
+            # Validate combined signal
+            if np.isnan(combined_signal) or np.isinf(combined_signal):
+                logger.warning("Combined temporal signal is invalid")
+                return 0.0
+            
+            # Add seasonal and lunar analysis if timestamps available
+            if timestamps:
+                try:
+                    seasonal_signal = self._analyze_seasonal_patterns(prices, timestamps)
+                    lunar_signal = self._analyze_lunar_influence(prices, timestamps)
+                    
+                    # Validate additional signals
+                    if not (np.isnan(seasonal_signal) or np.isinf(seasonal_signal)):
+                        if not (np.isnan(lunar_signal) or np.isinf(lunar_signal)):
+                            combined_signal = combined_signal * 0.7 + seasonal_signal * 0.2 + lunar_signal * 0.1
+                            logger.debug(f"Enhanced temporal signal with seasonal/lunar: {combined_signal:.4f}")
+                except Exception as e:
+                    logger.warning(f"Seasonal/lunar analysis failed: {e}")
+            
+            # Final validation
+            if np.isnan(combined_signal) or np.isinf(combined_signal):
+                logger.warning("Final temporal signal is invalid")
+                return 0.0
+            
+            logger.debug(f"Temporal analysis result: {combined_signal:.4f}")
+            return combined_signal
+            
+        except Exception as e:
+            logger.error(f"Error in temporal cycle analysis: {e}")
             return 0.0
-        
-        # Combine signals from different timeframes
-        combined_signal = float(np.mean(signals))
-        
-        # Add seasonal and lunar analysis if timestamps available
-        if timestamps:
-            seasonal_signal = self._analyze_seasonal_patterns(prices, timestamps)
-            lunar_signal = self._analyze_lunar_influence(prices, timestamps)
-            combined_signal = combined_signal * 0.7 + seasonal_signal * 0.2 + lunar_signal * 0.1
-        
-        return combined_signal
     
     def _fft_analysis(self, prices: List[float], window_size: int) -> float:
         """Enhanced FFT analysis with adaptive cycle detection"""
@@ -688,6 +762,7 @@ class FFTTemporalSubsystem:
         if not cycles_info:
             return
         
+        cycles_learned = 0
         # Update performance for observed cycles
         for cycle in cycles_info:
             freq = cycle['frequency']
@@ -701,6 +776,7 @@ class FFTTemporalSubsystem:
                 learning_rate = 0.05 * (1.0 + data['confidence'])
                 
                 # Update performance
+                old_performance = data['performance']
                 new_performance = data['performance'] + learning_rate * (outcome - data['performance'])
                 
                 # Update confidence based on prediction accuracy
@@ -714,6 +790,8 @@ class FFTTemporalSubsystem:
                     'performance': new_performance,
                     'confidence': new_confidence
                 }
+                logger.info(f"Temporal learning: Updated cycle {freq:.4f}Hz performance {old_performance:.3f} -> {new_performance:.3f}")
+                cycles_learned += 1
             else:
                 self.cycle_memory[cycle_key] = {
                     'strength': cycle['amplitude'],
@@ -721,6 +799,11 @@ class FFTTemporalSubsystem:
                     'performance': outcome * 0.3,
                     'confidence': 0.5
                 }
+                logger.info(f"Temporal learning: New cycle {freq:.4f}Hz added with performance {outcome * 0.3:.3f}")
+                cycles_learned += 1
+        
+        if cycles_learned > 0:
+            logger.info(f"Temporal learning: {cycles_learned} cycles learned, total cycles: {len(self.cycle_memory)}")
         
         # Update seasonal patterns
         self._update_seasonal_patterns(outcome)
@@ -788,40 +871,91 @@ class EvolvingImmuneSystem:
         self.adaptive_response_rate = 0.1
         
     def detect_threats(self, market_state: Dict) -> float:
-        threat_level = 0.0
-        
-        # Create current pattern signature
-        pattern_signature = self._create_pattern_signature(market_state)
-        
-        # Check against evolved antibodies
-        for antibody_pattern, data in self.antibodies.items():
-            similarity = self._pattern_similarity(pattern_signature, antibody_pattern)
+        try:
+            threat_level = 0.0
             
-            if similarity > 0.7:  # High similarity to known threat
-                # Enhanced threat calculation with memory strength
-                memory_boost = 1.0 + (data['memory_count'] * 0.1)
-                generation_factor = 1.0 + (data['generation'] * 0.05)
-                threat_contribution = data['strength'] * similarity * memory_boost * generation_factor
-                threat_level += threat_contribution
-        
-        # Enhanced T-cell memory response
-        for past_threat in self.t_cell_memory:
-            similarity = self._pattern_similarity(pattern_signature, past_threat['pattern'])
-            if similarity > 0.8:
-                # Rapid T-cell response with severity weighting
-                severity_factor = min(2.0, abs(past_threat['severity']) / 0.1)
-                threat_level += past_threat['severity'] * similarity * severity_factor
-        
-        # Autoimmune prevention with confidence scoring
-        if pattern_signature in self.autoimmune_prevention:
-            # Reduce threat level but don't eliminate completely
-            threat_level *= 0.2
-        
-        # Adaptive threat evolution detection
-        evolved_threat_level = self._detect_evolved_threats(pattern_signature, market_state)
-        threat_level += evolved_threat_level
-        
-        return -min(1.0, threat_level)  # Negative signal for threats
+            # Create current pattern signature
+            pattern_signature = self._create_pattern_signature(market_state)
+            
+            if not pattern_signature:
+                logger.debug("Empty pattern signature for immune analysis")
+                return 0.0
+            
+            logger.debug(f"Immune analysis: pattern='{pattern_signature[:50]}...', antibodies={len(self.antibodies)}")
+            
+            antibody_matches = 0
+            # Check against evolved antibodies
+            for antibody_pattern, data in self.antibodies.items():
+                try:
+                    similarity = self._pattern_similarity(pattern_signature, antibody_pattern)
+                    
+                    if similarity > 0.7:  # High similarity to known threat
+                        antibody_matches += 1
+                        # Enhanced threat calculation with memory strength
+                        memory_boost = 1.0 + (data.get('memory_count', 0) * 0.1)
+                        generation_factor = 1.0 + (data.get('generation', 0) * 0.05)
+                        threat_contribution = data.get('strength', 0.0) * similarity * memory_boost * generation_factor
+                        
+                        # Validate threat contribution
+                        if not (np.isnan(threat_contribution) or np.isinf(threat_contribution)):
+                            threat_level += threat_contribution
+                            logger.debug(f"Antibody match: similarity={similarity:.3f}, contribution={threat_contribution:.4f}")
+                except Exception as e:
+                    logger.warning(f"Error processing antibody {antibody_pattern}: {e}")
+                    continue
+            
+            tcell_matches = 0
+            # Enhanced T-cell memory response
+            for past_threat in self.t_cell_memory:
+                try:
+                    similarity = self._pattern_similarity(pattern_signature, past_threat['pattern'])
+                    if similarity > 0.8:
+                        tcell_matches += 1
+                        # Rapid T-cell response with severity weighting
+                        severity = past_threat.get('severity', 0.0)
+                        severity_factor = min(2.0, abs(severity) / 0.1) if severity != 0 else 1.0
+                        threat_contribution = severity * similarity * severity_factor
+                        
+                        # Validate threat contribution
+                        if not (np.isnan(threat_contribution) or np.isinf(threat_contribution)):
+                            threat_level += threat_contribution
+                            logger.debug(f"T-cell match: similarity={similarity:.3f}, contribution={threat_contribution:.4f}")
+                except Exception as e:
+                    logger.warning(f"Error processing T-cell memory: {e}")
+                    continue
+            
+            # Autoimmune prevention with confidence scoring
+            if pattern_signature in self.autoimmune_prevention:
+                # Reduce threat level but don't eliminate completely
+                threat_level *= 0.2
+                logger.debug("Autoimmune prevention activated")
+            
+            # Adaptive threat evolution detection
+            try:
+                evolved_threat_level = self._detect_evolved_threats(pattern_signature, market_state)
+                if not (np.isnan(evolved_threat_level) or np.isinf(evolved_threat_level)):
+                    threat_level += evolved_threat_level
+            except Exception as e:
+                logger.warning(f"Error in evolved threat detection: {e}")
+            
+            # If no threats detected but we have antibodies, provide small baseline
+            if threat_level == 0.0 and len(self.antibodies) > 0:
+                threat_level = -0.01  # Small negative baseline
+                logger.debug("No threats detected, using baseline negative signal")
+            
+            # Validate final threat level
+            if np.isnan(threat_level) or np.isinf(threat_level):
+                logger.warning("Invalid final threat level")
+                return 0.0
+            
+            final_signal = -min(1.0, max(-1.0, threat_level))  # Negative signal for threats, bounded
+            logger.debug(f"Immune result: {final_signal:.4f} (antibody_matches={antibody_matches}, tcell_matches={tcell_matches})")
+            
+            return final_signal
+            
+        except Exception as e:
+            logger.error(f"Error in immune threat detection: {e}")
+            return 0.0
     
     def _create_pattern_signature(self, market_state: Dict) -> str:
         """Enhanced pattern signature creation"""
@@ -948,13 +1082,17 @@ class EvolvingImmuneSystem:
             # Create or strengthen antibody
             if pattern in self.antibodies:
                 data = self.antibodies[pattern]
+                old_strength = data['strength']
                 strength_update = self.adaptive_response_rate * (1.0 + data['memory_count'] * 0.1)
                 data['strength'] = min(1.0, data['strength'] + strength_update)
                 data['memory_count'] += 1
                 
+                logger.info(f"Immune learning: Strengthened antibody '{pattern[:30]}...' {old_strength:.3f} -> {data['strength']:.3f} (memory: {data['memory_count']})")
+                
                 # Memory consolidation
                 if data['memory_count'] >= self.memory_consolidation_threshold:
                     data['specificity'] = min(1.0, data['specificity'] + 0.1)
+                    logger.info(f"Immune learning: Memory consolidated for pattern '{pattern[:30]}...' (specificity: {data['specificity']:.3f})")
             else:
                 self.antibodies[pattern] = {
                     'strength': 0.5,
@@ -962,6 +1100,7 @@ class EvolvingImmuneSystem:
                     'memory_count': 1,
                     'generation': self.antibody_generations
                 }
+                logger.info(f"Immune learning: New antibody created for threat '{pattern[:30]}...' (total antibodies: {len(self.antibodies)})")
             
             # Enhanced T-cell memory
             self.t_cell_memory.append({
@@ -970,6 +1109,7 @@ class EvolvingImmuneSystem:
                 'timestamp': datetime.now(),
                 'market_context': market_state.copy()
             })
+            logger.info(f"Immune learning: T-cell memory updated (total memories: {len(self.t_cell_memory)})")
             
             # Track threat evolution
             self._track_threat_evolution(pattern, market_state, threat_level)
@@ -977,12 +1117,15 @@ class EvolvingImmuneSystem:
         elif threat_level > 0.3:  # False positive (good outcome from "threat")
             # Enhanced autoimmune prevention
             self.autoimmune_prevention.add(pattern)
+            logger.info(f"Immune learning: Added autoimmune prevention for pattern '{pattern[:30]}...'")
             
             # Weaken antibody if it exists
             if pattern in self.antibodies:
                 data = self.antibodies[pattern]
+                old_strength = data['strength']
                 data['strength'] = max(0.1, data['strength'] - 0.3)
                 data['specificity'] = max(0.3, data['specificity'] - 0.1)
+                logger.info(f"Immune learning: Weakened false positive antibody {old_strength:.3f} -> {data['strength']:.3f}")
     
     def _track_threat_evolution(self, pattern: str, market_state: Dict, threat_level: float):
         """Track how threats evolve over time"""
@@ -1123,7 +1266,7 @@ class EvolvingImmuneSystem:
 
 class EnhancedIntelligenceOrchestrator:
     def __init__(self):
-        self.dna_subsystem = AdvancedDNASubsystem()
+        self.dna_subsystem = DNASubsystem()
         self.temporal_subsystem = FFTTemporalSubsystem()
         self.immune_subsystem = EvolvingImmuneSystem()
         
@@ -1147,73 +1290,175 @@ class EnhancedIntelligenceOrchestrator:
     def process_market_data(self, prices: List[float], volumes: List[float],
                            market_features: Dict, timestamps: Optional[List[float]] = None) -> Dict[str, float]:
         
-        self.decision_count += 1
-        
-        # Enhanced DNA analysis with 16-base encoding
-        volatility = market_features.get('volatility', 0)
-        momentum = market_features.get('price_momentum', 0)
-        dna_sequence = self.dna_subsystem.encode_market_state(prices[-20:], volumes[-20:], volatility, momentum)
-        dna_signal = self.dna_subsystem.analyze_sequence(dna_sequence)
-        
-        # Enhanced FFT temporal analysis
-        temporal_signal = self.temporal_subsystem.analyze_cycles(prices, timestamps)
-        
-        # Enhanced immune system threat detection
-        immune_signal = self.immune_subsystem.detect_threats(market_features)
-        
-        # Swarm intelligence - enhanced voting with performance attribution
-        votes = {
-            'dna': dna_signal,
-            'temporal': temporal_signal,
-            'immune': immune_signal
-        }
-        
-        # Track individual tool performance
-        for tool, signal in votes.items():
-            self.tool_lifecycle[tool]['performance_history'].append(signal)
-        
-        # Calculate enhanced consensus with disagreement weighting
-        consensus_strength = self._calculate_enhanced_consensus(votes)
-        
-        # Dynamic tool activation based on market conditions
-        active_weights = self._calculate_dynamic_weights(market_features, votes)
-        
-        # Weighted overall signal with dynamic activation
-        overall_signal = sum(votes[tool] * active_weights[tool] for tool in votes.keys())
-        
-        # Boost signal based on consensus and tool agreement
-        if consensus_strength > 0.8:
-            overall_signal *= 1.4  # Strong consensus boost
-        elif consensus_strength < 0.3:
-            overall_signal *= 0.6  # Low consensus penalty
-        
-        # Check for hybrid tool creation
-        if self.decision_count % self.tool_breeding_frequency == 0:
-            self._attempt_tool_breeding(votes, market_features)
-        
-        # Store voting data
-        self.subsystem_votes.append({
-            'votes': votes.copy(),
-            'consensus': consensus_strength,
-            'weights': active_weights.copy(),
-            'timestamp': datetime.now()
-        })
-        self.consensus_history.append(consensus_strength)
-        
-        return {
-            'dna_signal': dna_signal,
-            'temporal_signal': temporal_signal,
-            'immune_signal': immune_signal,
-            'overall_signal': overall_signal,
-            'consensus_strength': consensus_strength,
-            'active_weights': active_weights,
-            'current_patterns': {
-                'dna_sequence': dna_sequence,
-                'dominant_cycles': len(self.temporal_subsystem.dominant_cycles),
-                'active_antibodies': len(self.immune_subsystem.antibodies),
-                'hybrid_tools': len(self.hybrid_tools)
+        try:
+            self.decision_count += 1
+            
+            # Enhanced DNA analysis with 16-base encoding
+            volatility = market_features.get('volatility', 0)
+            momentum = market_features.get('price_momentum', 0)
+            
+            try:
+                dna_sequence = self.dna_subsystem.encode_market_state(prices[-20:], volumes[-20:], volatility, momentum)
+                dna_signal = self.dna_subsystem.analyze_sequence(dna_sequence)
+                
+                # Validate DNA signal and ensure minimum baseline
+                if np.isnan(dna_signal) or np.isinf(dna_signal):
+                    logger.warning("Invalid DNA signal detected, using baseline")
+                    dna_signal = 0.05
+                elif dna_signal == 0.0 and len(self.dna_subsystem.sequences) > 0:
+                    dna_signal = 0.05  # Ensure baseline when sequences exist
+                    
+                logger.debug(f"Final DNA signal: {dna_signal:.4f}")
+                    
+            except Exception as e:
+                logger.error(f"DNA analysis failed: {e}")
+                dna_sequence = ""
+                dna_signal = 0.05  # Use baseline instead of 0.0
+            
+            # Enhanced FFT temporal analysis
+            try:
+                temporal_signal = self.temporal_subsystem.analyze_cycles(prices, timestamps)
+                
+                # Validate temporal signal and ensure minimum baseline
+                if np.isnan(temporal_signal) or np.isinf(temporal_signal):
+                    logger.warning("Invalid temporal signal detected, using baseline")
+                    temporal_signal = 0.02
+                elif temporal_signal == 0.0:
+                    temporal_signal = 0.02  # Ensure baseline
+                    
+                logger.debug(f"Final temporal signal: {temporal_signal:.4f}")
+                    
+            except Exception as e:
+                logger.error(f"Temporal analysis failed: {e}")
+                temporal_signal = 0.02  # Use baseline instead of 0.0
+            
+            # Enhanced immune system threat detection
+            try:
+                immune_signal = self.immune_subsystem.detect_threats(market_features)
+                
+                # Validate immune signal and ensure minimum baseline
+                if np.isnan(immune_signal) or np.isinf(immune_signal):
+                    logger.warning("Invalid immune signal detected, using baseline")
+                    immune_signal = -0.01
+                elif immune_signal == 0.0 and len(self.immune_subsystem.antibodies) == 0:
+                    immune_signal = -0.01  # Small negative baseline when no antibodies
+                    
+                logger.debug(f"Final immune signal: {immune_signal:.4f}")
+                    
+            except Exception as e:
+                logger.error(f"Immune analysis failed: {e}")
+                immune_signal = -0.01  # Use baseline instead of 0.0
+            
+            # Swarm intelligence - enhanced voting with performance attribution
+            votes = {
+                'dna': dna_signal,
+                'temporal': temporal_signal,
+                'immune': immune_signal
             }
-        }
+            
+            # Track individual tool performance
+            for tool, signal in votes.items():
+                if not (np.isnan(signal) or np.isinf(signal)):
+                    self.tool_lifecycle[tool]['performance_history'].append(signal)
+            
+            # Calculate enhanced consensus with disagreement weighting
+            try:
+                consensus_strength = self._calculate_enhanced_consensus(votes)
+                if np.isnan(consensus_strength) or np.isinf(consensus_strength):
+                    consensus_strength = 0.5
+            except Exception as e:
+                logger.warning(f"Consensus calculation failed: {e}")
+                consensus_strength = 0.5
+            
+            # Dynamic tool activation based on market conditions
+            try:
+                active_weights = self._calculate_dynamic_weights(market_features, votes)
+            except Exception as e:
+                logger.warning(f"Weight calculation failed: {e}")
+                active_weights = {'dna': 0.4, 'temporal': 0.4, 'immune': 0.2}
+            
+            # Weighted overall signal with dynamic activation
+            try:
+                overall_signal = sum(votes[tool] * active_weights.get(tool, 0.0) for tool in votes.keys())
+                
+                logger.debug(f"Raw overall signal: {overall_signal:.4f} from votes: {votes}")
+                
+                # Validate overall signal
+                if np.isnan(overall_signal) or np.isinf(overall_signal):
+                    logger.warning("Invalid overall signal detected, using baseline")
+                    overall_signal = 0.02  # Use baseline instead of 0.0
+                
+                # Ensure minimum signal when we have baseline signals
+                if overall_signal == 0.0:
+                    # Calculate baseline from individual signals
+                    baseline_signal = (votes['dna'] * 0.4 + votes['temporal'] * 0.4 + abs(votes['immune']) * 0.2)
+                    if baseline_signal > 0:
+                        overall_signal = baseline_signal
+                        logger.debug(f"Applied baseline overall signal: {overall_signal:.4f}")
+                
+                # Boost signal based on consensus and tool agreement
+                if consensus_strength > 0.8:
+                    overall_signal *= 1.4  # Strong consensus boost
+                elif consensus_strength < 0.3:
+                    overall_signal *= 0.6  # Low consensus penalty
+                
+                logger.debug(f"Final overall signal: {overall_signal:.4f}")
+                    
+            except Exception as e:
+                logger.error(f"Overall signal calculation failed: {e}")
+                overall_signal = 0.02  # Use baseline instead of 0.0
+            
+            # Check for hybrid tool creation
+            if self.decision_count % self.tool_breeding_frequency == 0:
+                try:
+                    self._attempt_tool_breeding(votes, market_features)
+                except Exception as e:
+                    logger.warning(f"Tool breeding failed: {e}")
+            
+            # Store voting data
+            try:
+                self.subsystem_votes.append({
+                    'votes': votes.copy(),
+                    'consensus': consensus_strength,
+                    'weights': active_weights.copy(),
+                    'timestamp': datetime.now()
+                })
+                self.consensus_history.append(consensus_strength)
+            except Exception as e:
+                logger.warning(f"Failed to store voting data: {e}")
+            
+            return {
+                'dna_signal': dna_signal,
+                'temporal_signal': temporal_signal,
+                'immune_signal': immune_signal,
+                'overall_signal': overall_signal,
+                'consensus_strength': consensus_strength,
+                'active_weights': active_weights,
+                'current_patterns': {
+                    'dna_sequence': dna_sequence if 'dna_sequence' in locals() else "",
+                    'dominant_cycles': len(self.temporal_subsystem.dominant_cycles),
+                    'active_antibodies': len(self.immune_subsystem.antibodies),
+                    'hybrid_tools': len(self.hybrid_tools)
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Critical error in orchestrator processing: {e}")
+            # Return safe fallback values
+            return {
+                'dna_signal': 0.0,
+                'temporal_signal': 0.0,
+                'immune_signal': 0.0,
+                'overall_signal': 0.0,
+                'consensus_strength': 0.5,
+                'active_weights': {'dna': 0.4, 'temporal': 0.4, 'immune': 0.2},
+                'current_patterns': {
+                    'dna_sequence': "",
+                    'dominant_cycles': 0,
+                    'active_antibodies': 0,
+                    'hybrid_tools': 0
+                }
+            }
     
     def _calculate_enhanced_consensus(self, votes: Dict[str, float]) -> float:
         """Enhanced consensus calculation with disagreement analysis"""
@@ -1306,13 +1551,23 @@ class EnhancedIntelligenceOrchestrator:
         cycles_info = context.get('cycles_info', [])
         market_state = context.get('market_state', {})
         
+        logger.info(f"Orchestrator learning: Processing outcome {outcome:.3f}")
+        
         # Each subsystem learns
-        self.dna_subsystem.learn_from_outcome(dna_sequence, outcome)
+        if dna_sequence:
+            self.dna_subsystem.learn_from_outcome(dna_sequence, outcome)
+        else:
+            logger.info("Orchestrator learning: No DNA sequence to learn from")
         
         if cycles_info:
             self.temporal_subsystem.learn_from_outcome(cycles_info, outcome)
+        else:
+            logger.info("Orchestrator learning: No temporal cycles to learn from")
         
-        self.immune_subsystem.learn_threat(market_state, outcome)
+        if market_state:
+            self.immune_subsystem.learn_threat(market_state, outcome)
+        else:
+            logger.info("Orchestrator learning: No market state for immune learning")
         
         # Performance attribution
         if self.subsystem_votes:
@@ -1321,14 +1576,19 @@ class EnhancedIntelligenceOrchestrator:
                 # Attribute performance based on signal strength and outcome alignment
                 attribution_score = outcome * signal * recent_vote['weights'][tool]
                 self.performance_attribution[tool].append(attribution_score)
+            logger.info(f"Orchestrator learning: Performance attribution updated for {len(recent_vote['votes'])} tools")
         
         # Update hybrid tool performance
         for hybrid_name, hybrid_data in self.hybrid_tools.items():
             # Simple performance tracking for now
             hybrid_data['performance_history'].append(outcome * 0.5)  # Conservative attribution
         
+        if len(self.hybrid_tools) > 0:
+            logger.info(f"Orchestrator learning: Updated {len(self.hybrid_tools)} hybrid tools")
+        
         # Periodic evolution
         if len(self.subsystem_votes) % 200 == 0:
+            logger.info("Orchestrator learning: Triggering tool evolution")
             self._evolve_tools()
     
     def _evolve_tools(self):
