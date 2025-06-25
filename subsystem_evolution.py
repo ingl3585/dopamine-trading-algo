@@ -8,9 +8,11 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 import logging
 import random
+from tqdm import tqdm
+import sys
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)  # Enable info logging to see learning progress
+logger.setLevel(logging.WARNING)  # Reduce logging verbosity, use progress bars instead
 
 
 class DNASubsystem:
@@ -41,6 +43,11 @@ class DNASubsystem:
         self.breeding_pool = deque(maxlen=100)
         self.breeding_success_rate = deque(maxlen=50)
         self.mutation_rate = 0.1
+        
+        # Progress tracking
+        self.learning_progress = None
+        self.total_learning_events = 0
+        self.learning_batch_size = 50  # Update progress every N learning events
         
     def encode_market_state(self, prices: List[float], volumes: List[float],
                            volatility: Optional[float] = None, momentum: Optional[float] = None) -> str:
@@ -436,33 +443,81 @@ class DNASubsystem:
         return sequence
     
     def learn_from_outcome(self, sequence: str, outcome: float):
+        # Debug and validate inputs
+        if not isinstance(sequence, str):
+            logger.error(f"DNA sequence is not a string: type={type(sequence)}, content={str(sequence)[:200]}")
+            return
         if not sequence:
             return
         
+        self.total_learning_events += 1
+        
+        # Initialize progress bar if needed
+        if self.learning_progress is None:
+            try:
+                self.learning_progress = tqdm(
+                    desc="🧬 DNA Learning",
+                    unit="patterns",
+                    position=0,
+                    leave=True,
+                    bar_format="{desc}: {n:,} patterns | Elite: {postfix[elite]} | Avg Perf: {postfix[avg_perf]:.3f} | {rate_fmt}",
+                    postfix={"elite": 0, "avg_perf": 0.0},
+                    disable=False,
+                    mininterval=0.1,
+                    maxinterval=1.0
+                )
+            except Exception as e:
+                logger.error(f"Error initializing DNA progress bar: {e}")
+                self.learning_progress = None
+        
         # Update or add sequence
+        sequence_added = False
         if sequence in self.sequences:
             data = self.sequences[sequence]
             learning_rate = 0.1 / (1 + data['age'] * 0.01)  # Slower learning for older sequences
             old_performance = data['performance']
             data['performance'] += learning_rate * (outcome - data['performance'])
             data['age'] = max(0, data['age'] - 5)  # Rejuvenate successful sequences
-            logger.info(f"DNA learning: Updated sequence '{sequence[:10]}...' performance {old_performance:.3f} -> {data['performance']:.3f}")
         else:
-            self.sequences[sequence] = {
-                'performance': outcome * 0.5,
-                'age': 0,
-                'generation': 0,
-                'parents': None
-            }
-            logger.info(f"DNA learning: New sequence '{sequence[:10]}...' added with performance {outcome * 0.5:.3f} (total sequences: {len(self.sequences)})")
+            # Check if we're at the sequence limit before adding new ones
+            if len(self.sequences) >= self.max_sequences:
+                self._cleanup_sequences()
+            
+            # Only add if we still have room after cleanup
+            if len(self.sequences) < self.max_sequences:
+                self.sequences[sequence] = {
+                    'performance': outcome * 0.5,
+                    'age': 0,
+                    'generation': 0,
+                    'parents': None
+                }
+                sequence_added = True
         
         # Update elite sequences
         if outcome > self.performance_threshold:
             self.elite_sequences[sequence] = self.sequences[sequence].copy()
-            logger.info(f"DNA learning: Sequence '{sequence[:10]}...' promoted to elite (performance: {outcome:.3f})")
         
-        # Cleanup poor performers
-        self._cleanup_sequences()
+        # Update progress bar
+        if sequence_added and self.learning_progress:
+            try:
+                self.learning_progress.update(1)
+            except Exception as e:
+                logger.warning(f"Error updating DNA progress bar: {e}")
+        
+        # Update progress bar stats every batch
+        if self.total_learning_events % self.learning_batch_size == 0 and self.learning_progress:
+            try:
+                avg_perf = np.mean([data['performance'] for data in self.sequences.values()]) if self.sequences else 0.0
+                self.learning_progress.set_postfix(
+                    elite=len(self.elite_sequences),
+                    avg_perf=avg_perf
+                )
+            except Exception as e:
+                logger.warning(f"Error updating DNA progress bar stats: {e}")
+        
+        # Cleanup poor performers (periodic cleanup)
+        if len(self.sequences) % 100 == 0:  # Cleanup every 100 sequences
+            self._cleanup_sequences()
     
     def _cleanup_sequences(self):
         """Remove poor performing and very old sequences"""
@@ -517,6 +572,11 @@ class FFTTemporalSubsystem:
         self.cycle_importance_weights = {}
         self.seasonal_patterns = {}
         self.lunar_cycle_data = deque(maxlen=30)  # Track lunar influence
+        
+        # Progress tracking
+        self.learning_progress = None
+        self.total_learning_events = 0
+        self.learning_batch_size = 25
         
     def analyze_cycles(self, prices: List[float], timestamps: Optional[List[float]] = None) -> float:
         if len(prices) < 32:
@@ -759,8 +819,32 @@ class FFTTemporalSubsystem:
     
     def learn_from_outcome(self, cycles_info: List[Dict], outcome: float):
         """Enhanced learning with confidence tracking"""
+        # Debug and validate inputs
+        if not isinstance(cycles_info, list):
+            logger.error(f"Temporal cycles_info is not a list: type={type(cycles_info)}, content={str(cycles_info)[:200]}")
+            return
         if not cycles_info:
             return
+        
+        self.total_learning_events += 1
+        
+        # Initialize progress bar if needed
+        if self.learning_progress is None:
+            try:
+                self.learning_progress = tqdm(
+                    desc="⏰ Temporal Learning",
+                    unit="cycles",
+                    position=1,
+                    leave=True,
+                    bar_format="{desc}: {n:,} cycles | Avg Conf: {postfix[avg_conf]:.3f} | Patterns: {postfix[patterns]} | {rate_fmt}",
+                    postfix={"avg_conf": 0.0, "patterns": 0},
+                    disable=False,
+                    mininterval=0.1,
+                    maxinterval=1.0
+                )
+            except Exception as e:
+                logger.error(f"Error initializing temporal progress bar: {e}")
+                self.learning_progress = None
         
         cycles_learned = 0
         # Update performance for observed cycles
@@ -790,7 +874,6 @@ class FFTTemporalSubsystem:
                     'performance': new_performance,
                     'confidence': new_confidence
                 }
-                logger.info(f"Temporal learning: Updated cycle {freq:.4f}Hz performance {old_performance:.3f} -> {new_performance:.3f}")
                 cycles_learned += 1
             else:
                 self.cycle_memory[cycle_key] = {
@@ -799,11 +882,23 @@ class FFTTemporalSubsystem:
                     'performance': outcome * 0.3,
                     'confidence': 0.5
                 }
-                logger.info(f"Temporal learning: New cycle {freq:.4f}Hz added with performance {outcome * 0.3:.3f}")
                 cycles_learned += 1
+                if self.learning_progress:
+                    try:
+                        self.learning_progress.update(1)
+                    except Exception as e:
+                        logger.warning(f"Error updating temporal progress bar: {e}")
         
-        if cycles_learned > 0:
-            logger.info(f"Temporal learning: {cycles_learned} cycles learned, total cycles: {len(self.cycle_memory)}")
+        # Update progress bar stats every batch
+        if self.total_learning_events % self.learning_batch_size == 0 and self.learning_progress:
+            try:
+                avg_conf = np.mean([data['confidence'] for data in self.cycle_memory.values()]) if self.cycle_memory else 0.0
+                self.learning_progress.set_postfix(
+                    avg_conf=avg_conf,
+                    patterns=len(self.interference_patterns)
+                )
+            except Exception as e:
+                logger.warning(f"Error updating temporal progress bar stats: {e}")
         
         # Update seasonal patterns
         self._update_seasonal_patterns(outcome)
@@ -869,6 +964,11 @@ class EvolvingImmuneSystem:
         self.threat_severity_threshold = -0.3
         self.memory_consolidation_threshold = 3
         self.adaptive_response_rate = 0.1
+        
+        # Progress tracking
+        self.learning_progress = None
+        self.total_learning_events = 0
+        self.learning_batch_size = 20
         
     def detect_threats(self, market_state: Dict) -> float:
         try:
@@ -1076,8 +1176,34 @@ class EvolvingImmuneSystem:
     
     def learn_threat(self, market_state: Dict, threat_level: float):
         """Enhanced threat learning with evolution tracking"""
+        # Debug and validate inputs
+        if not isinstance(market_state, dict):
+            logger.error(f"Immune market_state is not a dict: type={type(market_state)}, content={str(market_state)[:200]}")
+            return
+        
         pattern = self._create_pattern_signature(market_state)
         
+        self.total_learning_events += 1
+        
+        # Initialize progress bar if needed
+        if self.learning_progress is None:
+            try:
+                self.learning_progress = tqdm(
+                    desc="🛡️  Immune Learning",
+                    unit="threats",
+                    position=2,
+                    leave=True,
+                    bar_format="{desc}: {n:,} antibodies | T-cells: {postfix[tcells]} | Prevention: {postfix[prevention]} | {rate_fmt}",
+                    postfix={"tcells": 0, "prevention": 0},
+                    disable=False,
+                    mininterval=0.1,
+                    maxinterval=1.0
+                )
+            except Exception as e:
+                logger.error(f"Error initializing immune progress bar: {e}")
+                self.learning_progress = None
+        
+        antibody_created = False
         if threat_level < self.threat_severity_threshold:  # Significant threat
             # Create or strengthen antibody
             if pattern in self.antibodies:
@@ -1087,12 +1213,9 @@ class EvolvingImmuneSystem:
                 data['strength'] = min(1.0, data['strength'] + strength_update)
                 data['memory_count'] += 1
                 
-                logger.info(f"Immune learning: Strengthened antibody '{pattern[:30]}...' {old_strength:.3f} -> {data['strength']:.3f} (memory: {data['memory_count']})")
-                
                 # Memory consolidation
                 if data['memory_count'] >= self.memory_consolidation_threshold:
                     data['specificity'] = min(1.0, data['specificity'] + 0.1)
-                    logger.info(f"Immune learning: Memory consolidated for pattern '{pattern[:30]}...' (specificity: {data['specificity']:.3f})")
             else:
                 self.antibodies[pattern] = {
                     'strength': 0.5,
@@ -1100,7 +1223,7 @@ class EvolvingImmuneSystem:
                     'memory_count': 1,
                     'generation': self.antibody_generations
                 }
-                logger.info(f"Immune learning: New antibody created for threat '{pattern[:30]}...' (total antibodies: {len(self.antibodies)})")
+                antibody_created = True
             
             # Enhanced T-cell memory
             self.t_cell_memory.append({
@@ -1109,7 +1232,6 @@ class EvolvingImmuneSystem:
                 'timestamp': datetime.now(),
                 'market_context': market_state.copy()
             })
-            logger.info(f"Immune learning: T-cell memory updated (total memories: {len(self.t_cell_memory)})")
             
             # Track threat evolution
             self._track_threat_evolution(pattern, market_state, threat_level)
@@ -1117,7 +1239,6 @@ class EvolvingImmuneSystem:
         elif threat_level > 0.3:  # False positive (good outcome from "threat")
             # Enhanced autoimmune prevention
             self.autoimmune_prevention.add(pattern)
-            logger.info(f"Immune learning: Added autoimmune prevention for pattern '{pattern[:30]}...'")
             
             # Weaken antibody if it exists
             if pattern in self.antibodies:
@@ -1125,7 +1246,23 @@ class EvolvingImmuneSystem:
                 old_strength = data['strength']
                 data['strength'] = max(0.1, data['strength'] - 0.3)
                 data['specificity'] = max(0.3, data['specificity'] - 0.1)
-                logger.info(f"Immune learning: Weakened false positive antibody {old_strength:.3f} -> {data['strength']:.3f}")
+        
+        # Update progress bar
+        if antibody_created and self.learning_progress:
+            try:
+                self.learning_progress.update(1)
+            except Exception as e:
+                logger.warning(f"Error updating immune progress bar: {e}")
+        
+        # Update progress bar stats every batch
+        if self.total_learning_events % self.learning_batch_size == 0 and self.learning_progress:
+            try:
+                self.learning_progress.set_postfix(
+                    tcells=len(self.t_cell_memory),
+                    prevention=len(self.autoimmune_prevention)
+                )
+            except Exception as e:
+                logger.warning(f"Error updating immune progress bar stats: {e}")
     
     def _track_threat_evolution(self, pattern: str, market_state: Dict, threat_level: float):
         """Track how threats evolve over time"""
@@ -1279,13 +1416,17 @@ class EnhancedIntelligenceOrchestrator:
         self.tool_lifecycle = {
             'dna': {'birth_time': datetime.now(), 'performance_history': deque(maxlen=100)},
             'temporal': {'birth_time': datetime.now(), 'performance_history': deque(maxlen=100)},
-            'immune': {'birth_time': datetime.now(), 'performance_history': deque(maxlen=100)}
+            'immune': {'birth_time': datetime.now(), 'performance_history': deque(maxlen=100)},
+            'microstructure': {'birth_time': datetime.now(), 'performance_history': deque(maxlen=100)}
         }
         
         # Hybrid tool breeding
         self.hybrid_tools = {}
         self.tool_breeding_frequency = 500
         self.decision_count = 0
+        
+        # Progress tracking
+        self.orchestrator_progress = None
         
     def process_market_data(self, prices: List[float], volumes: List[float],
                            market_features: Dict, timestamps: Optional[List[float]] = None) -> Dict[str, float]:
@@ -1546,50 +1687,190 @@ class EnhancedIntelligenceOrchestrator:
     
     def learn_from_outcome(self, outcome: float, context: Dict):
         """Enhanced learning with tool evolution and performance attribution"""
-        # Extract context
+        # Debug and validate context
+        if not isinstance(context, dict):
+            logger.error(f"Context is not a dictionary: type={type(context)}, content={str(context)[:200]}")
+            return
+        
+        # Extract context with additional validation
         dna_sequence = context.get('dna_sequence', '')
+        if not isinstance(dna_sequence, str):
+            logger.error(f"DNA sequence is not a string: type={type(dna_sequence)}, content={str(dna_sequence)[:100]}")
+            dna_sequence = str(dna_sequence) if dna_sequence else ''
+        
         cycles_info = context.get('cycles_info', [])
+        if not isinstance(cycles_info, list):
+            logger.error(f"Cycles info is not a list: type={type(cycles_info)}, content={str(cycles_info)[:100]}")
+            cycles_info = []
+        
         market_state = context.get('market_state', {})
+        if not isinstance(market_state, dict):
+            logger.error(f"Market state is not a dict: type={type(market_state)}, content={str(market_state)[:100]}")
+            market_state = {}
         
-        logger.info(f"Orchestrator learning: Processing outcome {outcome:.3f}")
+        microstructure_signal = context.get('microstructure_signal', 0.0)
+        if not isinstance(microstructure_signal, (int, float)):
+            logger.error(f"Microstructure signal is not numeric: type={type(microstructure_signal)}, content={str(microstructure_signal)[:100]}")
+            microstructure_signal = 0.0
         
-        # Each subsystem learns
+        # Initialize orchestrator progress bar if needed
+        if self.orchestrator_progress is None:
+            try:
+                self.orchestrator_progress = tqdm(
+                    desc="🎯 Orchestrator Learning",
+                    unit="outcomes",
+                    position=3,
+                    leave=True,
+                    bar_format="{desc}: {n:,} outcomes | Tools: {postfix[tools]} | Consensus: {postfix[consensus]:.3f} | {rate_fmt}",
+                    postfix={"tools": 3, "consensus": 0.0},
+                    disable=False,
+                    mininterval=0.1,
+                    maxinterval=1.0
+                )
+            except Exception as e:
+                logger.error(f"Error initializing orchestrator progress bar: {e}")
+                self.orchestrator_progress = None
+        
+        # Each subsystem learns with additional error handling
         if dna_sequence:
-            self.dna_subsystem.learn_from_outcome(dna_sequence, outcome)
-        else:
-            logger.info("Orchestrator learning: No DNA sequence to learn from")
+            try:
+                self.dna_subsystem.learn_from_outcome(dna_sequence, outcome)
+            except Exception as e:
+                logger.error(f"Error in DNA subsystem learning: {e}")
+                logger.error(f"DNA sequence type: {type(dna_sequence)}, content: {str(dna_sequence)[:100]}")
         
-        if cycles_info:
-            self.temporal_subsystem.learn_from_outcome(cycles_info, outcome)
-        else:
-            logger.info("Orchestrator learning: No temporal cycles to learn from")
+        # Extract cycles from temporal subsystem's recent analysis
+        recent_cycles = []
+        try:
+            if len(self.temporal_subsystem.dominant_cycles) > 0:
+                recent_cycles = list(self.temporal_subsystem.dominant_cycles)[-1] if self.temporal_subsystem.dominant_cycles else []
+        except Exception as e:
+            logger.error(f"Error extracting recent cycles: {e}")
+            recent_cycles = []
+        
+        if recent_cycles or cycles_info:
+            try:
+                cycles_to_learn = cycles_info if cycles_info else recent_cycles
+                self.temporal_subsystem.learn_from_outcome(cycles_to_learn, outcome)
+            except Exception as e:
+                logger.error(f"Error in temporal subsystem learning: {e}")
+                logger.error(f"Cycles to learn type: {type(cycles_to_learn)}, content: {str(cycles_to_learn)[:100]}")
         
         if market_state:
-            self.immune_subsystem.learn_threat(market_state, outcome)
-        else:
-            logger.info("Orchestrator learning: No market state for immune learning")
+            try:
+                self.immune_subsystem.learn_threat(market_state, outcome)
+            except Exception as e:
+                logger.error(f"Error in immune subsystem learning: {e}")
+                logger.error(f"Market state type: {type(market_state)}, content: {str(market_state)[:100]}")
         
-        # Performance attribution
-        if self.subsystem_votes:
-            recent_vote = self.subsystem_votes[-1]
-            for tool, signal in recent_vote['votes'].items():
-                # Attribute performance based on signal strength and outcome alignment
-                attribution_score = outcome * signal * recent_vote['weights'][tool]
-                self.performance_attribution[tool].append(attribution_score)
-            logger.info(f"Orchestrator learning: Performance attribution updated for {len(recent_vote['votes'])} tools")
+        # Track microstructure learning
+        if microstructure_signal != 0.0:
+            self.tool_lifecycle['microstructure']['performance_history'].append(microstructure_signal)
+        
+        # Performance attribution with error handling
+        try:
+            if self.subsystem_votes:
+                recent_vote = self.subsystem_votes[-1]
+                
+                # Validate recent_vote structure
+                if not isinstance(recent_vote, dict):
+                    logger.error(f"Recent vote is not a dict: type={type(recent_vote)}, content={str(recent_vote)[:100]}")
+                else:
+                    votes = recent_vote.get('votes', {})
+                    weights = recent_vote.get('weights', {})
+                    
+                    if not isinstance(votes, dict):
+                        logger.error(f"Votes is not a dict: type={type(votes)}, content={str(votes)[:100]}")
+                        votes = {}
+                    
+                    if not isinstance(weights, dict):
+                        logger.error(f"Weights is not a dict: type={type(weights)}, content={str(weights)[:100]}")
+                        weights = {}
+                    
+                    for tool, signal in votes.items():
+                        try:
+                            if tool in weights:
+                                # Attribute performance based on signal strength and outcome alignment
+                                attribution_score = outcome * signal * weights[tool]
+                                self.performance_attribution[tool].append(attribution_score)
+                        except Exception as e:
+                            logger.error(f"Error in performance attribution for tool {tool}: {e}")
+                            logger.error(f"Tool: {tool}, Signal: {signal}, Weight: {weights.get(tool, 'N/A')}")
+                
+                # Add microstructure attribution
+                if microstructure_signal != 0.0:
+                    try:
+                        micro_attribution = outcome * microstructure_signal * 0.2  # 20% weight for microstructure
+                        self.performance_attribution['microstructure'].append(micro_attribution)
+                    except Exception as e:
+                        logger.error(f"Error in microstructure attribution: {e}")
+        except Exception as e:
+            logger.error(f"Error in performance attribution section: {e}")
         
         # Update hybrid tool performance
         for hybrid_name, hybrid_data in self.hybrid_tools.items():
             # Simple performance tracking for now
             hybrid_data['performance_history'].append(outcome * 0.5)  # Conservative attribution
         
-        if len(self.hybrid_tools) > 0:
-            logger.info(f"Orchestrator learning: Updated {len(self.hybrid_tools)} hybrid tools")
+        # Update orchestrator progress
+        if self.orchestrator_progress:
+            try:
+                self.orchestrator_progress.update(1)
+                
+                # Update progress stats
+                recent_consensus = np.mean(list(self.consensus_history)) if self.consensus_history else 0.0
+                self.orchestrator_progress.set_postfix(
+                    tools=4 + len(self.hybrid_tools),  # DNA, Temporal, Immune, Microstructure + hybrids
+                    consensus=recent_consensus
+                )
+            except Exception as e:
+                logger.warning(f"Error updating orchestrator progress bar: {e}")
         
         # Periodic evolution
         if len(self.subsystem_votes) % 200 == 0:
-            logger.info("Orchestrator learning: Triggering tool evolution")
             self._evolve_tools()
+    
+    def close_progress_bars(self):
+        """Close all progress bars when learning is complete"""
+        try:
+            if self.dna_subsystem.learning_progress:
+                self.dna_subsystem.learning_progress.close()
+                self.dna_subsystem.learning_progress = None
+        except Exception as e:
+            logger.warning(f"Error closing DNA progress bar: {e}")
+        
+        try:
+            if self.temporal_subsystem.learning_progress:
+                self.temporal_subsystem.learning_progress.close()
+                self.temporal_subsystem.learning_progress = None
+        except Exception as e:
+            logger.warning(f"Error closing temporal progress bar: {e}")
+        
+        try:
+            if self.immune_subsystem.learning_progress:
+                self.immune_subsystem.learning_progress.close()
+                self.immune_subsystem.learning_progress = None
+        except Exception as e:
+            logger.warning(f"Error closing immune progress bar: {e}")
+        
+        try:
+            if self.orchestrator_progress:
+                self.orchestrator_progress.close()
+                self.orchestrator_progress = None
+        except Exception as e:
+            logger.warning(f"Error closing orchestrator progress bar: {e}")
+        
+        # Print final summary
+        print("\n" + "="*60)
+        print("🎓 LEARNING COMPLETE - Final Statistics")
+        print("="*60)
+        print(f"🧬 DNA Patterns Learned: {len(self.dna_subsystem.sequences):,}")
+        print(f"⭐ Elite DNA Sequences: {len(self.dna_subsystem.elite_sequences):,}")
+        print(f"⏰ Temporal Cycles: {len(self.temporal_subsystem.cycle_memory):,}")
+        print(f"🛡️  Immune Antibodies: {len(self.immune_subsystem.antibodies):,}")
+        print(f"🔬 T-Cell Memories: {len(self.immune_subsystem.t_cell_memory):,}")
+        print(f"🎯 Total Decisions: {self.decision_count:,}")
+        print("="*60)
     
     def _evolve_tools(self):
         """Evolve tools based on performance"""

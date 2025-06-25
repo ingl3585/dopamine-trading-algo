@@ -740,9 +740,9 @@ class TradingAgent:
                 logger.info(f"Successful adaptations: {old_successful_adaptations} -> {new_successful_adaptations}")
                 
                 if new_total_updates > old_total_updates:
-                    logger.info("✅ Meta-learner successfully updated!")
+                    logger.info("Meta-learner successfully updated!")
                 else:
-                    logger.warning("❌ Meta-learner update failed - no increment in total_updates")
+                    logger.warning("Meta-learner update failed - no increment in total_updates")
                     
             except Exception as e:
                 logger.error(f"Meta-learner update failed: {e}")
@@ -755,14 +755,14 @@ class TradingAgent:
                 adaptation_context = trade.intelligence_data.get('regime_context', {}) if hasattr(trade, 'intelligence_data') and trade.intelligence_data else {}
                 adaptation_context['predicted_confidence'] = trade_data['confidence']
                 self.adaptation_engine.update_from_outcome(reward, adaptation_context)
-                logger.info("✅ Adaptation engine updated!")
+                logger.info("Adaptation engine updated!")
             except Exception as e:
                 logger.error(f"Adaptation engine update failed: {e}")
             
             # Network performance tracking
             try:
                 self.network.record_performance(reward)
-                logger.info(f"✅ Network performance recorded: {reward}")
+                logger.info(f"Network performance recorded: {reward}")
             except Exception as e:
                 logger.error(f"Network performance recording failed: {e}")
             
@@ -799,7 +799,7 @@ class TradingAgent:
                 if len(self.experience_buffer) >= 64 or len(self.priority_buffer) >= 32:
                     logger.info("Starting network training...")
                     self._train_enhanced_networks()
-                    logger.info("✅ Network training completed!")
+                    logger.info("Network training completed!")
             except Exception as e:
                 logger.error(f"Network training failed: {e}")
             
@@ -818,7 +818,7 @@ class TradingAgent:
                 if self.total_decisions % 50 == 0:
                     logger.info("Running periodic parameter adaptation...")
                     self.meta_learner.adapt_parameters()
-                    logger.info("✅ Parameter adaptation completed!")
+                    logger.info("Parameter adaptation completed!")
             except Exception as e:
                 logger.error(f"Parameter adaptation failed: {e}")
             

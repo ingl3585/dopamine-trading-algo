@@ -76,15 +76,24 @@ class IntelligenceEngine:
         start_time = datetime.now()
         
         try:
+            # Debug the historical data structure
+            logger.info(f"Historical data type: {type(historical_data)}")
+            logger.info(f"Historical data keys: {list(historical_data.keys()) if isinstance(historical_data, dict) else 'Not a dict'}")
+            
             total_bars = 0
             
             for timeframe in ['15m', '5m', '1m']:
                 bars_key = f'bars_{timeframe}'
                 if bars_key in historical_data:
                     bars = historical_data[bars_key]
+                    logger.info(f"Found {bars_key}, type: {type(bars)}, length: {len(bars) if hasattr(bars, '__len__') else 'No length'}")
+                    if bars and hasattr(bars, '__len__') and len(bars) > 0:
+                        logger.info(f"First item in {bars_key}: type={type(bars[0])}, content={str(bars[0])[:200]}...")
                     processed = self._process_historical_bars(bars, timeframe)
                     total_bars += processed
                     logger.info(f"Processed {processed} {timeframe} bars")
+                else:
+                    logger.info(f"No {bars_key} found in historical data")
             
             # Initialize subsystems
             self._initialize_adaptation_engine()
@@ -111,38 +120,130 @@ class IntelligenceEngine:
         if not bars or len(bars) < 20:
             return 0
         
-        prices = [bar['close'] for bar in bars]
-        volumes = [bar['volume'] for bar in bars]
-        timestamps = [bar['timestamp'] / 10000000 - 62135596800 for bar in bars]
+        # Debug the structure of bars data
+        logger.debug(f"Processing {len(bars)} bars for {timeframe}")
+        if bars:
+            logger.debug(f"First bar type: {type(bars[0])}, content: {bars[0]}")
+        
+        try:
+            # Handle different possible data structures
+            if isinstance(bars[0], dict):
+                # Standard dictionary format
+                logger.debug("Processing as dictionary format")
+                try:
+                    prices = [bar['close'] for bar in bars]
+                    logger.debug(f"Extracted {len(prices)} prices")
+                except Exception as e:
+                    logger.error(f"Error extracting prices: {e}")
+                    raise
+                
+                try:
+                    volumes = [bar['volume'] for bar in bars]
+                    logger.debug(f"Extracted {len(volumes)} volumes")
+                except Exception as e:
+                    logger.error(f"Error extracting volumes: {e}")
+                    raise
+                
+                try:
+                    timestamps = [bar['timestamp'] / 10000000 - 62135596800 for bar in bars]
+                    logger.debug(f"Extracted {len(timestamps)} timestamps")
+                except Exception as e:
+                    logger.error(f"Error extracting timestamps: {e}")
+                    raise
+                    
+            elif isinstance(bars[0], (list, tuple)):
+                # Array format [timestamp, open, high, low, close, volume]
+                logger.debug("Processing as array format")
+                prices = [bar[4] for bar in bars]  # close price
+                volumes = [bar[5] if len(bar) > 5 else 1000 for bar in bars]  # volume
+                timestamps = [bar[0] / 10000000 - 62135596800 for bar in bars]  # timestamp
+            elif isinstance(bars[0], str):
+                # String format - try to parse as JSON
+                logger.debug("Processing as string format")
+                import json
+                parsed_bars = []
+                for bar_str in bars:
+                    try:
+                        bar_dict = json.loads(bar_str)
+                        parsed_bars.append(bar_dict)
+                    except json.JSONDecodeError:
+                        logger.warning(f"Could not parse bar string: {bar_str}")
+                        continue
+                
+                if parsed_bars:
+                    prices = [bar['close'] for bar in parsed_bars]
+                    volumes = [bar['volume'] for bar in parsed_bars]
+                    timestamps = [bar['timestamp'] / 10000000 - 62135596800 for bar in parsed_bars]
+                else:
+                    logger.warning(f"No valid bars parsed from strings for {timeframe}")
+                    return 0
+            else:
+                logger.warning(f"Unknown bar data structure: {type(bars[0])}")
+                return 0
+                
+        except (KeyError, IndexError, TypeError) as e:
+            logger.error(f"Error processing bars structure: {e}")
+            logger.error(f"Bar sample: {bars[0] if bars else 'No bars'}")
+            return 0
         
         processed_count = 0
         window_size = min(50, len(bars) // 4)
         
-        for i in range(window_size, len(bars)):
-            window_prices = prices[i-window_size:i+1]
-            window_volumes = volumes[i-window_size:i+1]
-            window_timestamps = timestamps[i-window_size:i+1]
-            
-            # Extract market features
-            market_features = self._extract_market_features(
-                window_prices, window_volumes, window_timestamps
-            )
-            
-            # Process through orchestrator
-            orchestrator_result = self.orchestrator.process_market_data(
-                window_prices, window_volumes, market_features, window_timestamps
-            )
-            
-            # Microstructure analysis
-            microstructure_result = self.microstructure_engine.analyze_market_state(
-                window_prices, window_volumes
-            )
-            
-            # Store patterns for learning
-            self._store_historical_patterns(orchestrator_result, microstructure_result, market_features)
-            
-            processed_count += 1
+        logger.debug(f"Starting processing loop with window_size={window_size}, total_bars={len(bars)}")
         
+        for i in range(window_size, len(bars)):
+            try:
+                window_prices = prices[i-window_size:i+1]
+                window_volumes = volumes[i-window_size:i+1]
+                window_timestamps = timestamps[i-window_size:i+1]
+                
+                logger.debug(f"Processing window {i}: prices={len(window_prices)}, volumes={len(window_volumes)}, timestamps={len(window_timestamps)}")
+                
+                # Extract market features
+                try:
+                    market_features = self._extract_market_features(
+                        window_prices, window_volumes, window_timestamps
+                    )
+                    logger.debug(f"Extracted market features: {list(market_features.keys())}")
+                except Exception as e:
+                    logger.error(f"Error extracting market features at window {i}: {e}")
+                    continue
+                
+                # Process through orchestrator
+                try:
+                    orchestrator_result = self.orchestrator.process_market_data(
+                        window_prices, window_volumes, market_features, window_timestamps
+                    )
+                    logger.debug(f"Orchestrator processing complete for window {i}")
+                except Exception as e:
+                    logger.error(f"Error in orchestrator processing at window {i}: {e}")
+                    continue
+                
+                # Microstructure analysis
+                try:
+                    microstructure_result = self.microstructure_engine.analyze_market_state(
+                        window_prices, window_volumes
+                    )
+                    logger.debug(f"Microstructure analysis complete for window {i}")
+                except Exception as e:
+                    logger.error(f"Error in microstructure analysis at window {i}: {e}")
+                    continue
+                
+                # Store patterns for learning
+                try:
+                    self._store_historical_patterns(orchestrator_result, microstructure_result, market_features)
+                    logger.debug(f"Pattern storage complete for window {i}")
+                except Exception as e:
+                    logger.error(f"Error storing patterns at window {i}: {e}")
+                    continue
+                
+                processed_count += 1
+                
+            except Exception as e:
+                logger.error(f"Unexpected error processing window {i}: {e}")
+                continue
+        
+        logger.debug(f"Processing complete: {processed_count} windows processed")
         return processed_count
     
     def _extract_market_features(self, prices: List[float], volumes: List[float],
@@ -180,34 +281,75 @@ class IntelligenceEngine:
             'price_position': price_position
         }
     
-    def _store_historical_patterns(self, orchestrator_result: Dict, microstructure_result: Dict, 
+    def _store_historical_patterns(self, orchestrator_result: Dict, microstructure_result: Dict,
                                  market_features: Dict):
         """Store patterns from historical analysis"""
-        # Store orchestrator patterns
-        current_patterns = orchestrator_result.get('current_patterns', {})
-        
-        # Create synthetic outcomes for pattern initialization
-        signal_strength = abs(orchestrator_result.get('overall_signal', 0))
-        microstructure_strength = abs(microstructure_result.get('microstructure_signal', 0))
-        
-        # Combine signals for synthetic outcome
-        synthetic_outcome = (signal_strength + microstructure_strength) / 2
-        if orchestrator_result.get('consensus_strength', 0) > 0.7:
-            synthetic_outcome *= 1.2  # Boost for high consensus
-        
-        # Add some noise to make it more realistic
-        synthetic_outcome += np.random.normal(0, 0.1)
-        synthetic_outcome = np.clip(synthetic_outcome, -1.0, 1.0)
-        
-        # Learn from synthetic outcome
-        self.orchestrator.learn_from_outcome(synthetic_outcome, {
-            'dna_sequence': current_patterns.get('dna_sequence', ''),
-            'cycles_info': [],  # Would need to extract from temporal subsystem
-            'market_state': market_features
-        })
-        
-        # Store for microstructure learning
-        self.microstructure_engine.learn_from_outcome(synthetic_outcome)
+        try:
+            # Debug the result types
+            logger.debug(f"Orchestrator result type: {type(orchestrator_result)}")
+            logger.debug(f"Microstructure result type: {type(microstructure_result)}")
+            
+            # Validate orchestrator_result
+            if not isinstance(orchestrator_result, dict):
+                logger.error(f"Orchestrator result is not a dict: {type(orchestrator_result)}, content: {str(orchestrator_result)[:200]}")
+                orchestrator_result = {}
+            
+            # Validate microstructure_result
+            if not isinstance(microstructure_result, dict):
+                logger.error(f"Microstructure result is not a dict: {type(microstructure_result)}, content: {str(microstructure_result)[:200]}")
+                microstructure_result = {}
+            
+            # Store orchestrator patterns
+            current_patterns = orchestrator_result.get('current_patterns', {})
+            
+            # Create synthetic outcomes for pattern initialization
+            signal_strength = abs(float(orchestrator_result.get('overall_signal', 0)))
+            microstructure_strength = abs(float(microstructure_result.get('microstructure_signal', 0)))
+            
+            # Combine signals for synthetic outcome
+            synthetic_outcome = (signal_strength + microstructure_strength) / 2
+            consensus_strength = float(orchestrator_result.get('consensus_strength', 0))
+            if consensus_strength > 0.7:
+                synthetic_outcome *= 1.2  # Boost for high consensus
+            
+            # Add some noise to make it more realistic
+            synthetic_outcome += np.random.normal(0, 0.1)
+            synthetic_outcome = float(np.clip(synthetic_outcome, -1.0, 1.0))
+            
+            # Convert numpy types to regular Python types for learning data
+            learning_data = {
+                'dna_sequence': str(current_patterns.get('dna_sequence', '')),
+                'cycles_info': [],  # Would need to extract from temporal subsystem
+                'market_state': {k: float(v) if isinstance(v, (int, float, np.number)) else v
+                               for k, v in market_features.items()},
+                'microstructure_signal': float(microstructure_result.get('microstructure_signal', 0.0))
+            }
+            
+            logger.debug(f"Learning data prepared: {learning_data}")
+            
+            # Learn from synthetic outcome
+            try:
+                self.orchestrator.learn_from_outcome(synthetic_outcome, learning_data)
+                logger.debug("Orchestrator learning completed successfully")
+            except Exception as e:
+                logger.error(f"Error in orchestrator learning: {e}")
+                logger.error(f"Synthetic outcome: {synthetic_outcome}")
+                logger.error(f"Learning data: {learning_data}")
+                # Continue without failing the entire process
+            
+            # Store for microstructure learning
+            try:
+                self.microstructure_engine.learn_from_outcome(synthetic_outcome)
+                logger.debug("Microstructure learning completed successfully")
+            except Exception as e:
+                logger.error(f"Error in microstructure learning: {e}")
+                # Continue without failing the entire process
+            
+        except Exception as e:
+            logger.error(f"Error in _store_historical_patterns: {e}")
+            logger.error(f"Orchestrator result: {orchestrator_result}")
+            logger.error(f"Microstructure result: {microstructure_result}")
+            raise
     
     def _generate_enhanced_synthetic_outcomes(self):
         """Generate enhanced synthetic outcomes with microstructure awareness"""
