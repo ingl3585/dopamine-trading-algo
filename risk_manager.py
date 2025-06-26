@@ -8,6 +8,7 @@ import math
 from trading_agent import Decision
 from data_processor import MarketData
 from advanced_risk import AdvancedRiskManager
+from risk_learning_engine import RiskLearningEngine
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,7 @@ class RiskManager:
         self.portfolio = portfolio
         self.meta_learner = meta_learner
         self.advanced_risk = AdvancedRiskManager(meta_learner)
+        self.risk_learning = RiskLearningEngine()
         
     def validate_order(self, decision: Decision, market_data: MarketData) -> Optional[Order]:
         if decision.action == 'hold':
@@ -84,82 +86,220 @@ class RiskManager:
         )
     
     def _calculate_adaptive_position_size(self, decision: Decision, market_data: MarketData) -> int:
-        available_margin = market_data.available_margin
-        account_balance = market_data.account_balance
-        buying_power = market_data.buying_power
-
+        """Enhanced position sizing with intelligent learning-based awareness"""
+        
+        # Get current position exposure
+        current_position_size = self.portfolio.get_total_position_size()
+        
+        # Learned position sizing parameters
+        max_contracts = int(self.meta_learner.get_parameter('max_contracts_limit'))  # Learned, starts at 10
+        
+        # Market conditions for risk learning
+        market_conditions = {
+            'volatility': getattr(decision, 'intelligence_data', {}).get('volatility', 0.02),
+            'regime': getattr(decision, 'intelligence_data', {}).get('regime', 'normal'),
+            'trend_strength': abs(getattr(decision, 'intelligence_data', {}).get('price_momentum', 0))
+        }
+        
+        # Decision factors for risk learning
+        decision_factors = {
+            'confidence': decision.confidence,
+            'consensus_strength': getattr(decision, 'intelligence_data', {}).get('consensus_strength', 0.5),
+            'primary_tool': getattr(decision, 'primary_tool', 'unknown')
+        }
+        
+        # Get learned optimal size from risk learning engine
+        learned_optimal_size = self.risk_learning.get_optimal_position_size(
+            market_conditions, decision_factors, market_data.account_balance
+        )
+        
+        # Traditional sizing approaches for comparison
         position_factor = self.meta_learner.get_parameter('position_size_factor')
-        max_position_factor = self.meta_learner.get_parameter('max_position_factor')
-
-        est_margin = 100
+        account_balance = market_data.account_balance
+        
         sizes = []
-
-        if available_margin > 0:
-            sizes.append(math.ceil(available_margin / est_margin))
-
-        sizes.append(math.ceil(account_balance * position_factor / est_margin))
-
-        if buying_power > 0:
-            sizes.append(math.ceil(buying_power * position_factor / est_margin))
-
-        sizes.append(math.floor(account_balance * max_position_factor / est_margin))
-        sizes.append(max(1, round(decision.size)))
-
-        sizes = [s for s in sizes if s > 0]
-        final_size = min(sizes) if sizes else 0
-
-        max_safe = max(1, math.floor(available_margin / est_margin))
-        final_size = min(final_size, max_safe)
-
-        if final_size != int(decision.size):
-            logger.info(f"Position size adjusted: {decision.size} -> {final_size} "
-                        f"(Account: ${account_balance:.0f}, Available: ${available_margin:.0f})")
-
+        
+        # 1. Learned optimal size (primary)
+        sizes.append(learned_optimal_size)
+        
+        # 2. Account-based sizing
+        if account_balance > 0:
+            account_size = max(1, int(account_balance * position_factor / 2000))
+            sizes.append(account_size)
+        
+        # 3. Confidence-based sizing
+        confidence_multiplier = decision.confidence ** 2
+        confidence_size = max(1, int(3 * confidence_multiplier))
+        sizes.append(confidence_size)
+        
+        # 4. Agent's suggested size
+        agent_size = max(1, int(decision.size))
+        sizes.append(agent_size)
+        
+        # Use learned size as primary, but cap with traditional methods
+        base_size = min(learned_optimal_size, min(sizes[1:]))  # Learned size capped by traditional
+        
+        # Apply position concentration limits
+        remaining_capacity = max_contracts - abs(current_position_size)
+        
+        if remaining_capacity <= 0:
+            logger.info(f"Maximum position limit reached: {current_position_size}/{max_contracts} contracts")
+            return 0
+        
+        # Intelligent exposure-based scaling
+        exposure_ratio = abs(current_position_size) / max_contracts
+        exposure_threshold = self.meta_learner.get_parameter('exposure_scaling_threshold')
+        
+        if exposure_ratio > exposure_threshold:
+            # Scale down based on exposure
+            scaling_factor = 1.0 - ((exposure_ratio - exposure_threshold) / (1.0 - exposure_threshold)) * 0.7
+            final_size = max(1, int(base_size * scaling_factor))
+            final_size = min(final_size, remaining_capacity)
+            logger.info(f"Exposure scaling applied: {exposure_ratio:.1%} > {exposure_threshold:.1%}, "
+                       f"scaling factor: {scaling_factor:.2f}")
+        else:
+            final_size = min(base_size, remaining_capacity)
+        
+        # Absolute maximum enforcement
+        final_size = min(final_size, max_contracts)
+        
+        # Record this sizing decision for learning
+        self.risk_learning.record_risk_event(
+            'position_sizing',
+            final_size,
+            account_balance,
+            0.0,  # Outcome unknown at this point
+            market_conditions,
+            decision_factors
+        )
+        
+        # Log sizing decision
+        if final_size != agent_size:
+            logger.info(f"Intelligent position sizing: Agent={agent_size}, Learned={learned_optimal_size}, "
+                       f"Final={final_size} (Exposure: {current_position_size}/{max_contracts}, "
+                       f"Confidence: {decision.confidence:.2f})")
+        
         return final_size
     
     def _calculate_adaptive_levels(self, decision: Decision, market_data: MarketData) -> tuple:
-        # Learned preferences for stops and targets
-        stop_preference = self.meta_learner.get_parameter('stop_preference')
-        target_preference = self.meta_learner.get_parameter('target_preference')
+        """Intelligent stop/target calculation using risk learning"""
         
-        stop_distance_factor = self.meta_learner.get_parameter('stop_distance_factor')
-        target_distance_factor = self.meta_learner.get_parameter('target_distance_factor')
+        # Market conditions for learning
+        market_conditions = {
+            'volatility': getattr(decision, 'intelligence_data', {}).get('volatility', 0.02),
+            'regime': getattr(decision, 'intelligence_data', {}).get('regime', 'normal'),
+            'trend_strength': abs(getattr(decision, 'intelligence_data', {}).get('price_momentum', 0))
+        }
+        
+        # Decision factors for learning
+        decision_factors = {
+            'confidence': decision.confidence,
+            'consensus_strength': getattr(decision, 'intelligence_data', {}).get('consensus_strength', 0.5),
+            'primary_tool': getattr(decision, 'primary_tool', 'unknown')
+        }
+        
+        # Learned decisions on whether to use stops/targets
+        should_use_stop = self.risk_learning.should_use_stop(market_conditions, decision_factors)
+        should_use_target = self.risk_learning.should_use_target(market_conditions, decision_factors)
         
         stop_price = 0.0
         target_price = 0.0
         
-        # Apply learned stop preference
-        if decision.stop_price > 0 and stop_preference > 0.3:
+        # Apply intelligent stop logic
+        if should_use_stop and decision.stop_price > 0:
+            # Use agent's suggested stop with validation
             if decision.action == 'buy' and decision.stop_price < market_data.price:
                 stop_price = decision.stop_price
             elif decision.action == 'sell' and decision.stop_price > market_data.price:
                 stop_price = decision.stop_price
+        elif should_use_stop:
+            # Calculate intelligent stop based on learned parameters
+            stop_distance_factor = self.meta_learner.get_parameter('stop_distance_factor')
+            
+            # Volatility adjustment
+            vol_adjustment = 1.0 + (market_conditions['volatility'] * 10)
+            adjusted_distance = stop_distance_factor * vol_adjustment
+            
+            if decision.action == 'buy':
+                stop_price = market_data.price * (1 - adjusted_distance)
+            else:
+                stop_price = market_data.price * (1 + adjusted_distance)
         
-        # Apply learned target preference  
-        if decision.target_price > 0 and target_preference > 0.3:
+        # Apply intelligent target logic
+        if should_use_target and decision.target_price > 0:
+            # Use agent's suggested target with validation
             if decision.action == 'buy' and decision.target_price > market_data.price:
                 target_price = decision.target_price
             elif decision.action == 'sell' and decision.target_price < market_data.price:
                 target_price = decision.target_price
-        
-        # If no specific levels provided, use learned distance factors
-        if stop_price == 0 and stop_preference > 0.5:
+        elif should_use_target:
+            # Calculate intelligent target based on learned parameters
+            target_distance_factor = self.meta_learner.get_parameter('target_distance_factor')
+            
+            # Trend strength adjustment
+            trend_adjustment = 1.0 + market_conditions['trend_strength'] * 2
+            adjusted_distance = target_distance_factor * trend_adjustment
+            
             if decision.action == 'buy':
-                stop_price = market_data.price * (1 - stop_distance_factor)
+                target_price = market_data.price * (1 + adjusted_distance)
             else:
-                stop_price = market_data.price * (1 + stop_distance_factor)
+                target_price = market_data.price * (1 - adjusted_distance)
         
-        if target_price == 0 and target_preference > 0.5:
-            if decision.action == 'buy':
-                target_price = market_data.price * (1 + target_distance_factor)
-            else:
-                target_price = market_data.price * (1 - target_distance_factor)
+        # Log the decision for learning
+        logger.info(f"Risk learning decisions: Stop={should_use_stop} (${stop_price:.2f}), "
+                   f"Target={should_use_target} (${target_price:.2f})")
         
         return stop_price, target_price
     
     def process_trade_outcome(self, trade_outcome: Dict):
-        """Process trade outcome for advanced risk learning"""
+        """Process trade outcome for comprehensive risk learning"""
+        
+        # Update advanced risk metrics
         self.advanced_risk.update_risk_metrics(None, trade_outcome)
+        
+        # Extract trade information for risk learning
+        pnl = trade_outcome.get('pnl', 0.0)
+        exit_reason = trade_outcome.get('exit_reason', 'unknown')
+        position_size = trade_outcome.get('size', 1)
+        account_balance = trade_outcome.get('account_balance', 25000)
+        
+        # Determine event type for learning
+        if exit_reason in ['stop_hit', 'stop_loss']:
+            event_type = 'stop_hit'
+        elif exit_reason in ['target_hit', 'profit_target']:
+            event_type = 'target_hit'
+        else:
+            event_type = 'manual_exit'
+        
+        # Market conditions (reconstruct from available data)
+        market_conditions = {
+            'volatility': trade_outcome.get('volatility', 0.02),
+            'regime': trade_outcome.get('regime', 'normal'),
+            'trend_strength': trade_outcome.get('trend_strength', 0.5)
+        }
+        
+        # Decision factors (reconstruct from available data)
+        decision_factors = {
+            'confidence': trade_outcome.get('confidence', 0.5),
+            'consensus_strength': trade_outcome.get('consensus_strength', 0.5),
+            'primary_tool': trade_outcome.get('primary_tool', 'unknown')
+        }
+        
+        # Record the outcome for risk learning
+        self.risk_learning.record_risk_event(
+            event_type,
+            position_size,
+            account_balance,
+            pnl,
+            market_conditions,
+            decision_factors
+        )
+        
+        # Adapt risk learning to account size changes
+        self.risk_learning.adapt_to_account_size(account_balance)
+        
+        logger.info(f"Risk learning updated: {event_type}, Size={position_size}, "
+                   f"P&L=${pnl:.2f}, Account=${account_balance:.0f}")
     
     def get_risk_summary(self) -> Dict:
         """Get comprehensive risk summary including advanced metrics"""

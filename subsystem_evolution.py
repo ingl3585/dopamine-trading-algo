@@ -5,20 +5,77 @@ import torch
 from scipy import fft
 from collections import defaultdict, deque
 from datetime import datetime
-from typing import Dict, List, Tuple, Set, Optional
+from typing import Dict, List, Tuple, Optional
 import logging
 import random
+import sys
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)  # Show progress updates via log messages
 
-
-class AdvancedDNASubsystem:
+# Simple progress tracking - no external dependencies
+class SimpleProgressTracker:
     def __init__(self):
-        # 16-base DNA encoding with enhanced market signatures
+        self.tasks = {}
+        self.last_update = {}
+        
+    def add_task(self, description, **kwargs):
+        task_id = f"task_{len(self.tasks)}"
+        self.tasks[task_id] = {
+            'description': description.replace('[cyan]', '').replace('[/cyan]', '')
+                                    .replace('[green]', '').replace('[/green]', '')
+                                    .replace('[red]', '').replace('[/red]', '')
+                                    .replace('[magenta]', '').replace('[/magenta]', ''),
+            'count': 0,
+            'kwargs': kwargs
+        }
+        return task_id
+    
+    def advance(self, task_id, amount=1):
+        if task_id in self.tasks:
+            self.tasks[task_id]['count'] += amount
+            # Only log every 25 items to avoid spam
+            if self.tasks[task_id]['count'] % 25 == 0:
+                desc = self.tasks[task_id]['description']
+                count = self.tasks[task_id]['count']
+                logger.info(f"{desc}: {count} patterns learned")
+    
+    def update(self, task_id, **kwargs):
+        if task_id in self.tasks:
+            self.tasks[task_id]['kwargs'].update(kwargs)
+    
+    def stop(self):
+        # Log final summary
+        for task_id, task in self.tasks.items():
+            desc = task['description']
+            count = task['count']
+            if count > 0:
+                logger.info(f"{desc} completed: {count} total patterns")
+
+_simple_tracker = None
+
+def _get_progress():
+    """Get simple progress tracker"""
+    global _simple_tracker
+    if _simple_tracker is None:
+        _simple_tracker = SimpleProgressTracker()
+    return _simple_tracker
+
+def _reset_progress():
+    """Reset the simple progress tracker"""
+    global _simple_tracker
+    if _simple_tracker:
+        _simple_tracker.stop()
+    _simple_tracker = None
+
+
+class DNASubsystem:
+    def __init__(self):
+        # 16-base DNA encoding for market patterns
         self.bases = {
             'A': 'price_up_vol_high',      'B': 'price_up_vol_med',
             'C': 'price_up_vol_low',       'D': 'price_up_vol_very_low',
-            'E': 'price_down_vol_high',    'F': 'price_down_vol_med', 
+            'E': 'price_down_vol_high',    'F': 'price_down_vol_med',
             'G': 'price_down_vol_low',     'H': 'price_down_vol_very_low',
             'I': 'price_flat_vol_high',    'J': 'price_flat_vol_med',
             'K': 'price_flat_vol_low',     'L': 'momentum_strong_up',
@@ -26,69 +83,74 @@ class AdvancedDNASubsystem:
             'O': 'volatility_crush',       'P': 'pattern_continuation'
         }
         
-        # Enhanced pattern storage with breeding and aging
-        self.sequences = {}  # sequence -> {'performance': float, 'age': int, 'generation': int, 'parents': tuple}
-        self.breeding_pool = []
-        self.elite_sequences = {}  # Top performing sequences
-        self.mutation_rate = 0.05
-        self.breeding_frequency = 100
-        self.max_age = 1000
-        self.generation_count = 0
-        
-        # DNA aging and evolution tracking
+        # Pattern storage with performance tracking
+        self.sequences = {}  # sequence -> {'performance': float, 'age': int, 'count': int}
+        self.max_sequences = 8000
         self.age_decay_factor = 0.999
-        self.performance_threshold = 0.6
-        self.breeding_success_rate = deque(maxlen=50)
         
-    def encode_market_state(self, prices: List[float], volumes: List[float], 
+        # Evolution and breeding parameters
+        self.performance_threshold = 0.3
+        self.elite_sequences = {}
+        self.max_age = 1000
+        self.breeding_frequency = 50
+        self.generation_count = 0
+        self.breeding_pool = deque(maxlen=100)
+        self.breeding_success_rate = deque(maxlen=50)
+        self.mutation_rate = 0.1
+        
+        # Progress tracking
+        self.learning_progress = None
+        self.total_learning_events = 0
+        self.learning_batch_size = 50  # Update progress every N learning events
+        
+    def encode_market_state(self, prices: List[float], volumes: List[float],
                            volatility: Optional[float] = None, momentum: Optional[float] = None) -> str:
         if len(prices) < 2 or len(volumes) < 2:
+            logger.debug(f"Insufficient data for DNA encoding: prices={len(prices)}, volumes={len(volumes)}")
             return ""
         
         sequence = ""
         
-        # Calculate additional market context
-        if volatility is None:
-            volatility = np.std(prices[-10:]) / np.mean(prices[-10:]) if len(prices) >= 10 else 0
-        if momentum is None:
-            momentum = (prices[-1] - prices[-5]) / prices[-5] if len(prices) >= 5 and prices[-5] != 0 else 0
-        
-        for i in range(1, len(prices)):
-            price_change = (prices[i] - prices[i-1]) / prices[i-1] if prices[i-1] != 0 else 0
-            vol_ratio = volumes[i] / volumes[i-1] if volumes[i-1] > 0 else 1.0
+        try:
+            # Calculate market context if not provided
+            if volatility is None:
+                volatility = np.std(prices[-10:]) / np.mean(prices[-10:]) if len(prices) >= 10 else 0
+            if momentum is None:
+                momentum = (prices[-1] - prices[-5]) / prices[-5] if len(prices) >= 5 and prices[-5] != 0 else 0
             
-            # Enhanced 16-base encoding with market context
-            base = self._determine_base(price_change, vol_ratio, volatility, momentum, i, prices, volumes)
-            sequence += base
-        
-        return sequence
-    
-    def _determine_base(self, price_change: float, vol_ratio: float, volatility: float, 
-                       momentum: float, index: int, prices: List[float], volumes: List[float]) -> str:
-        """Determine DNA base using enhanced 16-base encoding"""
-        
-        # Strong momentum patterns override basic price/volume
-        if abs(momentum) > 0.02:
-            if momentum > 0:
-                return 'L'  # Strong upward momentum
+            for i in range(1, len(prices)):
+                price_change = (prices[i] - prices[i-1]) / prices[i-1] if prices[i-1] != 0 else 0
+                vol_ratio = volumes[i] / volumes[i-1] if volumes[i-1] > 0 else 1.0
+                
+                base = self._determine_base(price_change, vol_ratio, volatility, momentum)
+                sequence += base
+            
+            if not sequence:
+                logger.warning("DNA encoding produced empty sequence despite sufficient data")
             else:
-                return 'M'  # Strong downward momentum
+                logger.debug(f"DNA sequence encoded: {sequence[:10]}... (length: {len(sequence)})")
+                
+            return sequence
+            
+        except Exception as e:
+            logger.error(f"Error in DNA encoding: {e}")
+            return ""
+    
+    def _determine_base(self, price_change: float, vol_ratio: float, volatility: float, momentum: float) -> str:
+        """Determine DNA base using 16-base encoding"""
         
-        # Volatility regime patterns
-        if volatility > 0.03:  # High volatility
+        # Strong momentum patterns (only for very strong momentum)
+        if abs(momentum) > 0.03:
+            return 'L' if momentum > 0 else 'M'
+        
+        # Extreme volatility regime patterns (only for exceptional cases)
+        if volatility > 0.05:  # Very high volatility
             return 'N'  # Volatility spike
-        elif volatility < 0.005:  # Very low volatility
+        elif volatility < 0.002 and abs(price_change) < 0.0001 and vol_ratio < 1.1:
+            # Only use volatility crush when price is truly flat AND volume is low
             return 'O'  # Volatility crush
         
-        # Pattern continuation detection
-        if index >= 3:
-            recent_changes = [(prices[j] - prices[j-1]) / prices[j-1] 
-                            for j in range(index-2, index+1) if prices[j-1] != 0]
-            if len(recent_changes) >= 3:
-                if all(change > 0 for change in recent_changes) or all(change < 0 for change in recent_changes):
-                    return 'P'  # Pattern continuation
-        
-        # Standard price/volume encoding
+        # Standard price/volume encoding (primary encoding method)
         if abs(price_change) < 0.0001:  # Flat price
             if vol_ratio > 2.0:
                 return 'I'
@@ -117,32 +179,65 @@ class AdvancedDNASubsystem:
     
     def analyze_sequence(self, sequence: str) -> float:
         if not sequence or len(sequence) < 5:
+            logger.debug(f"DNA sequence too short or empty: '{sequence}' (length: {len(sequence) if sequence else 0})")
             return 0.0
         
-        # Age all sequences
-        self._age_sequences()
-        
-        # Find best matching patterns with breeding consideration
-        best_score = 0.0
-        best_matches = []
-        
-        for stored_seq, data in self.sequences.items():
-            similarity = self._advanced_sequence_similarity(sequence, stored_seq)
-            if similarity > 0.7:
-                # Age-adjusted performance
-                age_factor = self.age_decay_factor ** data['age']
-                adjusted_performance = data['performance'] * age_factor
-                score = adjusted_performance * similarity
-                
-                if abs(score) > abs(best_score):
-                    best_score = score
-                    best_matches.append((stored_seq, score, similarity))
-        
-        # Consider breeding if we have good matches
-        if len(best_matches) >= 2 and len(self.sequences) % self.breeding_frequency == 0:
-            self._attempt_breeding(best_matches)
-        
-        return best_score
+        try:
+            # Age all sequences
+            self._age_sequences()
+            
+            # Find best matching patterns with breeding consideration
+            best_score = 0.0
+            best_matches = []
+            matches_found = 0
+            
+            logger.debug(f"Analyzing DNA sequence: '{sequence[:20]}...' against {len(self.sequences)} stored sequences")
+            
+            for stored_seq, data in self.sequences.items():
+                try:
+                    similarity = self._advanced_sequence_similarity(sequence, stored_seq)
+                    if similarity > 0.7:
+                        matches_found += 1
+                        # Age-adjusted performance
+                        age_factor = self.age_decay_factor ** data['age']
+                        adjusted_performance = data['performance'] * age_factor
+                        score = adjusted_performance * similarity
+                        
+                        # Validate score
+                        if np.isnan(score) or np.isinf(score):
+                            continue
+                            
+                        if abs(score) > abs(best_score):
+                            best_score = score
+                            best_matches.append((stored_seq, score, similarity))
+                            logger.debug(f"New best DNA match: score={score:.4f}, similarity={similarity:.4f}")
+                except Exception as e:
+                    logger.warning(f"Error analyzing sequence similarity: {e}")
+                    continue
+            
+            # If no good matches found, provide a small baseline signal
+            if matches_found == 0 and len(self.sequences) > 0:
+                logger.debug("No DNA matches found, using baseline signal")
+                best_score = 0.05  # Small baseline signal
+            
+            # Consider breeding if we have good matches
+            if len(best_matches) >= 2 and len(self.sequences) % self.breeding_frequency == 0:
+                try:
+                    self._attempt_breeding(best_matches)
+                except Exception as e:
+                    logger.warning(f"Error in breeding attempt: {e}")
+            
+            # Ensure valid return value
+            if np.isnan(best_score) or np.isinf(best_score):
+                logger.warning("DNA analysis returned invalid score, using 0.0")
+                return 0.0
+            
+            logger.debug(f"DNA analysis result: {best_score:.4f} (matches: {matches_found})")
+            return best_score
+            
+        except Exception as e:
+            logger.error(f"Error in DNA sequence analysis: {e}")
+            return 0.0
     
     def _advanced_sequence_similarity(self, seq1: str, seq2: str) -> float:
         if not seq1 or not seq2:
@@ -402,29 +497,83 @@ class AdvancedDNASubsystem:
         return sequence
     
     def learn_from_outcome(self, sequence: str, outcome: float):
+        # Debug and validate inputs
+        if not isinstance(sequence, str):
+            logger.error(f"DNA sequence is not a string: type={type(sequence)}, content={str(sequence)[:200]}")
+            return
         if not sequence:
             return
         
+        self.total_learning_events += 1
+        
+        # Initialize progress task if needed (only during bootstrap)
+        if self.learning_progress is None and not getattr(self, 'bootstrap_complete', False) and not hasattr(self, '_live_trading_started'):
+            try:
+                prog = _get_progress()
+                if prog is not None:
+                    self.learning_progress = prog.add_task(
+                        "DNA Learning", 
+                        total=None,
+                        elite=0, 
+                        avg_perf=0.0
+                    )
+            except Exception as e:
+                logger.error(f"Error initializing DNA progress task: {e}")
+                self.learning_progress = None
+        
         # Update or add sequence
+        sequence_added = False
         if sequence in self.sequences:
             data = self.sequences[sequence]
             learning_rate = 0.1 / (1 + data['age'] * 0.01)  # Slower learning for older sequences
+            old_performance = data['performance']
             data['performance'] += learning_rate * (outcome - data['performance'])
             data['age'] = max(0, data['age'] - 5)  # Rejuvenate successful sequences
         else:
-            self.sequences[sequence] = {
-                'performance': outcome * 0.5,
-                'age': 0,
-                'generation': 0,
-                'parents': None
-            }
+            # Check if we're at the sequence limit before adding new ones
+            if len(self.sequences) >= self.max_sequences:
+                self._cleanup_sequences()
+            
+            # Only add if we still have room after cleanup
+            if len(self.sequences) < self.max_sequences:
+                self.sequences[sequence] = {
+                    'performance': outcome * 0.5,
+                    'age': 0,
+                    'generation': 0,
+                    'parents': None
+                }
+                sequence_added = True
         
         # Update elite sequences
         if outcome > self.performance_threshold:
             self.elite_sequences[sequence] = self.sequences[sequence].copy()
         
-        # Cleanup poor performers
-        self._cleanup_sequences()
+        # Update progress task (only during bootstrap)
+        if sequence_added and self.learning_progress is not None and not getattr(self, 'bootstrap_complete', False):
+            try:
+                prog = _get_progress()
+                if prog is not None:
+                    prog.advance(self.learning_progress, 1)
+            except Exception as e:
+                logger.warning(f"Error updating DNA progress task: {e}")
+        
+        # Update progress task stats every batch
+        if self.total_learning_events % self.learning_batch_size == 0 and self.learning_progress is not None:
+            try:
+                prog = _get_progress()
+                if prog is not None:
+                    avg_perf = np.mean([data['performance'] for data in self.sequences.values()]) if self.sequences else 0.0
+                    prog.update(
+                        self.learning_progress,
+                        elite=len(self.elite_sequences),
+                        avg_perf=f"{avg_perf:.3f}"
+                    )
+            except Exception as e:
+                logger.warning(f"Error updating DNA progress task stats: {e}")
+        
+        # Cleanup poor performers (periodic cleanup)
+        if len(self.sequences) % 100 == 0:  # Cleanup every 100 sequences
+            self._cleanup_sequences()
     
     def _cleanup_sequences(self):
         """Remove poor performing and very old sequences"""
@@ -480,31 +629,72 @@ class FFTTemporalSubsystem:
         self.seasonal_patterns = {}
         self.lunar_cycle_data = deque(maxlen=30)  # Track lunar influence
         
+        # Progress tracking
+        self.learning_progress = None
+        self.total_learning_events = 0
+        self.learning_batch_size = 25
+        
     def analyze_cycles(self, prices: List[float], timestamps: Optional[List[float]] = None) -> float:
         if len(prices) < 32:
+            logger.debug(f"Insufficient data for temporal analysis: {len(prices)} prices (need 32+)")
             return 0.0
         
-        # Enhanced FFT analysis with multiple window sizes
-        signals = []
-        
-        for window_size in [64, 128, 256]:
-            if len(prices) >= window_size:
-                signal = self._fft_analysis(prices[-window_size:], window_size)
-                signals.append(signal)
-        
-        if not signals:
+        try:
+            # Enhanced FFT analysis with multiple window sizes
+            signals = []
+            
+            logger.debug(f"Starting temporal analysis with {len(prices)} prices")
+            
+            for window_size in [64, 128, 256]:
+                if len(prices) >= window_size:
+                    try:
+                        signal = self._fft_analysis(prices[-window_size:], window_size)
+                        if not (np.isnan(signal) or np.isinf(signal)):
+                            signals.append(signal)
+                            logger.debug(f"Temporal window {window_size}: signal={signal:.4f}")
+                        else:
+                            logger.warning(f"Invalid signal from window {window_size}: {signal}")
+                    except Exception as e:
+                        logger.warning(f"FFT analysis failed for window size {window_size}: {e}")
+                        continue
+            
+            if not signals:
+                logger.debug("No valid temporal signals found, using baseline")
+                return 0.02  # Small baseline signal
+            
+            # Combine signals from different timeframes
+            combined_signal = float(np.mean(signals))
+            
+            # Validate combined signal
+            if np.isnan(combined_signal) or np.isinf(combined_signal):
+                logger.warning("Combined temporal signal is invalid")
+                return 0.0
+            
+            # Add seasonal and lunar analysis if timestamps available
+            if timestamps:
+                try:
+                    seasonal_signal = self._analyze_seasonal_patterns(prices, timestamps)
+                    lunar_signal = self._analyze_lunar_influence(prices, timestamps)
+                    
+                    # Validate additional signals
+                    if not (np.isnan(seasonal_signal) or np.isinf(seasonal_signal)):
+                        if not (np.isnan(lunar_signal) or np.isinf(lunar_signal)):
+                            combined_signal = combined_signal * 0.7 + seasonal_signal * 0.2 + lunar_signal * 0.1
+                            logger.debug(f"Enhanced temporal signal with seasonal/lunar: {combined_signal:.4f}")
+                except Exception as e:
+                    logger.warning(f"Seasonal/lunar analysis failed: {e}")
+            
+            # Final validation
+            if np.isnan(combined_signal) or np.isinf(combined_signal):
+                logger.warning("Final temporal signal is invalid")
+                return 0.0
+            
+            logger.debug(f"Temporal analysis result: {combined_signal:.4f}")
+            return combined_signal
+            
+        except Exception as e:
+            logger.error(f"Error in temporal cycle analysis: {e}")
             return 0.0
-        
-        # Combine signals from different timeframes
-        combined_signal = float(np.mean(signals))
-        
-        # Add seasonal and lunar analysis if timestamps available
-        if timestamps:
-            seasonal_signal = self._analyze_seasonal_patterns(prices, timestamps)
-            lunar_signal = self._analyze_lunar_influence(prices, timestamps)
-            combined_signal = combined_signal * 0.7 + seasonal_signal * 0.2 + lunar_signal * 0.1
-        
-        return combined_signal
     
     def _fft_analysis(self, prices: List[float], window_size: int) -> float:
         """Enhanced FFT analysis with adaptive cycle detection"""
@@ -685,9 +875,31 @@ class FFTTemporalSubsystem:
     
     def learn_from_outcome(self, cycles_info: List[Dict], outcome: float):
         """Enhanced learning with confidence tracking"""
+        # Debug and validate inputs
+        if not isinstance(cycles_info, list):
+            logger.error(f"Temporal cycles_info is not a list: type={type(cycles_info)}, content={str(cycles_info)[:200]}")
+            return
         if not cycles_info:
             return
         
+        self.total_learning_events += 1
+        
+        # Initialize progress task if needed
+        if self.learning_progress is None:
+            try:
+                prog = _get_progress()
+                if prog is not None:
+                    self.learning_progress = prog.add_task(
+                        "Temporal Learning", 
+                        total=None,
+                        avg_conf=0.0, 
+                        patterns=0
+                    )
+            except Exception as e:
+                logger.error(f"Error initializing temporal progress task: {e}")
+                self.learning_progress = None
+        
+        cycles_learned = 0
         # Update performance for observed cycles
         for cycle in cycles_info:
             freq = cycle['frequency']
@@ -701,6 +913,7 @@ class FFTTemporalSubsystem:
                 learning_rate = 0.05 * (1.0 + data['confidence'])
                 
                 # Update performance
+                old_performance = data['performance']
                 new_performance = data['performance'] + learning_rate * (outcome - data['performance'])
                 
                 # Update confidence based on prediction accuracy
@@ -714,6 +927,7 @@ class FFTTemporalSubsystem:
                     'performance': new_performance,
                     'confidence': new_confidence
                 }
+                cycles_learned += 1
             else:
                 self.cycle_memory[cycle_key] = {
                     'strength': cycle['amplitude'],
@@ -721,6 +935,28 @@ class FFTTemporalSubsystem:
                     'performance': outcome * 0.3,
                     'confidence': 0.5
                 }
+                cycles_learned += 1
+                if self.learning_progress is not None:
+                    try:
+                        prog = _get_progress()
+                        if prog is not None:
+                            prog.advance(self.learning_progress, 1)
+                    except Exception as e:
+                        logger.warning(f"Error updating temporal progress task: {e}")
+        
+        # Update progress task stats every batch
+        if self.total_learning_events % self.learning_batch_size == 0 and self.learning_progress is not None:
+            try:
+                prog = _get_progress()
+                if prog is not None:
+                    avg_conf = np.mean([data['confidence'] for data in self.cycle_memory.values()]) if self.cycle_memory else 0.0
+                    prog.update(
+                        self.learning_progress,
+                        avg_conf=f"{avg_conf:.3f}",
+                        patterns=len(self.interference_patterns)
+                    )
+            except Exception as e:
+                logger.warning(f"Error updating temporal progress task stats: {e}")
         
         # Update seasonal patterns
         self._update_seasonal_patterns(outcome)
@@ -787,41 +1023,97 @@ class EvolvingImmuneSystem:
         self.memory_consolidation_threshold = 3
         self.adaptive_response_rate = 0.1
         
+        # Progress tracking
+        self.learning_progress = None
+        self.total_learning_events = 0
+        self.learning_batch_size = 20
+        
     def detect_threats(self, market_state: Dict) -> float:
-        threat_level = 0.0
-        
-        # Create current pattern signature
-        pattern_signature = self._create_pattern_signature(market_state)
-        
-        # Check against evolved antibodies
-        for antibody_pattern, data in self.antibodies.items():
-            similarity = self._pattern_similarity(pattern_signature, antibody_pattern)
+        try:
+            threat_level = 0.0
             
-            if similarity > 0.7:  # High similarity to known threat
-                # Enhanced threat calculation with memory strength
-                memory_boost = 1.0 + (data['memory_count'] * 0.1)
-                generation_factor = 1.0 + (data['generation'] * 0.05)
-                threat_contribution = data['strength'] * similarity * memory_boost * generation_factor
-                threat_level += threat_contribution
-        
-        # Enhanced T-cell memory response
-        for past_threat in self.t_cell_memory:
-            similarity = self._pattern_similarity(pattern_signature, past_threat['pattern'])
-            if similarity > 0.8:
-                # Rapid T-cell response with severity weighting
-                severity_factor = min(2.0, abs(past_threat['severity']) / 0.1)
-                threat_level += past_threat['severity'] * similarity * severity_factor
-        
-        # Autoimmune prevention with confidence scoring
-        if pattern_signature in self.autoimmune_prevention:
-            # Reduce threat level but don't eliminate completely
-            threat_level *= 0.2
-        
-        # Adaptive threat evolution detection
-        evolved_threat_level = self._detect_evolved_threats(pattern_signature, market_state)
-        threat_level += evolved_threat_level
-        
-        return -min(1.0, threat_level)  # Negative signal for threats
+            # Create current pattern signature
+            pattern_signature = self._create_pattern_signature(market_state)
+            
+            if not pattern_signature:
+                logger.debug("Empty pattern signature for immune analysis")
+                return 0.0
+            
+            logger.debug(f"Immune analysis: pattern='{pattern_signature[:50]}...', antibodies={len(self.antibodies)}")
+            
+            antibody_matches = 0
+            # Check against evolved antibodies
+            for antibody_pattern, data in self.antibodies.items():
+                try:
+                    similarity = self._pattern_similarity(pattern_signature, antibody_pattern)
+                    
+                    if similarity > 0.7:  # High similarity to known threat
+                        antibody_matches += 1
+                        # Enhanced threat calculation with memory strength
+                        memory_boost = 1.0 + (data.get('memory_count', 0) * 0.1)
+                        generation_factor = 1.0 + (data.get('generation', 0) * 0.05)
+                        threat_contribution = data.get('strength', 0.0) * similarity * memory_boost * generation_factor
+                        
+                        # Validate threat contribution
+                        if not (np.isnan(threat_contribution) or np.isinf(threat_contribution)):
+                            threat_level += threat_contribution
+                            logger.debug(f"Antibody match: similarity={similarity:.3f}, contribution={threat_contribution:.4f}")
+                except Exception as e:
+                    logger.warning(f"Error processing antibody {antibody_pattern}: {e}")
+                    continue
+            
+            tcell_matches = 0
+            # Enhanced T-cell memory response
+            for past_threat in self.t_cell_memory:
+                try:
+                    similarity = self._pattern_similarity(pattern_signature, past_threat['pattern'])
+                    if similarity > 0.8:
+                        tcell_matches += 1
+                        # Rapid T-cell response with severity weighting
+                        severity = past_threat.get('severity', 0.0)
+                        severity_factor = min(2.0, abs(severity) / 0.1) if severity != 0 else 1.0
+                        threat_contribution = severity * similarity * severity_factor
+                        
+                        # Validate threat contribution
+                        if not (np.isnan(threat_contribution) or np.isinf(threat_contribution)):
+                            threat_level += threat_contribution
+                            logger.debug(f"T-cell match: similarity={similarity:.3f}, contribution={threat_contribution:.4f}")
+                except Exception as e:
+                    logger.warning(f"Error processing T-cell memory: {e}")
+                    continue
+            
+            # Autoimmune prevention with confidence scoring
+            if pattern_signature in self.autoimmune_prevention:
+                # Reduce threat level but don't eliminate completely
+                threat_level *= 0.2
+                logger.debug("Autoimmune prevention activated")
+            
+            # Adaptive threat evolution detection
+            try:
+                evolved_threat_level = self._detect_evolved_threats(pattern_signature, market_state)
+                if not (np.isnan(evolved_threat_level) or np.isinf(evolved_threat_level)):
+                    threat_level += evolved_threat_level
+            except Exception as e:
+                logger.warning(f"Error in evolved threat detection: {e}")
+            
+            # If no threats detected but we have antibodies, provide small baseline
+            if threat_level == 0.0 and len(self.antibodies) > 0:
+                threat_level = -0.01  # Small negative baseline
+                logger.debug("No threats detected, using baseline negative signal")
+            
+            # Validate final threat level
+            if np.isnan(threat_level) or np.isinf(threat_level):
+                logger.warning("Invalid final threat level")
+                return 0.0
+            
+            final_signal = -min(1.0, max(-1.0, threat_level))  # Negative signal for threats, bounded
+            logger.debug(f"Immune result: {final_signal:.4f} (antibody_matches={antibody_matches}, tcell_matches={tcell_matches})")
+            
+            return final_signal
+            
+        except Exception as e:
+            logger.error(f"Error in immune threat detection: {e}")
+            return 0.0
     
     def _create_pattern_signature(self, market_state: Dict) -> str:
         """Enhanced pattern signature creation"""
@@ -912,47 +1204,70 @@ class EvolvingImmuneSystem:
         return total_similarity / max(total_weight, 1e-8)
     
     def _detect_evolved_threats(self, pattern_signature: str, market_state: Dict) -> float:
-        """Detect evolved or novel threat patterns"""
-        evolved_threat_level = 0.0
-        
-        # Check for threat evolution patterns
-        for threat_pattern, evolution_data in self.threat_evolution_tracker.items():
-            base_similarity = self._pattern_similarity(pattern_signature, threat_pattern)
+            """Detect evolved or novel threat patterns"""
+            evolved_threat_level = 0.0
             
-            if base_similarity > 0.5:
-                # Check for evolution indicators
-                evolution_score = 0.0
+            # Check for pattern mutations and evolutions
+            current_volatility = market_state.get('volatility', 0.0)
+            current_momentum = market_state.get('price_momentum', 0.0)
+            
+            # Detect extreme market conditions that might indicate evolved threats
+            if current_volatility > 0.1:  # Very high volatility
+                evolved_threat_level -= 0.2
+            
+            if abs(current_momentum) > 0.05:  # Strong momentum
+                evolved_threat_level -= 0.1
+            
+            # Check for threat evolution patterns
+            if pattern_signature in self.threat_evolution_tracker:
+                evolution_data = self.threat_evolution_tracker[pattern_signature]
+                severity_history = list(evolution_data['severity_history'])
                 
-                # Volatility evolution
-                if 'volatility_trend' in evolution_data:
-                    current_vol = market_state.get('volatility', 0)
-                    expected_vol = evolution_data['volatility_trend']
-                    if abs(current_vol - expected_vol) > 0.01:
-                        evolution_score += 0.3
-                
-                # Pattern mutation detection
-                if 'mutation_indicators' in evolution_data:
-                    for indicator in evolution_data['mutation_indicators']:
-                        if indicator in pattern_signature:
-                            evolution_score += 0.2
-                
-                evolved_threat_level += evolution_score * base_similarity
-        
-        return evolved_threat_level
+                if len(severity_history) >= 3:
+                    # Check if threat is getting worse over time
+                    recent_trend = np.mean(severity_history[-3:]) - np.mean(severity_history[:-3])
+                    if recent_trend < -0.1:  # Getting more threatening
+                        evolved_threat_level -= 0.3
+            
+            return evolved_threat_level
     
-    def learn_threat(self, market_state: Dict, threat_level: float):
-        """Enhanced threat learning with evolution tracking"""
+    def learn_threat(self, market_state: Dict, threat_level: float, is_bootstrap: bool = False):
+        """Enhanced threat learning with evolution tracking and bootstrap mode."""
+        if not isinstance(market_state, dict):
+            logger.error(f"Immune market_state is not a dict: type={type(market_state)}, content={str(market_state)[:200]}")
+            return
+
         pattern = self._create_pattern_signature(market_state)
-        
-        if threat_level < self.threat_severity_threshold:  # Significant threat
-            # Create or strengthen antibody
+        if not pattern:
+            return
+
+        self.total_learning_events += 1
+
+        # Initialize progress task if needed
+        if self.learning_progress is None:
+            try:
+                prog = _get_progress()
+                if prog is not None:
+                    self.learning_progress = prog.add_task(
+                        "Immune Learning", 
+                        total=None,
+                        tcells=0, 
+                        prevention=0
+                    )
+            except Exception as e:
+                logger.error(f"Error initializing immune progress task: {e}")
+                self.learning_progress = None
+
+        # Use a more sensitive threshold during historical bootstrapping
+        learning_threshold = -0.15 if is_bootstrap else self.threat_severity_threshold
+
+        antibody_created = False
+        if threat_level < learning_threshold:  # A significant threat is detected
             if pattern in self.antibodies:
                 data = self.antibodies[pattern]
                 strength_update = self.adaptive_response_rate * (1.0 + data['memory_count'] * 0.1)
                 data['strength'] = min(1.0, data['strength'] + strength_update)
                 data['memory_count'] += 1
-                
-                # Memory consolidation
                 if data['memory_count'] >= self.memory_consolidation_threshold:
                     data['specificity'] = min(1.0, data['specificity'] + 0.1)
             else:
@@ -962,6 +1277,7 @@ class EvolvingImmuneSystem:
                     'memory_count': 1,
                     'generation': self.antibody_generations
                 }
+                antibody_created = True
             
             # Enhanced T-cell memory
             self.t_cell_memory.append({
@@ -973,8 +1289,8 @@ class EvolvingImmuneSystem:
             
             # Track threat evolution
             self._track_threat_evolution(pattern, market_state, threat_level)
-        
-        elif threat_level > 0.3:  # False positive (good outcome from "threat")
+
+        elif threat_level > 0.3:  # False positive (good outcome from supposed threat)
             # Enhanced autoimmune prevention
             self.autoimmune_prevention.add(pattern)
             
@@ -983,6 +1299,28 @@ class EvolvingImmuneSystem:
                 data = self.antibodies[pattern]
                 data['strength'] = max(0.1, data['strength'] - 0.3)
                 data['specificity'] = max(0.3, data['specificity'] - 0.1)
+        
+        # Update progress task
+        if antibody_created and self.learning_progress is not None:
+            try:
+                prog = _get_progress()
+                if prog is not None:
+                    prog.advance(self.learning_progress, 1)
+            except Exception as e:
+                logger.warning(f"Error updating immune progress task: {e}")
+        
+        # Update progress task stats every batch
+        if self.total_learning_events % self.learning_batch_size == 0 and self.learning_progress is not None:
+            try:
+                prog = _get_progress()
+                if prog is not None:
+                    prog.update(
+                        self.learning_progress,
+                        tcells=len(self.t_cell_memory),
+                        prevention=len(self.autoimmune_prevention)
+                    )
+            except Exception as e:
+                logger.warning(f"Error updating immune progress task stats: {e}")
     
     def _track_threat_evolution(self, pattern: str, market_state: Dict, threat_level: float):
         """Track how threats evolve over time"""
@@ -1123,7 +1461,7 @@ class EvolvingImmuneSystem:
 
 class EnhancedIntelligenceOrchestrator:
     def __init__(self):
-        self.dna_subsystem = AdvancedDNASubsystem()
+        self.dna_subsystem = DNASubsystem()
         self.temporal_subsystem = FFTTemporalSubsystem()
         self.immune_subsystem = EvolvingImmuneSystem()
         
@@ -1136,7 +1474,8 @@ class EnhancedIntelligenceOrchestrator:
         self.tool_lifecycle = {
             'dna': {'birth_time': datetime.now(), 'performance_history': deque(maxlen=100)},
             'temporal': {'birth_time': datetime.now(), 'performance_history': deque(maxlen=100)},
-            'immune': {'birth_time': datetime.now(), 'performance_history': deque(maxlen=100)}
+            'immune': {'birth_time': datetime.now(), 'performance_history': deque(maxlen=100)},
+            'microstructure': {'birth_time': datetime.now(), 'performance_history': deque(maxlen=100)}
         }
         
         # Hybrid tool breeding
@@ -1144,76 +1483,182 @@ class EnhancedIntelligenceOrchestrator:
         self.tool_breeding_frequency = 500
         self.decision_count = 0
         
+        # Progress tracking
+        self.orchestrator_progress = None
+        self.bootstrap_complete = False
+        
     def process_market_data(self, prices: List[float], volumes: List[float],
                            market_features: Dict, timestamps: Optional[List[float]] = None) -> Dict[str, float]:
         
-        self.decision_count += 1
-        
-        # Enhanced DNA analysis with 16-base encoding
-        volatility = market_features.get('volatility', 0)
-        momentum = market_features.get('price_momentum', 0)
-        dna_sequence = self.dna_subsystem.encode_market_state(prices[-20:], volumes[-20:], volatility, momentum)
-        dna_signal = self.dna_subsystem.analyze_sequence(dna_sequence)
-        
-        # Enhanced FFT temporal analysis
-        temporal_signal = self.temporal_subsystem.analyze_cycles(prices, timestamps)
-        
-        # Enhanced immune system threat detection
-        immune_signal = self.immune_subsystem.detect_threats(market_features)
-        
-        # Swarm intelligence - enhanced voting with performance attribution
-        votes = {
-            'dna': dna_signal,
-            'temporal': temporal_signal,
-            'immune': immune_signal
-        }
-        
-        # Track individual tool performance
-        for tool, signal in votes.items():
-            self.tool_lifecycle[tool]['performance_history'].append(signal)
-        
-        # Calculate enhanced consensus with disagreement weighting
-        consensus_strength = self._calculate_enhanced_consensus(votes)
-        
-        # Dynamic tool activation based on market conditions
-        active_weights = self._calculate_dynamic_weights(market_features, votes)
-        
-        # Weighted overall signal with dynamic activation
-        overall_signal = sum(votes[tool] * active_weights[tool] for tool in votes.keys())
-        
-        # Boost signal based on consensus and tool agreement
-        if consensus_strength > 0.8:
-            overall_signal *= 1.4  # Strong consensus boost
-        elif consensus_strength < 0.3:
-            overall_signal *= 0.6  # Low consensus penalty
-        
-        # Check for hybrid tool creation
-        if self.decision_count % self.tool_breeding_frequency == 0:
-            self._attempt_tool_breeding(votes, market_features)
-        
-        # Store voting data
-        self.subsystem_votes.append({
-            'votes': votes.copy(),
-            'consensus': consensus_strength,
-            'weights': active_weights.copy(),
-            'timestamp': datetime.now()
-        })
-        self.consensus_history.append(consensus_strength)
-        
-        return {
-            'dna_signal': dna_signal,
-            'temporal_signal': temporal_signal,
-            'immune_signal': immune_signal,
-            'overall_signal': overall_signal,
-            'consensus_strength': consensus_strength,
-            'active_weights': active_weights,
-            'current_patterns': {
-                'dna_sequence': dna_sequence,
-                'dominant_cycles': len(self.temporal_subsystem.dominant_cycles),
-                'active_antibodies': len(self.immune_subsystem.antibodies),
-                'hybrid_tools': len(self.hybrid_tools)
+        try:
+            self.decision_count += 1
+            
+            # Enhanced DNA analysis with 16-base encoding
+            volatility = market_features.get('volatility', 0)
+            momentum = market_features.get('price_momentum', 0)
+            
+            try:
+                dna_sequence = self.dna_subsystem.encode_market_state(prices[-20:], volumes[-20:], volatility, momentum)
+                dna_signal = self.dna_subsystem.analyze_sequence(dna_sequence)
+                
+                # Validate DNA signal and ensure minimum baseline
+                if np.isnan(dna_signal) or np.isinf(dna_signal):
+                    logger.warning("Invalid DNA signal detected, using baseline")
+                    dna_signal = 0.05
+                elif dna_signal == 0.0 and len(self.dna_subsystem.sequences) > 0:
+                    dna_signal = 0.05  # Ensure baseline when sequences exist
+                    
+                logger.debug(f"Final DNA signal: {dna_signal:.4f}")
+                    
+            except Exception as e:
+                logger.error(f"DNA analysis failed: {e}")
+                dna_sequence = ""
+                dna_signal = 0.05  # Use baseline instead of 0.0
+            
+            # Enhanced FFT temporal analysis
+            try:
+                temporal_signal = self.temporal_subsystem.analyze_cycles(prices, timestamps)
+                
+                # Validate temporal signal and ensure minimum baseline
+                if np.isnan(temporal_signal) or np.isinf(temporal_signal):
+                    logger.warning("Invalid temporal signal detected, using baseline")
+                    temporal_signal = 0.02
+                elif temporal_signal == 0.0:
+                    temporal_signal = 0.02  # Ensure baseline
+                    
+                logger.debug(f"Final temporal signal: {temporal_signal:.4f}")
+                    
+            except Exception as e:
+                logger.error(f"Temporal analysis failed: {e}")
+                temporal_signal = 0.02  # Use baseline instead of 0.0
+            
+            # Enhanced immune system threat detection
+            try:
+                immune_signal = self.immune_subsystem.detect_threats(market_features)
+                
+                # Validate immune signal and ensure minimum baseline
+                if np.isnan(immune_signal) or np.isinf(immune_signal):
+                    logger.warning("Invalid immune signal detected, using baseline")
+                    immune_signal = -0.01
+                elif immune_signal == 0.0 and len(self.immune_subsystem.antibodies) == 0:
+                    immune_signal = -0.01  # Small negative baseline when no antibodies
+                    
+                logger.debug(f"Final immune signal: {immune_signal:.4f}")
+                    
+            except Exception as e:
+                logger.error(f"Immune analysis failed: {e}")
+                immune_signal = -0.01  # Use baseline instead of 0.0
+            
+            # Swarm intelligence - enhanced voting with performance attribution
+            votes = {
+                'dna': dna_signal,
+                'temporal': temporal_signal,
+                'immune': immune_signal
             }
-        }
+            
+            # Track individual tool performance
+            for tool, signal in votes.items():
+                if not (np.isnan(signal) or np.isinf(signal)):
+                    self.tool_lifecycle[tool]['performance_history'].append(signal)
+            
+            # Calculate enhanced consensus with disagreement weighting
+            try:
+                consensus_strength = self._calculate_enhanced_consensus(votes)
+                if np.isnan(consensus_strength) or np.isinf(consensus_strength):
+                    consensus_strength = 0.5
+            except Exception as e:
+                logger.warning(f"Consensus calculation failed: {e}")
+                consensus_strength = 0.5
+            
+            # Dynamic tool activation based on market conditions
+            try:
+                active_weights = self._calculate_dynamic_weights(market_features, votes)
+            except Exception as e:
+                logger.warning(f"Weight calculation failed: {e}")
+                active_weights = {'dna': 0.4, 'temporal': 0.4, 'immune': 0.2}
+            
+            # Weighted overall signal with dynamic activation
+            try:
+                overall_signal = sum(votes[tool] * active_weights.get(tool, 0.0) for tool in votes.keys())
+                
+                logger.debug(f"Raw overall signal: {overall_signal:.4f} from votes: {votes}")
+                
+                # Validate overall signal
+                if np.isnan(overall_signal) or np.isinf(overall_signal):
+                    logger.warning("Invalid overall signal detected, using baseline")
+                    overall_signal = 0.02  # Use baseline instead of 0.0
+                
+                # Ensure minimum signal when we have baseline signals
+                if overall_signal == 0.0:
+                    # Calculate baseline from individual signals
+                    baseline_signal = (votes['dna'] * 0.4 + votes['temporal'] * 0.4 + abs(votes['immune']) * 0.2)
+                    if baseline_signal > 0:
+                        overall_signal = baseline_signal
+                        logger.debug(f"Applied baseline overall signal: {overall_signal:.4f}")
+                
+                # Boost signal based on consensus and tool agreement
+                if consensus_strength > 0.8:
+                    overall_signal *= 1.4  # Strong consensus boost
+                elif consensus_strength < 0.3:
+                    overall_signal *= 0.6  # Low consensus penalty
+                
+                logger.debug(f"Final overall signal: {overall_signal:.4f}")
+                    
+            except Exception as e:
+                logger.error(f"Overall signal calculation failed: {e}")
+                overall_signal = 0.02  # Use baseline instead of 0.0
+            
+            # Check for hybrid tool creation
+            if self.decision_count % self.tool_breeding_frequency == 0:
+                try:
+                    self._attempt_tool_breeding(votes, market_features)
+                except Exception as e:
+                    logger.warning(f"Tool breeding failed: {e}")
+            
+            # Store voting data
+            try:
+                self.subsystem_votes.append({
+                    'votes': votes.copy(),
+                    'consensus': consensus_strength,
+                    'weights': active_weights.copy(),
+                    'timestamp': datetime.now()
+                })
+                self.consensus_history.append(consensus_strength)
+            except Exception as e:
+                logger.warning(f"Failed to store voting data: {e}")
+            
+            return {
+                'dna_signal': dna_signal,
+                'temporal_signal': temporal_signal,
+                'immune_signal': immune_signal,
+                'overall_signal': overall_signal,
+                'consensus_strength': consensus_strength,
+                'active_weights': active_weights,
+                'current_patterns': {
+                    'dna_sequence': dna_sequence if 'dna_sequence' in locals() else "",
+                    'dominant_cycles': len(self.temporal_subsystem.dominant_cycles),
+                    'active_antibodies': len(self.immune_subsystem.antibodies),
+                    'hybrid_tools': len(self.hybrid_tools)
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Critical error in orchestrator processing: {e}")
+            # Return safe fallback values
+            return {
+                'dna_signal': 0.0,
+                'temporal_signal': 0.0,
+                'immune_signal': 0.0,
+                'overall_signal': 0.0,
+                'consensus_strength': 0.5,
+                'active_weights': {'dna': 0.4, 'temporal': 0.4, 'immune': 0.2},
+                'current_patterns': {
+                    'dna_sequence': "",
+                    'dominant_cycles': 0,
+                    'active_antibodies': 0,
+                    'hybrid_tools': 0
+                }
+            }
     
     def _calculate_enhanced_consensus(self, votes: Dict[str, float]) -> float:
         """Enhanced consensus calculation with disagreement analysis"""
@@ -1301,35 +1746,176 @@ class EnhancedIntelligenceOrchestrator:
     
     def learn_from_outcome(self, outcome: float, context: Dict):
         """Enhanced learning with tool evolution and performance attribution"""
-        # Extract context
+        # Debug and validate context
+        if not isinstance(context, dict):
+            logger.error(f"Context is not a dictionary: type={type(context)}, content={str(context)[:200]}")
+            return
+        
+        # Initialize orchestrator progress task if needed
+        if self.orchestrator_progress is None:
+            try:
+                prog = _get_progress()
+                if prog is not None:
+                    self.orchestrator_progress = prog.add_task(
+                        "Orchestrator Learning", 
+                        total=None,
+                        tools=4, 
+                        consensus=0.0
+                    )
+            except Exception as e:
+                logger.error(f"Error initializing orchestrator progress task: {e}")
+                self.orchestrator_progress = None
+        
+        # Extract context with additional validation
         dna_sequence = context.get('dna_sequence', '')
+        if not isinstance(dna_sequence, str):
+            logger.error(f"DNA sequence is not a string: type={type(dna_sequence)}, content={str(dna_sequence)[:100]}")
+            dna_sequence = str(dna_sequence) if dna_sequence else ''
+        
         cycles_info = context.get('cycles_info', [])
+        if not isinstance(cycles_info, list):
+            logger.error(f"Cycles info is not a list: type={type(cycles_info)}, content={str(cycles_info)[:100]}")
+            cycles_info = []
+        
         market_state = context.get('market_state', {})
+        if not isinstance(market_state, dict):
+            logger.error(f"Market state is not a dict: type={type(market_state)}, content={str(market_state)[:100]}")
+            market_state = {}
         
-        # Each subsystem learns
-        self.dna_subsystem.learn_from_outcome(dna_sequence, outcome)
+        microstructure_signal = context.get('microstructure_signal', 0.0)
+        if not isinstance(microstructure_signal, (int, float)):
+            logger.error(f"Microstructure signal is not numeric: type={type(microstructure_signal)}, content={str(microstructure_signal)[:100]}")
+            microstructure_signal = 0.0
         
-        if cycles_info:
-            self.temporal_subsystem.learn_from_outcome(cycles_info, outcome)
+        # Each subsystem learns with additional error handling
+        if dna_sequence:
+            try:
+                self.dna_subsystem.learn_from_outcome(dna_sequence, outcome)
+            except Exception as e:
+                logger.error(f"Error in DNA subsystem learning: {e}")
+                logger.error(f"DNA sequence type: {type(dna_sequence)}, content: {str(dna_sequence)[:100]}")
         
-        self.immune_subsystem.learn_threat(market_state, outcome)
+        # Extract cycles from temporal subsystem's recent analysis
+        recent_cycles = []
+        try:
+            if len(self.temporal_subsystem.dominant_cycles) > 0:
+                recent_cycles = list(self.temporal_subsystem.dominant_cycles)[-1] if self.temporal_subsystem.dominant_cycles else []
+        except Exception as e:
+            logger.error(f"Error extracting recent cycles: {e}")
+            recent_cycles = []
         
-        # Performance attribution
-        if self.subsystem_votes:
-            recent_vote = self.subsystem_votes[-1]
-            for tool, signal in recent_vote['votes'].items():
-                # Attribute performance based on signal strength and outcome alignment
-                attribution_score = outcome * signal * recent_vote['weights'][tool]
-                self.performance_attribution[tool].append(attribution_score)
+        if recent_cycles or cycles_info:
+            try:
+                cycles_to_learn = cycles_info if cycles_info else recent_cycles
+                self.temporal_subsystem.learn_from_outcome(cycles_to_learn, outcome)
+            except Exception as e:
+                logger.error(f"Error in temporal subsystem learning: {e}")
+                logger.error(f"Cycles to learn type: {type(cycles_to_learn)}, content: {str(cycles_to_learn)[:100]}")
+        
+        if market_state:
+            try:
+                self.immune_subsystem.learn_threat(market_state, outcome)
+            except Exception as e:
+                logger.error(f"Error in immune subsystem learning: {e}")
+                logger.error(f"Market state type: {type(market_state)}, content: {str(market_state)[:100]}")
+        
+        # Track microstructure learning
+        if microstructure_signal != 0.0:
+            self.tool_lifecycle['microstructure']['performance_history'].append(microstructure_signal)
+        
+        # Performance attribution with error handling
+        try:
+            if self.subsystem_votes:
+                recent_vote = self.subsystem_votes[-1]
+                
+                # Validate recent_vote structure
+                if not isinstance(recent_vote, dict):
+                    logger.error(f"Recent vote is not a dict: type={type(recent_vote)}, content={str(recent_vote)[:100]}")
+                else:
+                    votes = recent_vote.get('votes', {})
+                    weights = recent_vote.get('weights', {})
+                    
+                    if not isinstance(votes, dict):
+                        logger.error(f"Votes is not a dict: type={type(votes)}, content={str(votes)[:100]}")
+                        votes = {}
+                    
+                    if not isinstance(weights, dict):
+                        logger.error(f"Weights is not a dict: type={type(weights)}, content={str(weights)[:100]}")
+                        weights = {}
+                    
+                    for tool, signal in votes.items():
+                        try:
+                            if tool in weights:
+                                # Attribute performance based on signal strength and outcome alignment
+                                attribution_score = outcome * signal * weights[tool]
+                                self.performance_attribution[tool].append(attribution_score)
+                        except Exception as e:
+                            logger.error(f"Error in performance attribution for tool {tool}: {e}")
+                            logger.error(f"Tool: {tool}, Signal: {signal}, Weight: {weights.get(tool, 'N/A')}")
+                
+                # Add microstructure attribution
+                if microstructure_signal != 0.0:
+                    try:
+                        micro_attribution = outcome * microstructure_signal * 0.2  # 20% weight for microstructure
+                        self.performance_attribution['microstructure'].append(micro_attribution)
+                    except Exception as e:
+                        logger.error(f"Error in microstructure attribution: {e}")
+        except Exception as e:
+            logger.error(f"Error in performance attribution section: {e}")
         
         # Update hybrid tool performance
         for hybrid_name, hybrid_data in self.hybrid_tools.items():
             # Simple performance tracking for now
             hybrid_data['performance_history'].append(outcome * 0.5)  # Conservative attribution
         
+        # Update orchestrator progress task
+        if self.orchestrator_progress is not None:
+            try:
+                prog = _get_progress()
+                if prog is not None:
+                    prog.advance(self.orchestrator_progress, 1)
+                    
+                    # Update progress stats
+                    recent_consensus = np.mean(list(self.consensus_history)) if self.consensus_history else 0.0
+                    prog.update(
+                        self.orchestrator_progress,
+                        tools=4 + len(self.hybrid_tools),  # DNA, Temporal, Immune, Microstructure + hybrids
+                        consensus=f"{recent_consensus:.3f}"
+                    )
+            except Exception as e:
+                logger.warning(f"Error updating orchestrator progress task: {e}")
+        
         # Periodic evolution
-        if len(self.subsystem_votes) % 200 == 0:
-            self._evolve_tools()
+        if len(self.subsystem_votes) % 100 == 0:
+            try:
+                self._evolve_tools()
+            except Exception as e:
+                logger.warning(f"Tool evolution failed: {e}")
+
+    def close_progress_bars(self, microstructure_engine=None):
+        """Graceful shutdown helper"""
+        try:
+            # Stop the simple progress tracker and show final summary
+            _reset_progress()
+            
+            # Reset task IDs and mark bootstrap complete
+            self.dna_subsystem.learning_progress = None
+            self.dna_subsystem.bootstrap_complete = True
+            self.temporal_subsystem.learning_progress = None  
+            self.temporal_subsystem.bootstrap_complete = True
+            self.immune_subsystem.learning_progress = None
+            self.immune_subsystem.bootstrap_complete = True
+            
+            # Handle microstructure engine if provided
+            if microstructure_engine:
+                microstructure_engine.learning_progress = None
+                microstructure_engine.bootstrap_complete = True
+            
+            self.orchestrator_progress = None
+            self.bootstrap_complete = True
+            
+        except Exception as e:
+            logger.warning(f"Error closing progress display: {e}")
     
     def _evolve_tools(self):
         """Evolve tools based on performance"""

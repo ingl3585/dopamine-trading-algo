@@ -171,6 +171,39 @@ class Portfolio:
     def get_position_count(self) -> int:
         return len(self.pending_orders)
     
+    def get_total_position_size(self) -> int:
+        """Get total position size across all pending orders"""
+        total_long = 0
+        total_short = 0
+        
+        for order in self.pending_orders.values():
+            if order.action == 'buy':
+                total_long += order.size
+            elif order.action == 'sell':
+                total_short += order.size
+        
+        # Return net position (positive for long, negative for short)
+        return total_long - total_short
+    
+    def get_position_exposure(self) -> Dict:
+        """Get detailed position exposure information"""
+        total_long = 0
+        total_short = 0
+        
+        for order in self.pending_orders.values():
+            if order.action == 'buy':
+                total_long += order.size
+            elif order.action == 'sell':
+                total_short += order.size
+        
+        return {
+            'total_long': total_long,
+            'total_short': total_short,
+            'net_position': total_long - total_short,
+            'gross_exposure': total_long + total_short,
+            'position_count': len(self.pending_orders)
+        }
+    
     def get_consecutive_losses(self) -> int:
         return self.consecutive_losses
     
@@ -262,12 +295,25 @@ class Portfolio:
             'saved_at': datetime.now().isoformat()
         }
         
-        import os
+        import os, numpy as np
+        
+        def _np_encoder(obj):
+            """Convert NumPy scalars/arrays to vanilla Python types."""
+            if isinstance(obj, (np.integer,)):
+                return int(obj)
+            if isinstance(obj, (np.floating,)):
+                return float(obj)
+            if isinstance(obj, (np.bool_,)):
+                return bool(obj)
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            raise TypeError(f"{type(obj)} is not JSON serializable")
+        
         # Ensure directory exists
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         
         with open(filepath, 'w') as f:
-            json.dump(data, f, indent=2)
+            json.dump(data, f, indent=2, default=_np_encoder)
     
     def load_state(self, filepath: str):
         try:

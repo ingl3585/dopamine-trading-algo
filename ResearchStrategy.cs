@@ -2,7 +2,7 @@
 // Advanced AI Trading Strategy with Multi-Entry Scaling and Position Reversal Capability
 //
 // Key Features:
-// - Supports up to 5 entries per direction for position scaling
+// - Supports up to 10 entries per direction for position scaling
 // - Automatic position reversals (long to short, short to long)
 // - Each entry gets unique signal name for proper tracking
 // - Individual stop loss and profit target management per entry
@@ -65,7 +65,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				    BarsRequiredToTrade = 1;
 				    
 				    // CRITICAL: Allow multiple entries in same direction for scaling
-				    EntriesPerDirection = 5;  // Allow up to 5 entries per direction
+				    EntriesPerDirection = 10;  // Allow up to 10 entries per direction
 				    EntryHandling = EntryHandling.AllEntries;  // Process all entries until limit reached
 				    break;
 				
@@ -367,7 +367,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    {
 		        var sb = new StringBuilder();
 		        sb.Append("{");
-		
+	
 		        sb.Append($"\"type\":\"live_data\",");
 		        sb.Append($"\"price_1m\":{SerializeDoubleArray(prices1m)},");
 		        sb.Append($"\"price_5m\":{SerializeDoubleArray(prices5m)},");
@@ -375,7 +375,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        sb.Append($"\"volume_1m\":{SerializeDoubleArray(volumes1m)},");
 		        sb.Append($"\"volume_5m\":{SerializeDoubleArray(volumes5m)},");
 		        sb.Append($"\"volume_15m\":{SerializeDoubleArray(volumes15m)},");
-		
+	
 		        double currentBalance     = Account.Get(AccountItem.CashValue,             Currency.UsDollar);
 		        double currentBuyingPower = Account.Get(AccountItem.ExcessIntradayMargin,  Currency.UsDollar);
 		        double totalPnL           = Account.Get(AccountItem.RealizedProfitLoss,    Currency.UsDollar);
@@ -383,11 +383,17 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        double netLiquidation     = Account.Get(AccountItem.NetLiquidation,        Currency.UsDollar);
 		        double marginUsed         = Account.Get(AccountItem.InitialMargin,         Currency.UsDollar);
 		        double availableMargin    = currentBuyingPower;
-		
+	
 		        if (currentBalance     <= 0) currentBalance     = 25000;
 		        if (currentBuyingPower <= 0) currentBuyingPower = currentBalance;
 		        if (netLiquidation     <= 0) netLiquidation     = currentBalance;
-		
+	
+		        // Calculate enhanced market condition data for risk management
+		        double currentVolatility = CalculateVolatility();
+		        double drawdownPct = dailyPnL < 0 ? Math.Abs(dailyPnL / currentBalance) * 100.0 : 0.0;
+		        double portfolioHeat = (marginUsed / netLiquidation) * 100.0;
+		        int totalPositionSize = Math.Abs(Position.Quantity);
+	
 		        sb.Append($"\"account_balance\":{currentBalance.ToString(CultureInfo.InvariantCulture)},");
 		        sb.Append($"\"buying_power\":{currentBuyingPower.ToString(CultureInfo.InvariantCulture)},");
 		        sb.Append($"\"daily_pnl\":{dailyPnL.ToString(CultureInfo.InvariantCulture)},");
@@ -395,10 +401,16 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        sb.Append($"\"margin_used\":{marginUsed.ToString(CultureInfo.InvariantCulture)},");
 		        sb.Append($"\"available_margin\":{availableMargin.ToString(CultureInfo.InvariantCulture)},");
 		        sb.Append($"\"open_positions\":{Position.Quantity},");
+		        sb.Append($"\"total_position_size\":{totalPositionSize},");
 		        sb.Append($"\"current_price\":{Close[0].ToString(CultureInfo.InvariantCulture)},");
+		        sb.Append($"\"volatility\":{currentVolatility.ToString(CultureInfo.InvariantCulture)},");
+		        sb.Append($"\"drawdown_pct\":{drawdownPct.ToString(CultureInfo.InvariantCulture)},");
+		        sb.Append($"\"portfolio_heat\":{portfolioHeat.ToString(CultureInfo.InvariantCulture)},");
+		        sb.Append($"\"regime\":\"normal\",");
+		        sb.Append($"\"trend_strength\":0.5,");
 		        long unixSeconds = new DateTimeOffset(DateTime.UtcNow).ToUnixTimeSeconds();
 		        sb.Append($"\"timestamp\":{unixSeconds}");
-		
+	
 		        sb.Append("}");
 		        return sb.ToString();
 		    }
@@ -407,6 +419,27 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        Print($"Error building market data JSON: {ex.Message}");
 		        return string.Empty;
 		    }
+		}
+		
+		private double CalculateVolatility()
+		{
+		    if (prices1m.Count < 20)
+		        return 0.02; // Default 2% volatility
+		        
+		    double sum = 0;
+		    int count = 0;
+		    
+		    for (int i = 1; i < Math.Min(20, prices1m.Count); i++)
+		    {
+		        if (prices1m[i-1] > 0)
+		        {
+		            double change = Math.Abs(prices1m[i] - prices1m[i-1]) / prices1m[i-1];
+		            sum += change;
+		            count++;
+		        }
+		    }
+		    
+		    return count > 0 ? sum / count : 0.02;
 		}
         
         private string SerializeDoubleArray(List<double> array)
@@ -496,9 +529,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                     return;
                 }
                 
-                // Check position size limits (max 15 contracts total)
+                // Check position size limits - let Python AI control sizing (max 10 contracts)
                 int currentPosition = Math.Abs(Position.Quantity);
-                if (currentPosition >= 15)
+                if (currentPosition >= 10)
                 {
                     Print($"Maximum position size reached ({currentPosition} contracts). Entry signal ignored.");
                     return;
@@ -730,26 +763,46 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        DateTime entryTime = completedTrade.Entry.Time;
 		        DateTime exitTime = completedTrade.Exit.Time;
 		        
-		        // Determine exit reason
-		        string exitReason = "ai_exit"; // Default
+		        // Determine exit reason for risk learning
+		        string exitReason = "manual_exit"; // Default
 		        if (completedTrade.Exit.Name.Contains("Stop"))
 		            exitReason = "stop_hit";
 		        else if (completedTrade.Exit.Name.Contains("Target"))
 		            exitReason = "target_hit";
+		        else if (completedTrade.Exit.Name.Contains("AI_"))
+		            exitReason = "ai_exit";
 		        
-		        // Enhanced trade completion data
+		        // Enhanced trade completion data for risk learning
 		        double currentBalance = Account.Get(AccountItem.CashValue, Currency.UsDollar);
 		        double netLiquidation = Account.Get(AccountItem.NetLiquidation, Currency.UsDollar);
 		        double marginUsed = Account.Get(AccountItem.InitialMargin, Currency.UsDollar);
 		        double totalPnL = Account.Get(AccountItem.RealizedProfitLoss, Currency.UsDollar);
 		        double dailyPnL = sessionStartSet ? (totalPnL - sessionStartPnL) : 0;
 		        
+		        // Calculate trade duration and market conditions
+		        double tradeDurationMinutes = (exitTime - entryTime).TotalMinutes;
+		        double priceMove = Math.Abs(exitPrice - entryPrice);
+		        double priceMovePct = (priceMove / entryPrice) * 100.0;
+		        
+		        // Estimate volatility from recent price action
+		        double currentVolatility = 0.02; // Default 2%
+		        if (prices1m.Count >= 20)
+		        {
+		            double sum = 0;
+		            for (int i = 1; i < Math.Min(20, prices1m.Count); i++)
+		            {
+		                double change = Math.Abs(prices1m[i] - prices1m[i-1]) / prices1m[i-1];
+		                sum += change;
+		            }
+		            currentVolatility = sum / Math.Min(19, prices1m.Count - 1);
+		        }
+		        
 		        var json = $"{{" +
 		                  $"\"type\":\"trade_completion\"," +
-		                  $"\"final_pnl\":{pnl.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"pnl\":{pnl.ToString(CultureInfo.InvariantCulture)}," +
 		                  $"\"exit_price\":{exitPrice.ToString(CultureInfo.InvariantCulture)}," +
 		                  $"\"entry_price\":{entryPrice.ToString(CultureInfo.InvariantCulture)}," +
-		                  $"\"quantity\":{quantity}," +
+		                  $"\"size\":{quantity}," +
 		                  $"\"exit_reason\":\"{exitReason}\"," +
 		                  $"\"entry_time\":{entryTime.Ticks}," +
 		                  $"\"exit_time\":{exitTime.Ticks}," +
@@ -757,11 +810,19 @@ namespace NinjaTrader.NinjaScript.Strategies
 		                  $"\"net_liquidation\":{netLiquidation.ToString(CultureInfo.InvariantCulture)}," +
 		                  $"\"margin_used\":{marginUsed.ToString(CultureInfo.InvariantCulture)}," +
 		                  $"\"daily_pnl\":{dailyPnL.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"trade_duration_minutes\":{tradeDurationMinutes.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"price_move_pct\":{priceMovePct.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"volatility\":{currentVolatility.ToString(CultureInfo.InvariantCulture)}," +
+		                  $"\"regime\":\"normal\"," +
+		                  $"\"trend_strength\":0.5," +
+		                  $"\"confidence\":0.5," +
+		                  $"\"consensus_strength\":0.5," +
+		                  $"\"primary_tool\":\"ai_signal\"," +
 		                  $"\"timestamp\":{DateTime.Now.Ticks}" +
 		                  $"}}";
 		        
 		        SendJsonMessage(json);
-		        Print($"Trade completion sent: P&L ${pnl:F2} ({exitReason}) - Balance: ${currentBalance:F0}");
+		        Print($"Enhanced trade completion sent: P&L ${pnl:F2} ({exitReason}) - Size: {quantity}, Duration: {tradeDurationMinutes:F1}min, Vol: {currentVolatility:P2}");
 		    }
 		    catch (Exception ex)
 		    {

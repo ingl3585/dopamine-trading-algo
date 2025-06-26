@@ -177,10 +177,19 @@ class TCPServer:
         return enhanced
     
     def _json_default(self, obj):
+        import numpy as np
         if hasattr(obj, 'item'):
             return obj.item()
         if isinstance(obj, (set, bytes)):
             return list(obj)
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, (np.bool_,)):
+            return bool(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
         raise TypeError
 
     def send_signal(self, order: Order) -> bool:

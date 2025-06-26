@@ -206,7 +206,12 @@ class MetaLearner:
             
             # New: Account size awareness
             'small_account_mode': MetaParameter(0.0, (0.0, 1.0)),        # 0=normal, 1=small account mode
-            'margin_utilization_limit': MetaParameter(0.7, (0.3, 0.9))   # Max margin usage
+            'margin_utilization_limit': MetaParameter(0.7, (0.3, 0.9)),   # Max margin usage
+            
+            # Enhanced position management
+            'max_contracts_limit': MetaParameter(10.0, (5.0, 15.0)),      # Learned max position limit
+            'position_concentration_factor': MetaParameter(0.8, (0.5, 1.0)), # How concentrated positions can be
+            'exposure_scaling_threshold': MetaParameter(0.6, (0.4, 0.8))   # When to start scaling down
         }
         
         # Adaptive components
