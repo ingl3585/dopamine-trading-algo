@@ -1145,45 +1145,45 @@ class EvolvingImmuneSystem:
         return total_similarity / max(total_weight, 1e-8)
     
     def _detect_evolved_threats(self, pattern_signature: str, market_state: Dict) -> float:
-        """Detect evolved or novel threat patterns"""
-        evolved_threat_level = 0.0
-        
-        # Check for threat evolution patterns
-        for threat_pattern, evolution_data in self.threat_evolution_tracker.items():
-            base_similarity = self._pattern_similarity(pattern_signature, threat_pattern)
+            """Detect evolved or novel threat patterns"""
+            evolved_threat_level = 0.0
             
-            if base_similarity > 0.5:
-                # Check for evolution indicators
-                evolution_score = 0.0
+            # Check for pattern mutations and evolutions
+            current_volatility = market_state.get('volatility', 0.0)
+            current_momentum = market_state.get('price_momentum', 0.0)
+            
+            # Detect extreme market conditions that might indicate evolved threats
+            if current_volatility > 0.1:  # Very high volatility
+                evolved_threat_level -= 0.2
+            
+            if abs(current_momentum) > 0.05:  # Strong momentum
+                evolved_threat_level -= 0.1
+            
+            # Check for threat evolution patterns
+            if pattern_signature in self.threat_evolution_tracker:
+                evolution_data = self.threat_evolution_tracker[pattern_signature]
+                severity_history = list(evolution_data['severity_history'])
                 
-                # Volatility evolution
-                if 'volatility_trend' in evolution_data:
-                    current_vol = market_state.get('volatility', 0)
-                    expected_vol = evolution_data['volatility_trend']
-                    if abs(current_vol - expected_vol) > 0.01:
-                        evolution_score += 0.3
-                
-                # Pattern mutation detection
-                if 'mutation_indicators' in evolution_data:
-                    for indicator in evolution_data['mutation_indicators']:
-                        if indicator in pattern_signature:
-                            evolution_score += 0.2
-                
-                evolved_threat_level += evolution_score * base_similarity
-        
-        return evolved_threat_level
+                if len(severity_history) >= 3:
+                    # Check if threat is getting worse over time
+                    recent_trend = np.mean(severity_history[-3:]) - np.mean(severity_history[:-3])
+                    if recent_trend < -0.1:  # Getting more threatening
+                        evolved_threat_level -= 0.3
+            
+            return evolved_threat_level
     
-    def learn_threat(self, market_state: Dict, threat_level: float):
-        """Enhanced threat learning with evolution tracking"""
-        # Debug and validate inputs
+    def learn_threat(self, market_state: Dict, threat_level: float, is_bootstrap: bool = False):
+        """Enhanced threat learning with evolution tracking and bootstrap mode."""
         if not isinstance(market_state, dict):
             logger.error(f"Immune market_state is not a dict: type={type(market_state)}, content={str(market_state)[:200]}")
             return
-        
+
         pattern = self._create_pattern_signature(market_state)
-        
+        if not pattern:
+            return
+
         self.total_learning_events += 1
-        
+
         # Initialize progress bar if needed
         if self.learning_progress is None:
             try:
@@ -1200,18 +1200,17 @@ class EvolvingImmuneSystem:
             except Exception as e:
                 logger.error(f"Error initializing immune progress bar: {e}")
                 self.learning_progress = None
-        
+
+        # Use a more sensitive threshold during historical bootstrapping
+        learning_threshold = -0.15 if is_bootstrap else self.threat_severity_threshold
+
         antibody_created = False
-        if threat_level < self.threat_severity_threshold:  # Significant threat
-            # Create or strengthen antibody
+        if threat_level < learning_threshold:  # A significant threat is detected
             if pattern in self.antibodies:
                 data = self.antibodies[pattern]
-                old_strength = data['strength']
                 strength_update = self.adaptive_response_rate * (1.0 + data['memory_count'] * 0.1)
                 data['strength'] = min(1.0, data['strength'] + strength_update)
                 data['memory_count'] += 1
-                
-                # Memory consolidation
                 if data['memory_count'] >= self.memory_consolidation_threshold:
                     data['specificity'] = min(1.0, data['specificity'] + 0.1)
             else:
@@ -1233,15 +1232,14 @@ class EvolvingImmuneSystem:
             
             # Track threat evolution
             self._track_threat_evolution(pattern, market_state, threat_level)
-        
-        elif threat_level > 0.3:  # False positive (good outcome from "threat")
+
+        elif threat_level > 0.3:  # False positive (good outcome from supposed threat)
             # Enhanced autoimmune prevention
             self.autoimmune_prevention.add(pattern)
             
             # Weaken antibody if it exists
             if pattern in self.antibodies:
                 data = self.antibodies[pattern]
-                old_strength = data['strength']
                 data['strength'] = max(0.1, data['strength'] - 0.3)
                 data['specificity'] = max(0.3, data['specificity'] - 0.1)
         
@@ -1690,6 +1688,23 @@ class EnhancedIntelligenceOrchestrator:
             logger.error(f"Context is not a dictionary: type={type(context)}, content={str(context)[:200]}")
             return
         
+        # Initialize orchestrator progress bar if needed
+        if self.orchestrator_progress is None:
+            try:
+                self.orchestrator_progress = tqdm(
+                    desc="Orchestrator Learning",
+                    unit="decisions",
+                    position=3,
+                    leave=True,
+                    bar_format="{desc}: {n:,} decisions | {postfix} | {rate_fmt}",
+                    postfix={"tools": 4, "consensus": 0.0},
+                    mininterval=0.1,
+                    maxinterval=1.0
+                )
+            except Exception as e:
+                logger.error(f"Error initializing orchestrator progress bar: {e}")
+                self.orchestrator_progress = None
+        
         # Extract context with additional validation
         dna_sequence = context.get('dna_sequence', '')
         if not isinstance(dna_sequence, str):
@@ -1710,21 +1725,6 @@ class EnhancedIntelligenceOrchestrator:
         if not isinstance(microstructure_signal, (int, float)):
             logger.error(f"Microstructure signal is not numeric: type={type(microstructure_signal)}, content={str(microstructure_signal)[:100]}")
             microstructure_signal = 0.0
-        
-        # Initialize orchestrator progress bar if needed
-        if self.orchestrator_progress is not None:
-            try:
-                self.orchestrator_progress.update(1)
-                recent_consensus = (
-                    np.mean(list(self.consensus_history))
-                    if self.consensus_history else 0.0
-                )
-                self.orchestrator_progress.set_postfix(
-                    tools=4 + len(self.hybrid_tools),
-                    consensus=recent_consensus
-                )
-            except Exception as e:
-                logger.warning(f"Error updating orchestrator progress bar: {e}")
         
         # Each subsystem learns with additional error handling
         if dna_sequence:
@@ -1822,11 +1822,14 @@ class EnhancedIntelligenceOrchestrator:
                 logger.warning(f"Error updating orchestrator progress bar: {e}")
         
         # Periodic evolution
-        if len(self.subsystem_votes) % 200 == 0:
-            self._evolve_tools()
-    
-    # Graceful shutdown helper
+        if len(self.subsystem_votes) % 100 == 0:
+            try:
+                self._evolve_tools()
+            except Exception as e:
+                logger.warning(f"Tool evolution failed: {e}")
+
     def close_progress_bars(self):
+        """Graceful shutdown helper"""
         try:
             if self.dna_subsystem.learning_progress is not None:
                 self.dna_subsystem.learning_progress.close()

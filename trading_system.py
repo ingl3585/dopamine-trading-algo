@@ -86,12 +86,16 @@ class TradingSystem:
                 self.last_account_update = current_time
 
     def _process_historical_data(self, historical_data):
-        """Process historical data for pattern bootstrapping"""
+        """Process historical data for pattern bootstrapping and priming the data processor."""
         try:
             logger.info("Processing historical data for pattern learning...")
             
             # Bootstrap the intelligence engine with historical patterns
             self.intelligence.bootstrap_from_historical_data(historical_data)
+
+            # Prime the data processor with the same historical data
+            self.data_processor.prime_with_historical_data(historical_data)
+            logger.info("Data processor primed with historical data.")
             
             # Signal that historical processing is complete
             logger.info("Historical data processing complete")
@@ -373,7 +377,6 @@ class TradingSystem:
     def _load_state(self):
         try:
             self.agent.load_model('models/agent.pt')
-            self.intelligence.load_patterns('data/patterns.json')
             self.portfolio.load_state('data/portfolio.json')
             
             # Load system state

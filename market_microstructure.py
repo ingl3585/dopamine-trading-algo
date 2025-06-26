@@ -383,6 +383,7 @@ class MarketMicrostructureEngine:
         self.order_flow_analyzer = OrderFlowAnalyzer()
         self.regime_detector = RegimeDetector()
         self.analysis_history = deque(maxlen=100)
+        self.patterns = {}
         
     def analyze_market_state(self, prices: List[float], volumes: List[float], 
                            external_data: Dict = None) -> Dict:
@@ -461,17 +462,36 @@ class MarketMicrostructureEngine:
         
         return adjusted_signal
     
-    def learn_from_outcome(self, outcome: float):
-        # Update regime thresholds based on performance
-        recent_outcomes = [analysis.get('outcome', 0) for analysis in self.analysis_history 
-                          if 'outcome' in analysis]
+    def learn_from_outcome(self, outcome: float, context: Optional[Dict] = None):
+        """Learn from a trade outcome by associating it with a specific microstructure pattern."""
+        if not context:
+            return
+
+        pattern_id = self._create_pattern_id(context)
+        if not pattern_id:
+            return
+
+        if pattern_id not in self.patterns:
+            self.patterns[pattern_id] = {'outcomes': [], 'strength': 0.0}
         
-        if len(recent_outcomes) >= 10:
-            self.regime_detector.update_regime_thresholds(recent_outcomes[-10:])
-        
-        # Store outcome with most recent analysis
-        if self.analysis_history:
-            self.analysis_history[-1]['outcome'] = outcome
+        self.patterns[pattern_id]['outcomes'].append(outcome)
+        # Simple moving average of performance
+        self.patterns[pattern_id]['strength'] = np.mean(self.patterns[pattern_id]['outcomes'][-20:])
+
+    def _create_pattern_id(self, context: Dict) -> str:
+        """Creates a unique, learnable pattern ID from the microstructure context."""
+        try:
+            order_flow = context.get('order_flow', {})
+            regime_state = context.get('regime_state', {})
+
+            smart_money_bucket = int(order_flow.get('smart_money_flow', 0) * 10)
+            liquidity_bucket = int(order_flow.get('liquidity_depth', 0) * 10)
+            vol_regime = regime_state.get('volatility_regime', 'unknown')[0]
+            trend_regime = regime_state.get('trend_regime', 'unknown')[0]
+
+            return f"sm{smart_money_bucket}_liq{liquidity_bucket}_vol{vol_regime}_trd{trend_regime}"
+        except (TypeError, KeyError, IndexError):
+            return ""
     
     def get_microstructure_features(self) -> Dict:
         """Extract features for use in neural networks"""

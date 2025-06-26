@@ -93,3 +93,17 @@ class DataProcessor:
     def _is_valid_data(self, data: Dict) -> bool:
         return (isinstance(data, dict) and 
                 ('price_1m' in data or 'price_5m' in data or 'price_15m' in data))
+
+    def prime_with_historical_data(self, historical_data: Dict):
+        """Pre-populates the data buffers with historical data."""
+        if 'bars_1m' in historical_data:
+            self.prices_1m.extend([bar['close'] for bar in historical_data['bars_1m']])
+            self.volumes_1m.extend([bar['volume'] for bar in historical_data['bars_1m']])
+
+        if 'bars_5m' in historical_data:
+            self.prices_5m.extend([bar['close'] for bar in historical_data['bars_5m']])
+            self.volumes_5m.extend([bar['volume'] for bar in historical_data['bars_5m']])
+
+        if 'bars_15m' in historical_data:
+            self.prices_15m.extend([bar['close'] for bar in historical_data['bars_15m']])
+            self.volumes_15m.extend([bar['volume'] for bar in historical_data['bars_15m']])
