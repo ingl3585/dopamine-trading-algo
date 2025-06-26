@@ -1,4 +1,4 @@
-# src/agent/real_time_adaptation.py
+# real_time_adaptation.py
 
 import torch
 import torch.nn as nn
@@ -333,8 +333,7 @@ class UncertaintyQuantifier:
 
 
 class RealTimeAdaptationEngine:
-    def __init__(self, config, model_dim: int = 64):
-        self.config = config
+    def __init__(self, model_dim: int = 64):
         self.model_dim = model_dim
         
         # Core components

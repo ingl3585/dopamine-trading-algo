@@ -1,4 +1,4 @@
-# src/market_analysis/market_microstructure.py
+# market_microstructure.py
 
 import numpy as np
 from collections import deque
@@ -423,8 +423,7 @@ class RegimeDetector:
 
 
 class MarketMicrostructureEngine:
-    def __init__(self, config):
-        self.config = config
+    def __init__(self):
         self.order_flow_analyzer = OrderFlowAnalyzer()
         self.regime_detector = RegimeDetector()
         self.analysis_history = deque(maxlen=100)

@@ -1,4 +1,4 @@
-# src/neural/adaptive_network.py
+# adaptive_network.py
 
 import torch
 import torch.nn as nn

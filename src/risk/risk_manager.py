@@ -1,14 +1,14 @@
-# src/risk/risk_manager.py
+# risk_manager.py
 
 from dataclasses import dataclass
 from typing import Optional, Dict
 import logging
 import math
 
-from src.agent.trading_agent import Decision
-from src.market_analysis.data_processor import MarketData
-from src.risk.advanced_risk import AdvancedRiskManager
-from src.risk.risk_learning_engine import RiskLearningEngine
+from trading_agent import Decision
+from data_processor import MarketData
+from advanced_risk import AdvancedRiskManager
+from risk_learning_engine import RiskLearningEngine
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +28,11 @@ class Order:
 
 
 class RiskManager:
-    def __init__(self, config, portfolio, meta_learner):
-        self.config = config
+    def __init__(self, portfolio, meta_learner):
         self.portfolio = portfolio
         self.meta_learner = meta_learner
-        self.advanced_risk = AdvancedRiskManager(self.config, meta_learner)
-        self.risk_learning = RiskLearningEngine(self.config)
+        self.advanced_risk = AdvancedRiskManager(meta_learner)
+        self.risk_learning = RiskLearningEngine()
         
     def validate_order(self, decision: Decision, market_data: MarketData) -> Optional[Order]:
         if decision.action == 'hold':
@@ -300,7 +299,7 @@ class RiskManager:
         self.risk_learning.adapt_to_account_size(account_balance)
         
         logger.info(f"Risk learning updated: {event_type}, Size={position_size}, "
-                   f"P&L=${pnl:.2f}, Account=${account_balance:.0f})")
+                   f"P&L=${pnl:.2f}, Account=${account_balance:.0f}")
     
     def get_risk_summary(self) -> Dict:
         """Get comprehensive risk summary including advanced metrics"""

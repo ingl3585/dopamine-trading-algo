@@ -1,4 +1,4 @@
-# src/intelligence/intelligence_engine.py
+# intelligence_engine.py
 
 import json
 import numpy as np
@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from src.market_analysis.data_processor import MarketData
-from src.intelligence.subsystem_evolution import EnhancedIntelligenceOrchestrator
-from src.market_analysis.market_microstructure import MarketMicrostructureEngine
-from src.agent.real_time_adaptation import RealTimeAdaptationEngine
+from data_processor import MarketData
+from subsystem_evolution import EnhancedIntelligenceOrchestrator
+from market_microstructure import MarketMicrostructureEngine
+from real_time_adaptation import RealTimeAdaptationEngine
 
 logger = logging.getLogger(__name__)
 
@@ -43,18 +43,17 @@ class Features:
     regime_confidence: float = 0.5
 
 class IntelligenceEngine:
-    def __init__(self, config, memory_file="data/intelligence_memory.json"):
-        self.config = config
+    def __init__(self, memory_file="data/intelligence_memory.json"):
         self.memory_file = memory_file
         
         # Core subsystem orchestration (DNA, Temporal, Immune)
-        self.orchestrator = EnhancedIntelligenceOrchestrator(self.config)
+        self.orchestrator = EnhancedIntelligenceOrchestrator()
         
         # Microstructure analysis (4th subsystem)
-        self.microstructure_engine = MarketMicrostructureEngine(self.config)
+        self.microstructure_engine = MarketMicrostructureEngine()
         
         # Real-time adaptation
-        self.adaptation_engine = RealTimeAdaptationEngine(self.config, model_dim=64)
+        self.adaptation_engine = RealTimeAdaptationEngine(model_dim=64)
         
         # Pattern storage
         self.patterns = defaultdict(list)

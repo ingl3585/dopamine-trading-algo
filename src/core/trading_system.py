@@ -1,15 +1,15 @@
-# src/core/trading_system.py
+# trading_system.py
 
 import logging
 import time
 
-from src.market_analysis.data_processor import DataProcessor
-from src.intelligence.intelligence_engine import IntelligenceEngine
-from src.agent.trading_agent import TradingAgent
-from src.risk.risk_manager import RiskManager
-from src.communication.tcp_bridge import TCPServer
-from src.risk.portfolio import Portfolio
-from src.core.config import Config
+from data_processor import DataProcessor
+from intelligence_engine import IntelligenceEngine
+from trading_agent import TradingAgent
+from risk_manager import RiskManager
+from tcp_bridge import TCPServer
+from portfolio import Portfolio
+from config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -17,14 +17,13 @@ class TradingSystem:
     def __init__(self):
         logger.info("Initializing trading system with historical bootstrapping")
         
-        self.config = Config()
-        self.portfolio = Portfolio(self.config)
-        self.data_processor = DataProcessor(self.config)
-        self.intelligence = IntelligenceEngine(self.config)
-        self.agent = TradingAgent(self.config, self.intelligence, self.portfolio)
-        self.risk_manager = RiskManager(self.config, self.portfolio, self.agent.meta_learner)
+        self.portfolio = Portfolio()
+        self.data_processor = DataProcessor()
+        self.intelligence = IntelligenceEngine()
+        self.agent = TradingAgent(self.intelligence, self.portfolio)
+        self.risk_manager = RiskManager(self.portfolio, self.agent.meta_learner)
         
-        self.tcp_server = TCPServer(self.config)
+        self.tcp_server = TCPServer()
         self.tcp_server.on_market_data = self._process_market_data
         self.tcp_server.on_trade_completion = self._process_trade_completion
         self.tcp_server.on_historical_data = self._process_historical_data
@@ -77,7 +76,7 @@ class TradingSystem:
                 self.last_detailed_log = current_time
             
             # Save state every 5 minutes
-            if current_time - self.last_save > self.config.get('model_save_interval'):
+            if current_time - self.last_save > 300:
                 self._save_state()
                 self.last_save = current_time
             
@@ -173,7 +172,7 @@ class TradingSystem:
                     self.portfolio.add_pending_order(order)
                         
                     # Log with account context
-                    account_risk = (order.size * self.config.get('mnq_point_value') * order.price) / market_data.account_balance * 100
+                    account_risk = (order.size * 100) / market_data.account_balance * 100
                     logger.info(f"Order placed: {order.action.upper()} {order.size} @ {order.price:.2f} "
                                     f"(Risk: {account_risk:.1f}%, Balance: ${market_data.account_balance:.0f})")
                 else:
@@ -194,6 +193,7 @@ class TradingSystem:
         # Phase 2: RL agent learns second (uses updated subsystem weights)
         self.agent.learn_from_trade(outcome)
 
+    # Rest of the methods remain the same...
     def _process_trade_completion(self, completion_data):
         try:
             trade = self.portfolio.complete_trade(completion_data)
@@ -318,7 +318,7 @@ class TradingSystem:
             portfolio_summary = self.portfolio.get_summary()
             agent_stats = self.agent.get_stats()
             intelligence_stats = self.intelligence.get_stats()
-            risk_summary = self.risk_.get_risk_summary()
+            risk_summary = self.risk_manager.get_risk_summary()
             
             logger.info("=== PERFORMANCE SUMMARY ===")
             logger.info(f"Account Balance: ${portfolio_summary.get('current_balance', 0):.2f}")
@@ -374,15 +374,13 @@ class TradingSystem:
                 raise TypeError(f"{type(obj)} is not JSON serializable")
             # ----------------------------------------------------------------
 
-            models_dir = self.config.get('models_directory')
-            data_dir = self.config.get('data_directory')
-            os.makedirs(models_dir, exist_ok=True)
-            os.makedirs(data_dir,   exist_ok=True)
+            os.makedirs("models", exist_ok=True)
+            os.makedirs("data",   exist_ok=True)
 
             # binary / torch checkpoints
-            self.agent.save_model(f"{models_dir}/agent.pt")
-            self.intelligence.save_patterns(f"{data_dir}/patterns.json")  # already JSON-safe
-            self.portfolio.save_state(f"{data_dir}/portfolio.json")
+            self.agent.save_model("models/agent.pt")
+            self.intelligence.save_patterns("data/patterns.json")  # already JSON-safe
+            self.portfolio.save_state("data/portfolio.json")
 
             # tiny runtime snapshot
             system_state = {
@@ -394,7 +392,7 @@ class TradingSystem:
                 "saved_at"             : time.time()
             }
 
-            with open(f"{data_dir}/system_state.json", "w") as f:
+            with open("data/system_state.json", "w") as f:
                 json.dump(system_state, f, indent=2, default=_np_encoder)
 
         except Exception as e:
@@ -402,15 +400,13 @@ class TradingSystem:
     
     def _load_state(self):
         try:
-            models_dir = self.config.get('models_directory')
-            data_dir = self.config.get('data_directory')
-            self.agent.load_model(f'{models_dir}/agent.pt')
-            self.portfolio.load_state(f'{data_dir}/portfolio.json')
+            self.agent.load_model('models/agent.pt')
+            self.portfolio.load_state('data/portfolio.json')
             
             # Load system state
             import json
             try:
-                with open(f'{data_dir}/system_state.json', 'r') as f:
+                with open('data/system_state.json', 'r') as f:
                     system_state = json.load(f)
                     self.last_account_balance = system_state.get('last_account_balance', 0.0)
                     self.account_change_threshold = system_state.get('account_change_threshold', 0.05)

@@ -1,4 +1,4 @@
-# src/agent/trading_agent.py
+# trading_agent.py
 
 import torch
 import torch.nn as nn
@@ -13,12 +13,12 @@ from queue import Queue
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 
-from src.intelligence.intelligence_engine import Features
-from src.market_analysis.data_processor import MarketData
-from src.agent.meta_learner import MetaLearner
-from src.neural.adaptive_network import AdaptiveTradingNetwork, FeatureLearner, StateEncoder
-from src.neural.enhanced_neural import SelfEvolvingNetwork, FewShotLearner
-from src.agent.real_time_adaptation import RealTimeAdaptationEngine
+from intelligence_engine import Features
+from data_processor import MarketData
+from meta_learner import MetaLearner
+from adaptive_network import AdaptiveTradingNetwork, FeatureLearner, StateEncoder
+from enhanced_neural import SelfEvolvingNetwork, FewShotLearner
+from real_time_adaptation import RealTimeAdaptationEngine
 
 logger = logging.getLogger(__name__)
 
@@ -41,15 +41,14 @@ class Decision:
 
 
 class TradingAgent:
-    def __init__(self, config, intelligence, portfolio):
-        self.config = config
+    def __init__(self, intelligence, portfolio):
         self.intelligence = intelligence
         self.portfolio = portfolio
         
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         # Enhanced meta-learning system
-        self.meta_learner = MetaLearner(self.config, state_dim=64)  # Increased state dimension
+        self.meta_learner = MetaLearner(state_dim=64)  # Increased state dimension
         
         # Enhanced neural architecture with self-evolution
         initial_sizes = self.meta_learner.architecture_evolver.current_sizes
@@ -75,7 +74,7 @@ class TradingAgent:
         self.few_shot_learner = FewShotLearner(feature_dim=64).to(self.device)
         
         # Real-time adaptation integration
-        self.adaptation_engine = RealTimeAdaptationEngine(self.config, model_dim=64)
+        self.adaptation_engine = RealTimeAdaptationEngine(model_dim=64)
         
         # Single unified optimizer for all learning components
         self.unified_optimizer = optim.AdamW(

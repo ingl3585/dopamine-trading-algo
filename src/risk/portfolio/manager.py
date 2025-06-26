@@ -1,0 +1,491 @@
+"""
+Portfolio Manager - Portfolio tracking and optimization
+"""
+
+import numpy as np
+import logging
+from typing import Dict, List
+from datetime import datetime, timedelta
+from collections import deque
+
+logger = logging.getLogger(__name__)
+
+class PortfolioManager:
+    """
+    Portfolio management service for tracking and optimizing positions
+    """
+    
+    def __init__(self, config):
+        self.config = config
+        self.positions = {}
+        self.trade_history = deque(maxlen=1000)
+        self.performance_history = deque(maxlen=500)
+        self.daily_returns = deque(maxlen=252)  # One year of daily returns
+        
+    def track_positions(self, positions_data: Dict) -> Dict:
+        """Track and analyze current positions"""
+        try:
+            # Update position tracking
+            for symbol, position in positions_data.items():
+                if symbol not in self.positions:
+                    self.positions[symbol] = {
+                        'entry_time': datetime.now(),
+                        'entry_price': position.get('entry_price', 0.0),
+                        'current_size': position.get('size', 0.0),
+                        'unrealized_pnl': position.get('unrealized_pnl', 0.0),
+                        'realized_pnl': position.get('realized_pnl', 0.0),
+                        'max_unrealized_pnl': position.get('unrealized_pnl', 0.0),
+                        'min_unrealized_pnl': position.get('unrealized_pnl', 0.0)
+                    }
+                else:
+                    # Update existing position
+                    self.positions[symbol]['current_size'] = position.get('size', 0.0)
+                    self.positions[symbol]['unrealized_pnl'] = position.get('unrealized_pnl', 0.0)
+                    self.positions[symbol]['realized_pnl'] = position.get('realized_pnl', 0.0)
+                    
+                    # Track high water marks
+                    unrealized = position.get('unrealized_pnl', 0.0)
+                    self.positions[symbol]['max_unrealized_pnl'] = max(
+                        self.positions[symbol]['max_unrealized_pnl'], unrealized
+                    )
+                    self.positions[symbol]['min_unrealized_pnl'] = min(
+                        self.positions[symbol]['min_unrealized_pnl'], unrealized
+                    )
+            
+            # Remove closed positions
+            closed_positions = [symbol for symbol, pos in self.positions.items() 
+                              if symbol not in positions_data or positions_data[symbol].get('size', 0.0) == 0]
+            
+            for symbol in closed_positions:
+                if symbol in self.positions:
+                    # Record final performance before removing
+                    self._record_position_close(symbol)
+                    del self.positions[symbol]
+            
+            # Calculate portfolio metrics
+            portfolio_metrics = self._calculate_portfolio_metrics()
+            
+            return {
+                'positions': self.positions,
+                'portfolio_metrics': portfolio_metrics,
+                'position_count': len(self.positions),
+                'total_unrealized_pnl': sum(pos['unrealized_pnl'] for pos in self.positions.values()),
+                'total_realized_pnl': sum(pos['realized_pnl'] for pos in self.positions.values())
+            }
+            
+        except Exception as e:
+            logger.error(f"Error tracking positions: {e}")
+            return {'positions': {}, 'portfolio_metrics': {}, 'position_count': 0}
+    
+    def optimize_portfolio(self, market_conditions: Dict, risk_metrics: Dict) -> Dict:
+        """Optimize portfolio based on current conditions"""
+        try:
+            optimization_suggestions = []
+            
+            # Analyze current positions for optimization opportunities
+            for symbol, position in self.positions.items():
+                suggestions = self._analyze_position_optimization(symbol, position, market_conditions, risk_metrics)
+                optimization_suggestions.extend(suggestions)
+            
+            # Portfolio-level optimizations
+            portfolio_suggestions = self._analyze_portfolio_optimization(market_conditions, risk_metrics)
+            optimization_suggestions.extend(portfolio_suggestions)
+            
+            # Calculate optimal allocation
+            optimal_allocation = self._calculate_optimal_allocation(market_conditions, risk_metrics)
+            
+            return {
+                'optimization_suggestions': optimization_suggestions,
+                'optimal_allocation': optimal_allocation,
+                'current_allocation': self._get_current_allocation(),
+                'rebalancing_needed': len(optimization_suggestions) > 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Error optimizing portfolio: {e}")
+            return {'optimization_suggestions': [], 'optimal_allocation': {}, 'rebalancing_needed': False}
+    
+    def get_performance_analytics(self) -> Dict:
+        """Get comprehensive performance analytics"""
+        try:
+            # Calculate returns
+            returns_metrics = self._calculate_returns_metrics()
+            
+            # Risk metrics
+            risk_metrics = self._calculate_risk_metrics()
+            
+            # Trade analytics
+            trade_analytics = self._calculate_trade_analytics()
+            
+            # Position analytics
+            position_analytics = self._calculate_position_analytics()
+            
+            return {
+                'returns': returns_metrics,
+                'risk': risk_metrics,
+                'trades': trade_analytics,
+                'positions': position_analytics,
+                'performance_score': self._calculate_performance_score(returns_metrics, risk_metrics)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting performance analytics: {e}")
+            return {}
+    
+    def _record_position_close(self, symbol: str):
+        """Record performance when position is closed"""
+        try:
+            position = self.positions[symbol]
+            
+            # Calculate position performance
+            hold_time = (datetime.now() - position['entry_time']).total_seconds() / 3600  # hours
+            total_pnl = position['realized_pnl']
+            max_adverse_excursion = abs(position['min_unrealized_pnl']) if position['min_unrealized_pnl'] < 0 else 0
+            max_favorable_excursion = position['max_unrealized_pnl'] if position['max_unrealized_pnl'] > 0 else 0
+            
+            # Record in performance history
+            self.performance_history.append({
+                'symbol': symbol,
+                'entry_time': position['entry_time'],
+                'close_time': datetime.now(),
+                'hold_time_hours': hold_time,
+                'total_pnl': total_pnl,
+                'max_adverse_excursion': max_adverse_excursion,
+                'max_favorable_excursion': max_favorable_excursion,
+                'entry_price': position['entry_price']
+            })
+            
+        except Exception as e:
+            logger.error(f"Error recording position close: {e}")
+    
+    def _calculate_portfolio_metrics(self) -> Dict:
+        """Calculate current portfolio metrics"""
+        try:
+            if not self.positions:
+                return {}
+            
+            total_unrealized = sum(pos['unrealized_pnl'] for pos in self.positions.values())
+            total_realized = sum(pos['realized_pnl'] for pos in self.positions.values())
+            total_pnl = total_unrealized + total_realized
+            
+            # Calculate position concentration
+            position_sizes = [abs(pos['current_size']) for pos in self.positions.values()]
+            total_size = sum(position_sizes)
+            concentration = max(position_sizes) / total_size if total_size > 0 else 0
+            
+            # Calculate average hold time for open positions
+            current_time = datetime.now()
+            hold_times = [(current_time - pos['entry_time']).total_seconds() / 3600 
+                         for pos in self.positions.values()]
+            avg_hold_time = np.mean(hold_times) if hold_times else 0
+            
+            return {
+                'total_unrealized_pnl': total_unrealized,
+                'total_realized_pnl': total_realized,
+                'total_pnl': total_pnl,
+                'position_count': len(self.positions),
+                'concentration_ratio': concentration,
+                'avg_hold_time_hours': avg_hold_time,
+                'largest_position_pnl': max([pos['unrealized_pnl'] for pos in self.positions.values()], default=0),
+                'largest_loss_pnl': min([pos['unrealized_pnl'] for pos in self.positions.values()], default=0)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error calculating portfolio metrics: {e}")
+            return {}
+    
+    def _analyze_position_optimization(self, symbol: str, position: Dict, 
+                                     market_conditions: Dict, risk_metrics: Dict) -> List[Dict]:
+        """Analyze individual position for optimization opportunities"""
+        suggestions = []
+        
+        try:
+            # Check for profit taking opportunities
+            unrealized_pnl = position['unrealized_pnl']
+            max_unrealized = position['max_unrealized_pnl']
+            
+            # Profit taking suggestion
+            if unrealized_pnl > 0 and unrealized_pnl < max_unrealized * 0.7:
+                suggestions.append({
+                    'type': 'profit_taking',
+                    'symbol': symbol,
+                    'reason': f'Position down {((max_unrealized - unrealized_pnl) / max_unrealized * 100):.1f}% from peak',
+                    'suggested_action': 'partial_close',
+                    'urgency': 'medium'
+                })
+            
+            # Stop loss suggestion
+            min_unrealized = position['min_unrealized_pnl']
+            if unrealized_pnl < 0 and abs(unrealized_pnl) > abs(min_unrealized) * 0.5:
+                suggestions.append({
+                    'type': 'stop_loss',
+                    'symbol': symbol,
+                    'reason': f'Position loss increasing, current: {unrealized_pnl:.2f}',
+                    'suggested_action': 'close_position',
+                    'urgency': 'high'
+                })
+            
+            # Hold time analysis
+            hold_time = (datetime.now() - position['entry_time']).total_seconds() / 3600
+            max_hold_time = self.config.get('max_hold_time_hours', 24)
+            
+            if hold_time > max_hold_time:
+                suggestions.append({
+                    'type': 'time_stop',
+                    'symbol': symbol,
+                    'reason': f'Position held for {hold_time:.1f} hours (max: {max_hold_time})',
+                    'suggested_action': 'close_position',
+                    'urgency': 'medium'
+                })
+                
+        except Exception as e:
+            logger.error(f"Error analyzing position optimization: {e}")
+        
+        return suggestions
+    
+    def _analyze_portfolio_optimization(self, market_conditions: Dict, risk_metrics: Dict) -> List[Dict]:
+        """Analyze portfolio-level optimization opportunities"""
+        suggestions = []
+        
+        try:
+            # Check overall risk level
+            total_risk = risk_metrics.get('total_risk', 0.5)
+            if total_risk > 0.8:
+                suggestions.append({
+                    'type': 'risk_reduction',
+                    'reason': f'Portfolio risk too high: {total_risk:.2f}',
+                    'suggested_action': 'reduce_position_sizes',
+                    'urgency': 'high'
+                })
+            
+            # Check concentration risk
+            if self.positions:
+                portfolio_metrics = self._calculate_portfolio_metrics()
+                concentration = portfolio_metrics.get('concentration_ratio', 0)
+                
+                if concentration > 0.7:
+                    suggestions.append({
+                        'type': 'diversification',
+                        'reason': f'High concentration ratio: {concentration:.2f}',
+                        'suggested_action': 'diversify_positions',
+                        'urgency': 'medium'
+                    })
+            
+            # Check for overtrading
+            recent_trades = len([trade for trade in self.trade_history 
+                               if (datetime.now() - trade.get('timestamp', datetime.now())).days < 1])
+            
+            max_daily_trades = self.config.get('max_daily_trades', 10)
+            if recent_trades > max_daily_trades:
+                suggestions.append({
+                    'type': 'overtrading',
+                    'reason': f'Too many trades today: {recent_trades}',
+                    'suggested_action': 'reduce_trading_frequency',
+                    'urgency': 'medium'
+                })
+                
+        except Exception as e:
+            logger.error(f"Error analyzing portfolio optimization: {e}")
+        
+        return suggestions
+    
+    def _calculate_optimal_allocation(self, market_conditions: Dict, risk_metrics: Dict) -> Dict:
+        """Calculate optimal portfolio allocation"""
+        try:
+            # For single instrument (MNQ), allocation is simple
+            # In multi-instrument system, this would use portfolio optimization
+            
+            volatility = market_conditions.get('volatility', 0.02)
+            risk_level = risk_metrics.get('total_risk', 0.5)
+            
+            # Adjust allocation based on market conditions
+            if volatility > 0.05:  # High volatility
+                optimal_allocation = 0.5  # Reduce allocation
+            elif volatility < 0.01:  # Low volatility
+                optimal_allocation = 1.0  # Full allocation
+            else:
+                optimal_allocation = 0.75  # Normal allocation
+            
+            # Adjust for risk
+            risk_adjusted_allocation = optimal_allocation * (1.0 - risk_level)
+            
+            return {
+                'MNQ': max(0.1, min(1.0, risk_adjusted_allocation)),
+                'cash': 1.0 - max(0.1, min(1.0, risk_adjusted_allocation))
+            }
+            
+        except Exception as e:
+            logger.error(f"Error calculating optimal allocation: {e}")
+            return {'MNQ': 0.5, 'cash': 0.5}
+    
+    def _get_current_allocation(self) -> Dict:
+        """Get current portfolio allocation"""
+        try:
+            if not self.positions:
+                return {'cash': 1.0}
+            
+            # For single instrument system
+            total_position_value = sum(abs(pos['current_size']) for pos in self.positions.values())
+            
+            # Simplified allocation calculation
+            return {
+                'MNQ': min(1.0, total_position_value / 10),  # Normalize by typical position size
+                'cash': max(0.0, 1.0 - min(1.0, total_position_value / 10))
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting current allocation: {e}")
+            return {'cash': 1.0}
+    
+    def _calculate_returns_metrics(self) -> Dict:
+        """Calculate return-based metrics"""
+        try:
+            if not self.performance_history:
+                return {}
+            
+            # Get PnL history
+            pnls = [perf['total_pnl'] for perf in self.performance_history]
+            
+            if not pnls:
+                return {}
+            
+            # Calculate basic return metrics
+            total_return = sum(pnls)
+            avg_return = np.mean(pnls)
+            return_volatility = np.std(pnls)
+            
+            # Win rate
+            wins = [pnl for pnl in pnls if pnl > 0]
+            win_rate = len(wins) / len(pnls)
+            
+            # Average win/loss
+            losses = [pnl for pnl in pnls if pnl < 0]
+            avg_win = np.mean(wins) if wins else 0
+            avg_loss = abs(np.mean(losses)) if losses else 0
+            
+            # Profit factor
+            profit_factor = sum(wins) / abs(sum(losses)) if losses else float('inf')
+            
+            return {
+                'total_return': total_return,
+                'avg_return': avg_return,
+                'return_volatility': return_volatility,
+                'win_rate': win_rate,
+                'avg_win': avg_win,
+                'avg_loss': avg_loss,
+                'profit_factor': profit_factor,
+                'sharpe_ratio': avg_return / return_volatility if return_volatility > 0 else 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Error calculating returns metrics: {e}")
+            return {}
+    
+    def _calculate_risk_metrics(self) -> Dict:
+        """Calculate risk-based metrics"""
+        try:
+            if not self.performance_history:
+                return {}
+            
+            pnls = [perf['total_pnl'] for perf in self.performance_history]
+            
+            if not pnls:
+                return {}
+            
+            # Maximum drawdown
+            cumulative_pnl = np.cumsum(pnls)
+            running_max = np.maximum.accumulate(cumulative_pnl)
+            drawdown = running_max - cumulative_pnl
+            max_drawdown = np.max(drawdown)
+            
+            # Value at Risk (VaR) - 95% confidence
+            var_95 = np.percentile(pnls, 5) if len(pnls) > 20 else min(pnls)
+            
+            # Conditional VaR (Expected Shortfall)
+            cvar_95 = np.mean([pnl for pnl in pnls if pnl <= var_95]) if var_95 < 0 else 0
+            
+            return {
+                'max_drawdown': max_drawdown,
+                'var_95': var_95,
+                'cvar_95': cvar_95,
+                'downside_deviation': np.std([pnl for pnl in pnls if pnl < 0])
+            }
+            
+        except Exception as e:
+            logger.error(f"Error calculating risk metrics: {e}")
+            return {}
+    
+    def _calculate_trade_analytics(self) -> Dict:
+        """Calculate trade-based analytics"""
+        try:
+            if not self.performance_history:
+                return {}
+            
+            # Hold time analysis
+            hold_times = [perf['hold_time_hours'] for perf in self.performance_history]
+            
+            # MAE/MFE analysis
+            maes = [perf['max_adverse_excursion'] for perf in self.performance_history]
+            mfes = [perf['max_favorable_excursion'] for perf in self.performance_history]
+            
+            return {
+                'avg_hold_time': np.mean(hold_times) if hold_times else 0,
+                'median_hold_time': np.median(hold_times) if hold_times else 0,
+                'avg_mae': np.mean(maes) if maes else 0,
+                'avg_mfe': np.mean(mfes) if mfes else 0,
+                'total_trades': len(self.performance_history)
+            }
+            
+        except Exception as e:
+            logger.error(f"Error calculating trade analytics: {e}")
+            return {}
+    
+    def _calculate_position_analytics(self) -> Dict:
+        """Calculate position-based analytics"""
+        try:
+            if not self.positions:
+                return {}
+            
+            # Current position analysis
+            unrealized_pnls = [pos['unrealized_pnl'] for pos in self.positions.values()]
+            
+            return {
+                'open_positions': len(self.positions),
+                'total_unrealized': sum(unrealized_pnls),
+                'avg_unrealized': np.mean(unrealized_pnls),
+                'largest_winner': max(unrealized_pnls) if unrealized_pnls else 0,
+                'largest_loser': min(unrealized_pnls) if unrealized_pnls else 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Error calculating position analytics: {e}")
+            return {}
+    
+    def _calculate_performance_score(self, returns_metrics: Dict, risk_metrics: Dict) -> float:
+        """Calculate overall performance score"""
+        try:
+            # Weighted scoring based on multiple factors
+            sharpe_ratio = returns_metrics.get('sharpe_ratio', 0)
+            win_rate = returns_metrics.get('win_rate', 0)
+            profit_factor = min(returns_metrics.get('profit_factor', 1), 5)  # Cap at 5
+            max_drawdown = risk_metrics.get('max_drawdown', 0)
+            
+            # Normalize metrics to 0-100 scale
+            sharpe_score = min(100, max(0, sharpe_ratio * 50 + 50))
+            win_rate_score = win_rate * 100
+            profit_factor_score = min(100, profit_factor * 20)
+            drawdown_score = max(0, 100 - abs(max_drawdown) * 10)
+            
+            # Weighted average
+            performance_score = (
+                sharpe_score * 0.3 +
+                win_rate_score * 0.25 +
+                profit_factor_score * 0.25 +
+                drawdown_score * 0.2
+            )
+            
+            return performance_score
+            
+        except Exception as e:
+            logger.error(f"Error calculating performance score: {e}")
+            return 50.0  # Neutral score

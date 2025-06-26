@@ -1,4 +1,4 @@
-# src/neural/enhanced_neural.py
+# enhanced_neural.py
 
 import torch
 import torch.nn as nn

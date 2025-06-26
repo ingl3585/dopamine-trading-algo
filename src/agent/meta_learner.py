@@ -1,4 +1,4 @@
-# src/agent/meta_learner.py
+# meta_learner.py
 
 import torch
 import torch.nn as nn
@@ -179,8 +179,7 @@ class ArchitectureEvolver:
         self.performance_window.append(performance)
 
 class MetaLearner:
-    def __init__(self, config, state_dim: int = 20):
-        self.config = config
+    def __init__(self, state_dim: int = 20):
         self.state_dim = state_dim
         
         # Account-aware parameters with dynamic bounds

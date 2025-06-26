@@ -1,4 +1,4 @@
-# src/market_analysis/data_processor.py
+# data_processor.py
 
 import time
 
@@ -32,8 +32,7 @@ class MarketData:
 
 
 class DataProcessor:
-    def __init__(self, config, max_history=1000):
-        self.config = config
+    def __init__(self, max_history=1000):
         self.prices_1m = deque(maxlen=max_history)
         self.prices_5m = deque(maxlen=200)
         self.prices_15m = deque(maxlen=100)
