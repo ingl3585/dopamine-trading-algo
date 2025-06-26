@@ -20,12 +20,38 @@ def setup_logging():
     )
 
 def reset_workspace():
+    import os
+    import stat
+    
+    def handle_remove_readonly(func, path, exc):
+        if os.path.exists(path):
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+    
     dirs = ["models", "data", "logs"]
     for d in dirs:
         path = Path(d)
         if path.exists():
-            shutil.rmtree(path)
+            print(f"Removing {d}/...")
+            try:
+                shutil.rmtree(path, onerror=handle_remove_readonly)
+            except PermissionError as e:
+                print(f"Warning: Could not remove {d}/ - {e}")
+                # Try to clear contents instead
+                for item in path.iterdir():
+                    try:
+                        if item.is_file():
+                            item.chmod(0o777)
+                            item.unlink()
+                        elif item.is_dir():
+                            shutil.rmtree(item, onerror=handle_remove_readonly)
+                    except Exception as ex:
+                        print(f"Warning: Could not remove {item} - {ex}")
+        
         path.mkdir(parents=True, exist_ok=True)
+        print(f"Created {d}/")
+    
+    print("Reset complete!")
 
 def main():
     parser = argparse.ArgumentParser(description="Black Box Trading System")

@@ -196,6 +196,12 @@ class IntelligenceEngine:
             microstructure_features = self.microstructure_engine.get_microstructure_features()
             self.bootstrap_stats['microstructure_patterns_learned'] = len(microstructure_features.get('patterns', {})) if isinstance(microstructure_features, dict) else 0
             
+            # Close progress bars after bootstrap to prevent interference with live trading logs
+            self.orchestrator.close_progress_bars()
+            
+            # Add clean line break after progress bars
+            print()
+            
             self.historical_processed = True
             
             logger.info(f"Enhanced bootstrap complete: {total_bars} bars processed across all subsystems")
@@ -300,6 +306,11 @@ class IntelligenceEngine:
                 continue
         
         logger.info(f"Comprehensive processing complete: {processed_count} windows for {timeframe}")
+        
+        # Add clean line break after progress bar updates
+        if processed_count > 50:  # Only for larger processing batches
+            print()
+            
         return processed_count
     
     def _extract_comprehensive_market_features(self, prices: List[float], volumes: List[float],

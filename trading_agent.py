@@ -9,6 +9,7 @@ import time
 import logging
 
 from collections import deque
+from queue import Queue
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 
@@ -75,8 +76,8 @@ class TradingAgent:
         # Real-time adaptation integration
         self.adaptation_engine = RealTimeAdaptationEngine(model_dim=64)
         
-        # Enhanced optimizer with learning rate scheduling
-        self.optimizer = optim.AdamW(
+        # Single unified optimizer for all learning components
+        self.unified_optimizer = optim.AdamW(
             list(self.network.parameters()) + 
             list(self.feature_learner.parameters()) + 
             list(self.few_shot_learner.parameters()) +
@@ -88,15 +89,20 @@ class TradingAgent:
         
         # Learning rate scheduler
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode='max', factor=0.8, patience=50
+            self.unified_optimizer, mode='max', factor=0.8, patience=50
         )
         
-        # Enhanced experience replay with prioritization
-        self.experience_buffer = deque(maxlen=20000)  # Increased buffer size
-        self.priority_buffer = deque(maxlen=5000)  # High priority experiences
+        # Thread-safe experience replay with prioritization  
+        self.experience_buffer = Queue(maxsize=20000)  # Thread-safe buffer
+        self.priority_buffer = Queue(maxsize=5000)  # Thread-safe priority buffer
         
-        # Catastrophic forgetting prevention
-        self.previous_task_buffer = deque(maxlen=1000)
+        # Catastrophic forgetting prevention (thread-safe)
+        self.previous_task_buffer = Queue(maxsize=1000)
+        
+        # Queue helper buffers for deque-like operations
+        self._experience_list = []
+        self._priority_list = []
+        self._previous_task_list = []
         self.importance_weights = {}
         
         # Enhanced statistics and tracking
@@ -119,6 +125,64 @@ class TradingAgent:
         # Model ensemble for uncertainty quantification
         self.ensemble_predictions = deque(maxlen=10)
     
+    # Queue helper methods for deque-like operations
+    def _buffer_size(self, buffer_type):
+        """Get buffer size"""
+        if buffer_type == 'experience':
+            return len(self._experience_list)
+        elif buffer_type == 'priority':
+            return len(self._priority_list)
+        elif buffer_type == 'previous_task':
+            return len(self._previous_task_list)
+        return 0
+    
+    def _buffer_append(self, item, buffer_type):
+        """Add item to buffer with maxsize handling"""
+        if buffer_type == 'experience':
+            self._experience_list.append(item)
+            if len(self._experience_list) > 20000:
+                self._experience_list.pop(0)
+            try:
+                self.experience_buffer.put_nowait(item)
+            except:
+                pass  # Queue full, list maintains the data
+        elif buffer_type == 'priority':
+            self._priority_list.append(item)
+            if len(self._priority_list) > 5000:
+                self._priority_list.pop(0)
+            try:
+                self.priority_buffer.put_nowait(item)
+            except:
+                pass  # Queue full, list maintains the data
+        elif buffer_type == 'previous_task':
+            self._previous_task_list.append(item)
+            if len(self._previous_task_list) > 1000:
+                self._previous_task_list.pop(0)
+            try:
+                self.previous_task_buffer.put_nowait(item)
+            except:
+                pass  # Queue full, list maintains the data
+    
+    def _buffer_recent(self, n, buffer_type):
+        """Get recent N items from buffer"""
+        if buffer_type == 'experience':
+            return self._experience_list[-n:] if self._experience_list else []
+        elif buffer_type == 'priority':
+            return self._priority_list[-n:] if self._priority_list else []
+        elif buffer_type == 'previous_task':
+            return self._previous_task_list[-n:] if self._previous_task_list else []
+        return []
+    
+    def _buffer_all(self, buffer_type):
+        """Get all items from buffer as list"""
+        if buffer_type == 'experience':
+            return self._experience_list.copy()
+        elif buffer_type == 'priority':
+            return self._priority_list.copy()
+        elif buffer_type == 'previous_task':
+            return self._previous_task_list.copy()
+        return []
+
     def decide(self, features: Features, market_data: MarketData) -> Decision:
         self.total_decisions += 1
         
@@ -377,10 +441,10 @@ class TradingAgent:
     
     def _evaluate_stop_effectiveness(self) -> float:
         """Evaluate how effective stops have been recently"""
-        if len(self.experience_buffer) < 20:
+        if self._buffer_size('experience') < 20:
             return 0.5  # Neutral when insufficient data
         
-        recent_experiences = list(self.experience_buffer)[-50:]
+        recent_experiences = self._buffer_recent(50, 'experience')
         
         stop_used_outcomes = []
         no_stop_outcomes = []
@@ -407,10 +471,10 @@ class TradingAgent:
     
     def _evaluate_target_effectiveness(self) -> float:
         """Evaluate how effective targets have been recently"""
-        if len(self.experience_buffer) < 20:
+        if self._buffer_size('experience') < 20:
             return 0.5  # Neutral when insufficient data
         
-        recent_experiences = list(self.experience_buffer)[-50:]
+        recent_experiences = self._buffer_recent(50, 'experience')
         
         target_used_outcomes = []
         no_target_outcomes = []
@@ -782,10 +846,10 @@ class TradingAgent:
                     
                     # Prioritize unusual or high-impact experiences
                     if abs(reward) > 0.5 or trade_data['uncertainty_estimate'] > 0.7:
-                        self.priority_buffer.append(experience)
+                        self._buffer_append(experience, 'priority')
                         logger.info("Experience added to priority buffer")
                     else:
-                        self.experience_buffer.append(experience)
+                        self._buffer_append(experience, 'experience')
                         logger.info("Experience added to regular buffer")
                         
                 else:
@@ -796,7 +860,7 @@ class TradingAgent:
             
             # Train networks if enough experience
             try:
-                if len(self.experience_buffer) >= 64 or len(self.priority_buffer) >= 32:
+                if self._buffer_size('experience') >= 64 or self._buffer_size('priority') >= 32:
                     logger.info("Starting network training...")
                     self._train_enhanced_networks()
                     logger.info("Network training completed!")
@@ -805,7 +869,7 @@ class TradingAgent:
             
             # Update learning rate based on performance
             try:
-                recent_rewards = [exp['reward'] for exp in list(self.experience_buffer)[-20:]]
+                recent_rewards = [exp['reward'] for exp in self._buffer_recent(20, 'experience')]
                 if len(recent_rewards) >= 10:
                     avg_reward = np.mean(recent_rewards)
                     self.scheduler.step(avg_reward)
@@ -870,24 +934,24 @@ class TradingAgent:
     
     def _train_enhanced_networks(self):
         """Enhanced network training with catastrophic forgetting prevention"""
-        total_experiences = len(self.experience_buffer) + len(self.priority_buffer)
+        total_experiences = self._buffer_size('experience') + self._buffer_size('priority')
         if total_experiences < 32:
             return
         
         # Sample from both buffers
-        regular_sample_size = min(24, len(self.experience_buffer))
-        priority_sample_size = min(8, len(self.priority_buffer))
+        regular_sample_size = min(24, self._buffer_size('experience'))
+        priority_sample_size = min(8, self._buffer_size('priority'))
         
         batch = []
         if regular_sample_size > 0:
-            batch.extend(np.random.choice(list(self.experience_buffer), size=regular_sample_size, replace=False))
+            batch.extend(np.random.choice(self._buffer_all('experience'), size=regular_sample_size, replace=False))
         if priority_sample_size > 0:
-            batch.extend(np.random.choice(list(self.priority_buffer), size=priority_sample_size, replace=False))
+            batch.extend(np.random.choice(self._buffer_all('priority'), size=priority_sample_size, replace=False))
         
         # Add some previous task data to prevent catastrophic forgetting
-        if len(self.previous_task_buffer) > 0:
-            prev_task_sample_size = min(8, len(self.previous_task_buffer))
-            batch.extend(np.random.choice(list(self.previous_task_buffer), size=prev_task_sample_size, replace=False))
+        if self._buffer_size('previous_task') > 0:
+            prev_task_sample_size = min(8, self._buffer_size('previous_task'))
+            batch.extend(np.random.choice(self._buffer_all('previous_task'), size=prev_task_sample_size, replace=False))
         
         if len(batch) < 16:
             return
@@ -950,7 +1014,7 @@ class TradingAgent:
                      0.001 * regularization_loss)
         
         # Backward pass with gradient clipping
-        self.optimizer.zero_grad()
+        self.unified_optimizer.zero_grad()
         total_loss.backward()
         
         # Calculate importance weights for catastrophic forgetting prevention
@@ -964,7 +1028,7 @@ class TradingAgent:
             1.0
         )
         
-        self.optimizer.step()
+        self.unified_optimizer.step()
         
         # Update target network periodically
         if self.total_decisions % 200 == 0:
@@ -989,7 +1053,7 @@ class TradingAgent:
         new_sizes = self.meta_learner.evolve_architecture()
         
         # Get current performance for evolution decision
-        recent_performance = [exp['reward'] for exp in list(self.experience_buffer)[-50:]]
+        recent_performance = [exp['reward'] for exp in self._buffer_recent(50, 'experience')]
         if len(recent_performance) >= 20:
             avg_performance = np.mean(recent_performance)
             self.network.record_performance(avg_performance)
@@ -1000,19 +1064,19 @@ class TradingAgent:
         self.target_network.evolve_architecture(new_sizes)
         
         # Update optimizer with new parameters
-        self.optimizer = optim.AdamW(
+        self.unified_optimizer = optim.AdamW(
             list(self.network.parameters()) +
             list(self.feature_learner.parameters()) +
             list(self.few_shot_learner.parameters()) +
             list(self.meta_learner.subsystem_weights.parameters()) +
             list(self.meta_learner.exploration_strategy.parameters()),
-            lr=self.optimizer.param_groups[0]['lr'],  # Preserve current learning rate
+            lr=self.unified_optimizer.param_groups[0]['lr'],  # Preserve current learning rate
             weight_decay=1e-5
         )
         
         # Update scheduler
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode='max', factor=0.8, patience=50
+            self.unified_optimizer, mode='max', factor=0.8, patience=50
         )
         
         logger.info(f"Architecture evolved to: {new_sizes}")
@@ -1030,7 +1094,7 @@ class TradingAgent:
             'target_network_state': self.target_network.state_dict(),
             'feature_learner_state': self.feature_learner.state_dict(),
             'few_shot_learner_state': self.few_shot_learner.state_dict(),
-            'optimizer_state': self.optimizer.state_dict(),
+            'optimizer_state': self.unified_optimizer.state_dict(),
             'scheduler_state': self.scheduler.state_dict(),
             'importance_weights': self.importance_weights,
             'total_decisions': self.total_decisions,
@@ -1040,7 +1104,10 @@ class TradingAgent:
             'regime_transitions': self.regime_transitions,
             'adaptation_events': self.adaptation_events,
             'strategy_performance': {k: list(v) for k, v in self.strategy_performance.items()},
-            'network_evolution_stats': self.network.get_evolution_stats()
+            'network_evolution_stats': self.network.get_evolution_stats(),
+            'experience_list': self._experience_list[-1000:],  # Save last 1000 experiences
+            'priority_list': self._priority_list[-500:],  # Save last 500 priority experiences
+            'previous_task_list': self._previous_task_list[-200:]  # Save last 200 previous tasks
         }, filepath)
         
         # Save meta-learner and adaptation engine separately
@@ -1071,7 +1138,7 @@ class TradingAgent:
             if 'few_shot_learner_state' in checkpoint:
                 self.few_shot_learner.load_state_dict(checkpoint['few_shot_learner_state'])
             
-            self.optimizer.load_state_dict(checkpoint['optimizer_state'])
+            self.unified_optimizer.load_state_dict(checkpoint['optimizer_state'])
             
             if 'scheduler_state' in checkpoint:
                 self.scheduler.load_state_dict(checkpoint['scheduler_state'])
@@ -1091,6 +1158,14 @@ class TradingAgent:
                 for strategy, performance in checkpoint['strategy_performance'].items():
                     self.strategy_performance[strategy] = deque(performance, maxlen=100)
             
+            # Load buffer lists
+            if 'experience_list' in checkpoint:
+                self._experience_list = checkpoint['experience_list']
+            if 'priority_list' in checkpoint:
+                self._priority_list = checkpoint['priority_list']
+            if 'previous_task_list' in checkpoint:
+                self._previous_task_list = checkpoint['previous_task_list']
+            
             # Load meta-learner
             self.meta_learner.load_state(filepath.replace('.pt', '_meta.pt'))
             
@@ -1108,8 +1183,8 @@ class TradingAgent:
             'successful_trades': self.successful_trades,
             'success_rate': self.successful_trades / max(1, self.total_decisions),
             'total_pnl': self.total_pnl,
-            'experience_size': len(self.experience_buffer),
-            'priority_experience_size': len(self.priority_buffer),
+            'experience_size': self._buffer_size('experience'),
+            'priority_experience_size': self._buffer_size('priority'),
             'learning_efficiency': self.meta_learner.get_learning_efficiency(),
             'architecture_generation': self.meta_learner.architecture_evolver.generations,
             'current_sizes': self.meta_learner.architecture_evolver.current_sizes,
@@ -1142,7 +1217,7 @@ class TradingAgent:
             'loss_tolerance_factor': self.meta_learner.get_parameter('loss_tolerance_factor'),
             'stop_preference': self.meta_learner.get_parameter('stop_preference'),
             'target_preference': self.meta_learner.get_parameter('target_preference'),
-            'current_learning_rate': self.optimizer.param_groups[0]['lr']
+            'current_learning_rate': self.unified_optimizer.param_groups[0]['lr']
         }
         
         return {
@@ -1152,5 +1227,10 @@ class TradingAgent:
             'adaptation_engine': adaptation_stats,
             'key_parameters': key_parameters,
             'few_shot_support_size': len(self.few_shot_learner.support_features),
-            'catastrophic_forgetting_protection': len(self.importance_weights)
+            'catastrophic_forgetting_protection': len(self.importance_weights),
+            'buffer_sizes': {
+                'experience': self._buffer_size('experience'),
+                'priority': self._buffer_size('priority'),
+                'previous_task': self._buffer_size('previous_task')
+            }
         }

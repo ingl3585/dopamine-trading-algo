@@ -8,11 +8,41 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 import logging
 import random
-from tqdm import tqdm
 import sys
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)  # Reduce logging verbosity, use progress bars instead
+
+# Lazy import rich components
+progress = None
+console = None
+
+def _get_progress():
+    """Lazy initialization of rich progress bar"""
+    global progress, console
+    if progress is None:
+        try:
+            from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, MofNCompleteColumn
+            from rich.console import Console
+            
+            console = Console()
+            progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[prog.description]{task.description}"),
+                BarColumn(bar_width=30),
+                MofNCompleteColumn(),
+                TextColumn("•"),
+                TaskProgressColumn(),
+                TextColumn("•"), 
+                TimeRemainingColumn(),
+                console=console,
+                transient=True,  # Hide after completion
+                refresh_per_second=2  # Reduce refresh rate
+            )
+        except ImportError:
+            logger.warning("Rich not available, progress bars disabled")
+            progress = None
+    return progress
 
 
 class DNASubsystem:
@@ -452,22 +482,21 @@ class DNASubsystem:
         
         self.total_learning_events += 1
         
-        # Initialize progress bar if needed
-        if self.learning_progress is None:
+        # Initialize progress task if needed (only during bootstrap)
+        if self.learning_progress is None and not getattr(self, 'bootstrap_complete', False):
             try:
-                # DNA subsystem
-                self.learning_progress = tqdm(
-                    desc="DNA Learning",
-                    unit="patterns",
-                    position=0,
-                    leave=True,
-                    bar_format="{desc}: {n:,} patterns | {postfix} | {rate_fmt}",
-                    postfix={"elite": 0, "avg_perf": 0.0},
-                    mininterval=0.1,
-                    maxinterval=1.0
-                )
+                prog = _get_progress()
+                if prog is not None:
+                    if not prog.live.is_started:
+                        prog.start()
+                    self.learning_progress = prog.add_task(
+                        "[cyan]DNA Learning[/cyan]", 
+                        total=None,
+                        elite=0, 
+                        avg_perf=0.0
+                    )
             except Exception as e:
-                logger.error(f"Error initializing DNA progress bar: {e}")
+                logger.error(f"Error initializing DNA progress task: {e}")
                 self.learning_progress = None
         
         # Update or add sequence
@@ -497,23 +526,28 @@ class DNASubsystem:
         if outcome > self.performance_threshold:
             self.elite_sequences[sequence] = self.sequences[sequence].copy()
         
-        # Update progress bar
-        if sequence_added and self.learning_progress is not None:
+        # Update progress task (only during bootstrap)
+        if sequence_added and self.learning_progress is not None and not getattr(self, 'bootstrap_complete', False):
             try:
-                self.learning_progress.update(1)
+                prog = _get_progress()
+                if prog is not None:
+                    prog.advance(self.learning_progress, 1)
             except Exception as e:
-                logger.warning(f"Error updating DNA progress bar: {e}")
+                logger.warning(f"Error updating DNA progress task: {e}")
         
-        # Update progress bar stats every batch
+        # Update progress task stats every batch
         if self.total_learning_events % self.learning_batch_size == 0 and self.learning_progress is not None:
             try:
-                avg_perf = np.mean([data['performance'] for data in self.sequences.values()]) if self.sequences else 0.0
-                self.learning_progress.set_postfix(
-                    elite=len(self.elite_sequences),
-                    avg_perf=avg_perf
-                )
+                prog = _get_progress()
+                if prog is not None:
+                    avg_perf = np.mean([data['performance'] for data in self.sequences.values()]) if self.sequences else 0.0
+                    prog.update(
+                        self.learning_progress,
+                        elite=len(self.elite_sequences),
+                        avg_perf=f"{avg_perf:.3f}"
+                    )
             except Exception as e:
-                logger.warning(f"Error updating DNA progress bar stats: {e}")
+                logger.warning(f"Error updating DNA progress task stats: {e}")
         
         # Cleanup poor performers (periodic cleanup)
         if len(self.sequences) % 100 == 0:  # Cleanup every 100 sequences
@@ -828,21 +862,21 @@ class FFTTemporalSubsystem:
         
         self.total_learning_events += 1
         
-        # Initialize progress bar if needed
+        # Initialize progress task if needed
         if self.learning_progress is None:
             try:
-                self.learning_progress = tqdm(
-                    desc="Temporal Learning",
-                    unit="cycles",
-                    position=1,
-                    leave=True,
-                    bar_format="{desc}: {n:,} cycles | {postfix} | {rate_fmt}",
-                    postfix={"avg_conf": 0.0, "patterns": 0},
-                    mininterval=0.1,
-                    maxinterval=1.0
-                )
+                prog = _get_progress()
+                if prog is not None:
+                    if not prog.live.is_started:
+                        prog.start()
+                    self.learning_progress = prog.add_task(
+                        "[green]Temporal Learning[/green]", 
+                        total=None,
+                        avg_conf=0.0, 
+                        patterns=0
+                    )
             except Exception as e:
-                logger.error(f"Error initializing temporal progress bar: {e}")
+                logger.error(f"Error initializing temporal progress task: {e}")
                 self.learning_progress = None
         
         cycles_learned = 0
@@ -884,20 +918,25 @@ class FFTTemporalSubsystem:
                 cycles_learned += 1
                 if self.learning_progress is not None:
                     try:
-                        self.learning_progress.update(1)
+                        prog = _get_progress()
+                        if prog is not None:
+                            prog.advance(self.learning_progress, 1)
                     except Exception as e:
-                        logger.warning(f"Error updating temporal progress bar: {e}")
+                        logger.warning(f"Error updating temporal progress task: {e}")
         
-        # Update progress bar stats every batch
+        # Update progress task stats every batch
         if self.total_learning_events % self.learning_batch_size == 0 and self.learning_progress is not None:
             try:
-                avg_conf = np.mean([data['confidence'] for data in self.cycle_memory.values()]) if self.cycle_memory else 0.0
-                self.learning_progress.set_postfix(
-                    avg_conf=avg_conf,
-                    patterns=len(self.interference_patterns)
-                )
+                prog = _get_progress()
+                if prog is not None:
+                    avg_conf = np.mean([data['confidence'] for data in self.cycle_memory.values()]) if self.cycle_memory else 0.0
+                    prog.update(
+                        self.learning_progress,
+                        avg_conf=f"{avg_conf:.3f}",
+                        patterns=len(self.interference_patterns)
+                    )
             except Exception as e:
-                logger.warning(f"Error updating temporal progress bar stats: {e}")
+                logger.warning(f"Error updating temporal progress task stats: {e}")
         
         # Update seasonal patterns
         self._update_seasonal_patterns(outcome)
@@ -1184,21 +1223,21 @@ class EvolvingImmuneSystem:
 
         self.total_learning_events += 1
 
-        # Initialize progress bar if needed
+        # Initialize progress task if needed
         if self.learning_progress is None:
             try:
-                self.learning_progress = tqdm(
-                    desc="Immune Learning",
-                    unit="threats",
-                    position=2,
-                    leave=True,
-                    bar_format="{desc}: {n:,} threats | {postfix} | {rate_fmt}",
-                    postfix={"tcells": 0, "prevention": 0},
-                    mininterval=0.1,
-                    maxinterval=1.0
-                )
+                prog = _get_progress()
+                if prog is not None:
+                    if not prog.live.is_started:
+                        prog.start()
+                    self.learning_progress = prog.add_task(
+                        "[red]Immune Learning[/red]", 
+                        total=None,
+                        tcells=0, 
+                        prevention=0
+                    )
             except Exception as e:
-                logger.error(f"Error initializing immune progress bar: {e}")
+                logger.error(f"Error initializing immune progress task: {e}")
                 self.learning_progress = None
 
         # Use a more sensitive threshold during historical bootstrapping
@@ -1243,22 +1282,27 @@ class EvolvingImmuneSystem:
                 data['strength'] = max(0.1, data['strength'] - 0.3)
                 data['specificity'] = max(0.3, data['specificity'] - 0.1)
         
-        # Update progress bar
+        # Update progress task
         if antibody_created and self.learning_progress is not None:
             try:
-                self.learning_progress.update(1)
+                prog = _get_progress()
+                if prog is not None:
+                    prog.advance(self.learning_progress, 1)
             except Exception as e:
-                logger.warning(f"Error updating immune progress bar: {e}")
+                logger.warning(f"Error updating immune progress task: {e}")
         
-        # Update progress bar stats every batch
+        # Update progress task stats every batch
         if self.total_learning_events % self.learning_batch_size == 0 and self.learning_progress is not None:
             try:
-                self.learning_progress.set_postfix(
-                    tcells=len(self.t_cell_memory),
-                    prevention=len(self.autoimmune_prevention)
-                )
+                prog = _get_progress()
+                if prog is not None:
+                    prog.update(
+                        self.learning_progress,
+                        tcells=len(self.t_cell_memory),
+                        prevention=len(self.autoimmune_prevention)
+                    )
             except Exception as e:
-                logger.warning(f"Error updating immune progress bar stats: {e}")
+                logger.warning(f"Error updating immune progress task stats: {e}")
     
     def _track_threat_evolution(self, pattern: str, market_state: Dict, threat_level: float):
         """Track how threats evolve over time"""
@@ -1423,6 +1467,7 @@ class EnhancedIntelligenceOrchestrator:
         
         # Progress tracking
         self.orchestrator_progress = None
+        self.bootstrap_complete = False
         
     def process_market_data(self, prices: List[float], volumes: List[float],
                            market_features: Dict, timestamps: Optional[List[float]] = None) -> Dict[str, float]:
@@ -1688,21 +1733,21 @@ class EnhancedIntelligenceOrchestrator:
             logger.error(f"Context is not a dictionary: type={type(context)}, content={str(context)[:200]}")
             return
         
-        # Initialize orchestrator progress bar if needed
+        # Initialize orchestrator progress task if needed
         if self.orchestrator_progress is None:
             try:
-                self.orchestrator_progress = tqdm(
-                    desc="Orchestrator Learning",
-                    unit="decisions",
-                    position=3,
-                    leave=True,
-                    bar_format="{desc}: {n:,} decisions | {postfix} | {rate_fmt}",
-                    postfix={"tools": 4, "consensus": 0.0},
-                    mininterval=0.1,
-                    maxinterval=1.0
-                )
+                prog = _get_progress()
+                if prog is not None:
+                    if not prog.live.is_started:
+                        prog.start()
+                    self.orchestrator_progress = prog.add_task(
+                        "[blue]Orchestrator Learning[/blue]", 
+                        total=None,
+                        tools=4, 
+                        consensus=0.0
+                    )
             except Exception as e:
-                logger.error(f"Error initializing orchestrator progress bar: {e}")
+                logger.error(f"Error initializing orchestrator progress task: {e}")
                 self.orchestrator_progress = None
         
         # Extract context with additional validation
@@ -1807,19 +1852,22 @@ class EnhancedIntelligenceOrchestrator:
             # Simple performance tracking for now
             hybrid_data['performance_history'].append(outcome * 0.5)  # Conservative attribution
         
-        # Update orchestrator progress
+        # Update orchestrator progress task
         if self.orchestrator_progress is not None:
             try:
-                self.orchestrator_progress.update(1)
-                
-                # Update progress stats
-                recent_consensus = np.mean(list(self.consensus_history)) if self.consensus_history else 0.0
-                self.orchestrator_progress.set_postfix(
-                    tools=4 + len(self.hybrid_tools),  # DNA, Temporal, Immune, Microstructure + hybrids
-                    consensus=recent_consensus
-                )
+                prog = _get_progress()
+                if prog is not None:
+                    prog.advance(self.orchestrator_progress, 1)
+                    
+                    # Update progress stats
+                    recent_consensus = np.mean(list(self.consensus_history)) if self.consensus_history else 0.0
+                    prog.update(
+                        self.orchestrator_progress,
+                        tools=4 + len(self.hybrid_tools),  # DNA, Temporal, Immune, Microstructure + hybrids
+                        consensus=f"{recent_consensus:.3f}"
+                    )
             except Exception as e:
-                logger.warning(f"Error updating orchestrator progress bar: {e}")
+                logger.warning(f"Error updating orchestrator progress task: {e}")
         
         # Periodic evolution
         if len(self.subsystem_votes) % 100 == 0:
@@ -1831,32 +1879,23 @@ class EnhancedIntelligenceOrchestrator:
     def close_progress_bars(self):
         """Graceful shutdown helper"""
         try:
-            if self.dna_subsystem.learning_progress is not None:
-                self.dna_subsystem.learning_progress.close()
-                self.dna_subsystem.learning_progress = None
+            prog = _get_progress()
+            if prog is not None:
+                if prog.live.is_started:
+                    prog.stop()
+            
+            # Reset task IDs and mark bootstrap complete
+            self.dna_subsystem.learning_progress = None
+            self.dna_subsystem.bootstrap_complete = True
+            self.temporal_subsystem.learning_progress = None  
+            self.temporal_subsystem.bootstrap_complete = True
+            self.immune_subsystem.learning_progress = None
+            self.immune_subsystem.bootstrap_complete = True
+            self.orchestrator_progress = None
+            self.bootstrap_complete = True
+            
         except Exception as e:
-            logger.warning(f"Error closing DNA progress bar: {e}")
-
-        try:
-            if self.temporal_subsystem.learning_progress is not None:
-                self.temporal_subsystem.learning_progress.close()
-                self.temporal_subsystem.learning_progress = None
-        except Exception as e:
-            logger.warning(f"Error closing temporal progress bar: {e}")
-
-        try:
-            if self.immune_subsystem.learning_progress is not None:
-                self.immune_subsystem.learning_progress.close()
-                self.immune_subsystem.learning_progress = None
-        except Exception as e:
-            logger.warning(f"Error closing immune progress bar: {e}")
-
-        try:
-            if self.orchestrator_progress is not None:
-                self.orchestrator_progress.close()
-                self.orchestrator_progress = None
-        except Exception as e:
-            logger.warning(f"Error closing orchestrator progress bar: {e}")
+            logger.warning(f"Error closing progress display: {e}")
     
     def _evolve_tools(self):
         """Evolve tools based on performance"""

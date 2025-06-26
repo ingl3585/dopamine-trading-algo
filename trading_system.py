@@ -186,14 +186,20 @@ class TradingSystem:
             logger.error(f"Traceback: {traceback.format_exc()}")
             logger.error(f"Raw data keys: {list(raw_data.keys()) if isinstance(raw_data, dict) else 'Not a dict'}")
 
+    def _learn_from_outcome(self, outcome):
+        """Sequential learning coordinator - eliminates race conditions"""
+        # Phase 1: Subsystems learn first (no conflicts)
+        self.intelligence.learn_from_outcome(outcome)
+        # Phase 2: RL agent learns second (uses updated subsystem weights)
+        self.agent.learn_from_trade(outcome)
+
     # Rest of the methods remain the same...
     def _process_trade_completion(self, completion_data):
         try:
             trade = self.portfolio.complete_trade(completion_data)
             if trade:
-                # Enhanced learning with intelligence data
-                self.agent.learn_from_trade(trade)
-                self.intelligence.learn_from_outcome(trade)
+                # Sequential learning phases to prevent race conditions
+                self._learn_from_outcome(trade)
                 
                 # Process trade outcome for advanced risk learning
                 trade_outcome = {
@@ -346,31 +352,49 @@ class TradingSystem:
             logger.error(f"Error logging performance summary: {e}")
 
     def _save_state(self):
+        """
+        Persist agent + intelligence + portfolio + minimal runtime stats.
+        Handles NumPy scalars so json.dump never throws
+        “Object of type int64 is not JSON serializable”.
+        """
         try:
-            import os
-            import json
-            
-            # Ensure directories exist
-            os.makedirs('models', exist_ok=True)
-            os.makedirs('data', exist_ok=True)
-            
-            self.agent.save_model('models/agent.pt')
-            self.intelligence.save_patterns('data/patterns.json')
-            self.portfolio.save_state('data/portfolio.json')
-            
-            # Save system state with account tracking
+            import os, json, time, numpy as np
+
+            # --- helper ----------------------------------------------------
+            def _np_encoder(obj):
+                """Convert NumPy scalars/arrays to vanilla Python types."""
+                if isinstance(obj, (np.integer,)):
+                    return int(obj)
+                if isinstance(obj, (np.floating,)):
+                    return float(obj)
+                if isinstance(obj, (np.bool_,)):
+                    return bool(obj)
+                if isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                raise TypeError(f"{type(obj)} is not JSON serializable")
+            # ----------------------------------------------------------------
+
+            os.makedirs("models", exist_ok=True)
+            os.makedirs("data",   exist_ok=True)
+
+            # binary / torch checkpoints
+            self.agent.save_model("models/agent.pt")
+            self.intelligence.save_patterns("data/patterns.json")  # already JSON-safe
+            self.portfolio.save_state("data/portfolio.json")
+
+            # tiny runtime snapshot
             system_state = {
-                'last_account_balance': self.last_account_balance,
-                'account_change_threshold': self.account_change_threshold,
-                'ready_for_trading': self.ready_for_trading,
-                'total_decisions': self.total_decisions,
-                'data_updates_received': self.data_updates_received,
-                'saved_at': time.time()
+                "last_account_balance" : float(self.last_account_balance),
+                "account_change_threshold": float(self.account_change_threshold),
+                "ready_for_trading"    : bool(self.ready_for_trading),
+                "total_decisions"      : int(self.total_decisions),
+                "data_updates_received": int(self.data_updates_received),
+                "saved_at"             : time.time()
             }
-            
-            with open('data/system_state.json', 'w') as f:
-                json.dump(system_state, f)
-            
+
+            with open("data/system_state.json", "w") as f:
+                json.dump(system_state, f, indent=2, default=_np_encoder)
+
         except Exception as e:
             logger.error(f"Error saving state: {e}")
     
