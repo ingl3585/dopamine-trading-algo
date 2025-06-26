@@ -8,11 +8,11 @@ Public Interface:
 """
 
 from .domain.services import TradingService
-from .infrastructure.ninjatrader import NinjaTraderBridge
+from .infrastructure.ninjatrader import NinjaTraderRepository
 
 def create_trading_service(config):
     """Factory to create configured trading service"""
-    bridge = NinjaTraderBridge(config)
-    return TradingService(bridge)
+    repository = NinjaTraderRepository(config)
+    return TradingService(repository)
 
-__all__ = ['TradingService', 'NinjaTraderBridge', 'create_trading_service']
+__all__ = ['TradingService', 'NinjaTraderRepository', 'create_trading_service']

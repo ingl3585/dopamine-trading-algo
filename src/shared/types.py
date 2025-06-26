@@ -15,8 +15,12 @@ class MarketData:
 class Signal:
     value: float
     confidence: float
-    source: str
-    timestamp: datetime
+    source: str = "unknown"
+    timestamp: Optional[datetime] = None
+    
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = datetime.now()
     
 @dataclass
 class TradeDecision:
@@ -34,8 +38,18 @@ class TradeOutcome:
     
 @dataclass
 class AccountInfo:
-    cash: float
-    buying_power: float
-    position_size: float
-    unrealized_pnl: float
-    realized_pnl: float
+    cash: float = 25000.0
+    buying_power: float = 25000.0
+    position_size: float = 0.0
+    unrealized_pnl: float = 0.0
+    realized_pnl: float = 0.0
+
+@dataclass
+class Order:
+    action: str  # 'buy' or 'sell'
+    size: float
+    price: float = 0.0
+    confidence: float = 0.7
+    stop_price: float = 0.0
+    target_price: float = 0.0
+    primary_tool: str = "ai_agent"

@@ -59,6 +59,10 @@ class TradingSystemOrchestrator:
         self.tcp_server.on_historical_data = self._handle_historical_data
         self.tcp_server.on_trade_completion = self._handle_trade_completion
         
+        # Link TCP server to trading service
+        if hasattr(self.trading_service, 'repository') and hasattr(self.trading_service.repository, 'set_tcp_server'):
+            self.trading_service.repository.set_tcp_server(self.tcp_server)
+        
         logger.info("Trading system orchestrator initialized successfully")
     
     async def start(self):

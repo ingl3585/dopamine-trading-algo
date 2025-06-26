@@ -10,26 +10,26 @@ A sophisticated, modular trading system built with Domain-Driven Design (DDD) an
 src/
 ├── ai/                          # AI DOMAIN - Sophisticated Intelligence
 │   └── intelligence/            
-│       ├── engine.py           # Main AI orchestrator with swarm intelligence
-│       └── subsystems/         # Four specialized AI subsystems
-│           ├── dna/            # 16-base genetic encoding & evolution
-│           ├── temporal/       # FFT cycle detection & lunar patterns
-│           ├── immune/         # Adaptive threat detection system
-│           └── microstructure/ # Smart money & order flow analysis
-├── trading/                    # TRADING DOMAIN - Execution & Positions
-│   ├── domain/services.py      # Core trading business logic
-│   └── infrastructure/         # NinjaTrader integration
-├── market/                     # MARKET DOMAIN - Data Processing
-│   ├── data/processor.py       # Market data processing & features
-│   └── microstructure/         # Advanced market analysis
-├── risk/                       # RISK DOMAIN - Risk Management
-│   ├── management/service.py   # Kelly criterion & dynamic risk
-│   └── portfolio/manager.py    # Portfolio optimization & analytics
-├── core/                       # CORE SYSTEM - Integration
-│   ├── main.py                 # Main orchestrator entry point
-│   └── config.py               # Environment-aware configuration
-└── shared/                     # SHARED KERNEL - Common types
-    └── types.py                # Domain interfaces & data types
+│       ├── engine.py            # Main AI orchestrator with swarm intelligence
+│       └── subsystems/          # Four specialized AI subsystems
+│           ├── dna/             # 16-base genetic encoding & evolution
+│           ├── temporal/        # FFT cycle detection & lunar patterns
+│           ├── immune/          # Adaptive threat detection system
+│           └── microstructure/  # Smart money & order flow analysis
+├── trading/                     # TRADING DOMAIN - Execution & Positions
+│   ├── domain/services.py       # Core trading business logic
+│   └── infrastructure/          # NinjaTrader integration
+├── market/                      # MARKET DOMAIN - Data Processing
+│   ├── market_data/processor.py # Market data processing & features
+│   └── microstructure/          # Advanced market analysis
+├── risk/                        # RISK DOMAIN - Risk Management
+│   ├── management/service.py    # Kelly criterion & dynamic risk
+│   └── portfolio/manager.py     # Portfolio optimization & analytics
+├── core/                        # CORE SYSTEM - Integration
+│   ├── main.py                  # Main orchestrator entry point
+│   └── config.py                # Environment-aware configuration
+└── shared/                      # SHARED KERNEL - Common types
+    └── types.py                 # Domain interfaces & data types
 ```
 
 ## 🚀 Quick Start

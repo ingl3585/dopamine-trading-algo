@@ -4,6 +4,7 @@ Cycle Detection Engine - FFT analysis and interference modeling
 
 import numpy as np
 import logging
+
 from scipy import fft
 from collections import deque
 from typing import Dict, List
