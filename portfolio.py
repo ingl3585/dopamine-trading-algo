@@ -295,12 +295,25 @@ class Portfolio:
             'saved_at': datetime.now().isoformat()
         }
         
-        import os
+        import os, numpy as np
+        
+        def _np_encoder(obj):
+            """Convert NumPy scalars/arrays to vanilla Python types."""
+            if isinstance(obj, (np.integer,)):
+                return int(obj)
+            if isinstance(obj, (np.floating,)):
+                return float(obj)
+            if isinstance(obj, (np.bool_,)):
+                return bool(obj)
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            raise TypeError(f"{type(obj)} is not JSON serializable")
+        
         # Ensure directory exists
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         
         with open(filepath, 'w') as f:
-            json.dump(data, f, indent=2)
+            json.dump(data, f, indent=2, default=_np_encoder)
     
     def load_state(self, filepath: str):
         try:

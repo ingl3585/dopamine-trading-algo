@@ -483,7 +483,7 @@ class DNASubsystem:
         self.total_learning_events += 1
         
         # Initialize progress task if needed (only during bootstrap)
-        if self.learning_progress is None and not getattr(self, 'bootstrap_complete', False):
+        if self.learning_progress is None and not getattr(self, 'bootstrap_complete', False) and not hasattr(self, '_live_trading_started'):
             try:
                 prog = _get_progress()
                 if prog is not None:
@@ -1876,7 +1876,7 @@ class EnhancedIntelligenceOrchestrator:
             except Exception as e:
                 logger.warning(f"Tool evolution failed: {e}")
 
-    def close_progress_bars(self):
+    def close_progress_bars(self, microstructure_engine=None):
         """Graceful shutdown helper"""
         try:
             prog = _get_progress()
@@ -1891,6 +1891,12 @@ class EnhancedIntelligenceOrchestrator:
             self.temporal_subsystem.bootstrap_complete = True
             self.immune_subsystem.learning_progress = None
             self.immune_subsystem.bootstrap_complete = True
+            
+            # Handle microstructure engine if provided
+            if microstructure_engine:
+                microstructure_engine.learning_progress = None
+                microstructure_engine.bootstrap_complete = True
+            
             self.orchestrator_progress = None
             self.bootstrap_complete = True
             

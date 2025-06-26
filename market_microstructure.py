@@ -9,6 +9,37 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Lazy import rich components
+progress = None
+console = None
+
+def _get_progress():
+    """Lazy initialization of rich progress bar"""
+    global progress, console
+    if progress is None:
+        try:
+            from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, MofNCompleteColumn
+            from rich.console import Console
+            
+            console = Console()
+            progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[prog.description]{task.description}"),
+                BarColumn(bar_width=30),
+                MofNCompleteColumn(),
+                TextColumn("•"),
+                TaskProgressColumn(),
+                TextColumn("•"), 
+                TimeRemainingColumn(),
+                console=console,
+                transient=True,  # Hide after completion
+                refresh_per_second=2  # Reduce refresh rate
+            )
+        except ImportError:
+            logger.warning("Rich not available, progress bars disabled")
+            progress = None
+    return progress
+
 
 @dataclass
 class OrderFlowSignals:
@@ -385,6 +416,12 @@ class MarketMicrostructureEngine:
         self.analysis_history = deque(maxlen=100)
         self.patterns = {}
         
+        # Progress tracking
+        self.learning_progress = None
+        self.total_learning_events = 0
+        self.learning_batch_size = 30
+        self.bootstrap_complete = False
+        
     def analyze_market_state(self, prices: List[float], volumes: List[float], 
                            external_data: Dict = None) -> Dict:
         
@@ -467,16 +504,60 @@ class MarketMicrostructureEngine:
         if not context:
             return
 
+        self.total_learning_events += 1
+
+        # Initialize progress task if needed (only during bootstrap)
+        if self.learning_progress is None and not getattr(self, 'bootstrap_complete', False) and not hasattr(self, '_live_trading_started'):
+            try:
+                prog = _get_progress()
+                if prog is not None:
+                    if not prog.live.is_started:
+                        prog.start()
+                    self.learning_progress = prog.add_task(
+                        "[magenta]Microstructure Learning[/magenta]", 
+                        total=None,
+                        patterns=0, 
+                        avg_strength=0.0
+                    )
+            except Exception as e:
+                logger.error(f"Error initializing microstructure progress task: {e}")
+                self.learning_progress = None
+
         pattern_id = self._create_pattern_id(context)
         if not pattern_id:
             return
 
+        pattern_added = False
         if pattern_id not in self.patterns:
             self.patterns[pattern_id] = {'outcomes': [], 'strength': 0.0}
+            pattern_added = True
         
         self.patterns[pattern_id]['outcomes'].append(outcome)
         # Simple moving average of performance
         self.patterns[pattern_id]['strength'] = np.mean(self.patterns[pattern_id]['outcomes'][-20:])
+        
+        # Update progress task (only during bootstrap)
+        if pattern_added and self.learning_progress is not None and not getattr(self, 'bootstrap_complete', False):
+            try:
+                prog = _get_progress()
+                if prog is not None:
+                    prog.advance(self.learning_progress, 1)
+            except Exception as e:
+                logger.warning(f"Error updating microstructure progress task: {e}")
+        
+        # Update progress task stats every batch
+        if self.total_learning_events % self.learning_batch_size == 0 and self.learning_progress is not None:
+            try:
+                prog = _get_progress()
+                if prog is not None:
+                    avg_strength = np.mean([data['strength'] for data in self.patterns.values()]) if self.patterns else 0.0
+                    prog.update(
+                        self.learning_progress,
+                        patterns=len(self.patterns),
+                        avg_strength=f"{avg_strength:.3f}"
+                    )
+            except Exception as e:
+                logger.warning(f"Error updating microstructure progress task stats: {e}")
 
     def _create_pattern_id(self, context: Dict) -> str:
         """Creates a unique, learnable pattern ID from the microstructure context."""
@@ -495,21 +576,26 @@ class MarketMicrostructureEngine:
     
     def get_microstructure_features(self) -> Dict:
         """Extract features for use in neural networks"""
-        if not self.analysis_history:
-            return {}
+        base_features = {}
         
-        latest = self.analysis_history[-1]
+        if self.analysis_history:
+            latest = self.analysis_history[-1]
+            base_features = {
+                'smart_money_signal': latest['order_flow']['smart_money_flow'],
+                'liquidity_signal': latest['order_flow']['liquidity_depth'],
+                'momentum_signal': latest['order_flow']['momentum_strength'],
+                'regime_volatility': self._regime_to_numeric(latest['regime_state']['volatility_regime']),
+                'regime_trend': self._regime_to_numeric(latest['regime_state']['trend_regime']),
+                'regime_confidence': latest['regime_state']['confidence'],
+                'microstructure_signal': latest['microstructure_signal'],
+                'regime_adjusted_signal': latest['regime_adjusted_signal']
+            }
         
-        return {
-            'smart_money_signal': latest['order_flow']['smart_money_flow'],
-            'liquidity_signal': latest['order_flow']['liquidity_depth'],
-            'momentum_signal': latest['order_flow']['momentum_strength'],
-            'regime_volatility': self._regime_to_numeric(latest['regime_state']['volatility_regime']),
-            'regime_trend': self._regime_to_numeric(latest['regime_state']['trend_regime']),
-            'regime_confidence': latest['regime_state']['confidence'],
-            'microstructure_signal': latest['microstructure_signal'],
-            'regime_adjusted_signal': latest['regime_adjusted_signal']
-        }
+        # Add pattern information for bootstrap stats
+        base_features['patterns'] = self.patterns
+        base_features['pattern_count'] = len(self.patterns)
+        
+        return base_features
     
     def _regime_to_numeric(self, regime: str) -> float:
         """Convert regime strings to numeric values for neural networks"""

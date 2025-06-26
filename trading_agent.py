@@ -292,12 +292,15 @@ class TradingAgent:
                 action_idx = 0
             
             # Enhanced sizing and risk parameters
-            position_size = float(combined_outputs['position_size'].detach().cpu().numpy()[0])
+            raw_position_size = float(combined_outputs['position_size'].detach().cpu().numpy()[0])
             risk_params = combined_outputs['risk_params'].detach().cpu().numpy()[0]
+            
+            # Ensure position size is always positive
+            position_size = max(0.1, abs(raw_position_size))
             
             # Uncertainty-adjusted position sizing
             uncertainty_factor = 1.0 - adaptation_decision.get('uncertainty', 0.5)
-            position_size *= uncertainty_factor
+            position_size *= max(0.1, uncertainty_factor)  # Ensure factor is positive
             
             # Regime-aware risk management
             use_stop = risk_params[0] > 0.5

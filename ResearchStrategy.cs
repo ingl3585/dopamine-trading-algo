@@ -2,7 +2,7 @@
 // Advanced AI Trading Strategy with Multi-Entry Scaling and Position Reversal Capability
 //
 // Key Features:
-// - Supports up to 5 entries per direction for position scaling
+// - Supports up to 10 entries per direction for position scaling
 // - Automatic position reversals (long to short, short to long)
 // - Each entry gets unique signal name for proper tracking
 // - Individual stop loss and profit target management per entry
@@ -65,7 +65,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				    BarsRequiredToTrade = 1;
 				    
 				    // CRITICAL: Allow multiple entries in same direction for scaling
-				    EntriesPerDirection = 5;  // Allow up to 5 entries per direction
+				    EntriesPerDirection = 10;  // Allow up to 10 entries per direction
 				    EntryHandling = EntryHandling.AllEntries;  // Process all entries until limit reached
 				    break;
 				

@@ -100,11 +100,24 @@ class IntelligenceEngine:
         }
         
         try:
-            import os
+            import os, numpy as np
+            
+            def _np_encoder(obj):
+                """Convert NumPy scalars/arrays to vanilla Python types."""
+                if isinstance(obj, (np.integer,)):
+                    return int(obj)
+                if isinstance(obj, (np.floating,)):
+                    return float(obj)
+                if isinstance(obj, (np.bool_,)):
+                    return bool(obj)
+                if isinstance(obj, np.ndarray):
+                    return obj.tolist()
+                raise TypeError(f"{type(obj)} is not JSON serializable")
+            
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
             
             with open(filepath, 'w') as f:
-                json.dump(data, f, indent=2)
+                json.dump(data, f, indent=2, default=_np_encoder)
                 
             logger.info("Enhanced patterns saved with all four subsystems")
         except Exception as e:
@@ -194,10 +207,16 @@ class IntelligenceEngine:
             self.bootstrap_stats['immune_threats_learned'] = orchestrator_stats.get('immune_system', {}).get('total_antibodies', 0)
             
             microstructure_features = self.microstructure_engine.get_microstructure_features()
-            self.bootstrap_stats['microstructure_patterns_learned'] = len(microstructure_features.get('patterns', {})) if isinstance(microstructure_features, dict) else 0
+            self.bootstrap_stats['microstructure_patterns_learned'] = microstructure_features.get('pattern_count', 0) if isinstance(microstructure_features, dict) else 0
             
             # Close progress bars after bootstrap to prevent interference with live trading logs
-            self.orchestrator.close_progress_bars()
+            self.orchestrator.close_progress_bars(self.microstructure_engine)
+            
+            # Mark all subsystems as live trading to prevent progress bar reinitialization
+            self.orchestrator.dna_subsystem._live_trading_started = True
+            self.orchestrator.temporal_subsystem._live_trading_started = True
+            self.orchestrator.immune_subsystem._live_trading_started = True
+            self.microstructure_engine._live_trading_started = True
             
             # Add clean line break after progress bars
             print()
@@ -307,8 +326,8 @@ class IntelligenceEngine:
         
         logger.info(f"Comprehensive processing complete: {processed_count} windows for {timeframe}")
         
-        # Add clean line break after progress bar updates
-        if processed_count > 50:  # Only for larger processing batches
+        # Add clean line break after progress bar updates for major processing phases
+        if processed_count > 50 and timeframe == "1m":  # Only for 1m timeframe which has most activity
             print()
             
         return processed_count
@@ -1042,7 +1061,7 @@ class IntelligenceEngine:
         # Count microstructure patterns
         micro_patterns_count = 0
         if isinstance(microstructure_features, dict):
-            micro_patterns_count = len(microstructure_features.get('patterns', {}))
+            micro_patterns_count = microstructure_features.get('pattern_count', 0)
         
         return {
             'total_patterns': len(self.patterns),
