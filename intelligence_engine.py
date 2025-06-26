@@ -218,9 +218,6 @@ class IntelligenceEngine:
             self.orchestrator.immune_subsystem._live_trading_started = True
             self.microstructure_engine._live_trading_started = True
             
-            # Add clean line break after progress bars
-            print()
-            
             self.historical_processed = True
             
             logger.info(f"Enhanced bootstrap complete: {total_bars} bars processed across all subsystems")

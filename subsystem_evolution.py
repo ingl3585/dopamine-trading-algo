@@ -11,38 +11,62 @@ import random
 import sys
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.WARNING)  # Reduce logging verbosity, use progress bars instead
+logger.setLevel(logging.INFO)  # Show progress updates via log messages
 
-# Lazy import rich components
-progress = None
-console = None
+# Simple progress tracking - no external dependencies
+class SimpleProgressTracker:
+    def __init__(self):
+        self.tasks = {}
+        self.last_update = {}
+        
+    def add_task(self, description, **kwargs):
+        task_id = f"task_{len(self.tasks)}"
+        self.tasks[task_id] = {
+            'description': description.replace('[cyan]', '').replace('[/cyan]', '')
+                                    .replace('[green]', '').replace('[/green]', '')
+                                    .replace('[red]', '').replace('[/red]', '')
+                                    .replace('[magenta]', '').replace('[/magenta]', ''),
+            'count': 0,
+            'kwargs': kwargs
+        }
+        return task_id
+    
+    def advance(self, task_id, amount=1):
+        if task_id in self.tasks:
+            self.tasks[task_id]['count'] += amount
+            # Only log every 25 items to avoid spam
+            if self.tasks[task_id]['count'] % 25 == 0:
+                desc = self.tasks[task_id]['description']
+                count = self.tasks[task_id]['count']
+                logger.info(f"{desc}: {count} patterns learned")
+    
+    def update(self, task_id, **kwargs):
+        if task_id in self.tasks:
+            self.tasks[task_id]['kwargs'].update(kwargs)
+    
+    def stop(self):
+        # Log final summary
+        for task_id, task in self.tasks.items():
+            desc = task['description']
+            count = task['count']
+            if count > 0:
+                logger.info(f"{desc} completed: {count} total patterns")
+
+_simple_tracker = None
 
 def _get_progress():
-    """Lazy initialization of rich progress bar"""
-    global progress, console
-    if progress is None:
-        try:
-            from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, MofNCompleteColumn
-            from rich.console import Console
-            
-            console = Console()
-            progress = Progress(
-                SpinnerColumn(),
-                TextColumn("[prog.description]{task.description}"),
-                BarColumn(bar_width=30),
-                MofNCompleteColumn(),
-                TextColumn("•"),
-                TaskProgressColumn(),
-                TextColumn("•"), 
-                TimeRemainingColumn(),
-                console=console,
-                transient=True,  # Hide after completion
-                refresh_per_second=2  # Reduce refresh rate
-            )
-        except ImportError:
-            logger.warning("Rich not available, progress bars disabled")
-            progress = None
-    return progress
+    """Get simple progress tracker"""
+    global _simple_tracker
+    if _simple_tracker is None:
+        _simple_tracker = SimpleProgressTracker()
+    return _simple_tracker
+
+def _reset_progress():
+    """Reset the simple progress tracker"""
+    global _simple_tracker
+    if _simple_tracker:
+        _simple_tracker.stop()
+    _simple_tracker = None
 
 
 class DNASubsystem:
@@ -487,10 +511,8 @@ class DNASubsystem:
             try:
                 prog = _get_progress()
                 if prog is not None:
-                    if not prog.live.is_started:
-                        prog.start()
                     self.learning_progress = prog.add_task(
-                        "[cyan]DNA Learning[/cyan]", 
+                        "DNA Learning", 
                         total=None,
                         elite=0, 
                         avg_perf=0.0
@@ -867,10 +889,8 @@ class FFTTemporalSubsystem:
             try:
                 prog = _get_progress()
                 if prog is not None:
-                    if not prog.live.is_started:
-                        prog.start()
                     self.learning_progress = prog.add_task(
-                        "[green]Temporal Learning[/green]", 
+                        "Temporal Learning", 
                         total=None,
                         avg_conf=0.0, 
                         patterns=0
@@ -1228,10 +1248,8 @@ class EvolvingImmuneSystem:
             try:
                 prog = _get_progress()
                 if prog is not None:
-                    if not prog.live.is_started:
-                        prog.start()
                     self.learning_progress = prog.add_task(
-                        "[red]Immune Learning[/red]", 
+                        "Immune Learning", 
                         total=None,
                         tcells=0, 
                         prevention=0
@@ -1738,10 +1756,8 @@ class EnhancedIntelligenceOrchestrator:
             try:
                 prog = _get_progress()
                 if prog is not None:
-                    if not prog.live.is_started:
-                        prog.start()
                     self.orchestrator_progress = prog.add_task(
-                        "[blue]Orchestrator Learning[/blue]", 
+                        "Orchestrator Learning", 
                         total=None,
                         tools=4, 
                         consensus=0.0
@@ -1879,10 +1895,8 @@ class EnhancedIntelligenceOrchestrator:
     def close_progress_bars(self, microstructure_engine=None):
         """Graceful shutdown helper"""
         try:
-            prog = _get_progress()
-            if prog is not None:
-                if prog.live.is_started:
-                    prog.stop()
+            # Stop the simple progress tracker and show final summary
+            _reset_progress()
             
             # Reset task IDs and mark bootstrap complete
             self.dna_subsystem.learning_progress = None

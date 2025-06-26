@@ -9,35 +9,48 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Lazy import rich components
+# Simple progress tracking - matches subsystem_evolution.py
+class SimpleProgressTracker:
+    def __init__(self):
+        self.tasks = {}
+        
+    def add_task(self, description, **kwargs):
+        task_id = f"task_{len(self.tasks)}"
+        self.tasks[task_id] = {
+            'description': description.replace('[magenta]', '').replace('[/magenta]', ''),
+            'count': 0,
+            'kwargs': kwargs
+        }
+        return task_id
+    
+    def advance(self, task_id, amount=1):
+        if task_id in self.tasks:
+            self.tasks[task_id]['count'] += amount
+            # Only log every 25 items to avoid spam
+            if self.tasks[task_id]['count'] % 25 == 0:
+                desc = self.tasks[task_id]['description']
+                count = self.tasks[task_id]['count']
+                logger.info(f"{desc}: {count} patterns learned")
+    
+    def update(self, task_id, **kwargs):
+        if task_id in self.tasks:
+            self.tasks[task_id]['kwargs'].update(kwargs)
+    
+    def stop(self):
+        # Log final summary
+        for task_id, task in self.tasks.items():
+            desc = task['description']
+            count = task['count']
+            if count > 0:
+                logger.info(f"{desc} completed: {count} total patterns")
+
 progress = None
-console = None
 
 def _get_progress():
-    """Lazy initialization of rich progress bar"""
-    global progress, console
+    """Get simple progress tracker"""
+    global progress
     if progress is None:
-        try:
-            from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, MofNCompleteColumn
-            from rich.console import Console
-            
-            console = Console()
-            progress = Progress(
-                SpinnerColumn(),
-                TextColumn("[prog.description]{task.description}"),
-                BarColumn(bar_width=30),
-                MofNCompleteColumn(),
-                TextColumn("•"),
-                TaskProgressColumn(),
-                TextColumn("•"), 
-                TimeRemainingColumn(),
-                console=console,
-                transient=True,  # Hide after completion
-                refresh_per_second=2  # Reduce refresh rate
-            )
-        except ImportError:
-            logger.warning("Rich not available, progress bars disabled")
-            progress = None
+        progress = SimpleProgressTracker()
     return progress
 
 
@@ -507,15 +520,16 @@ class MarketMicrostructureEngine:
         self.total_learning_events += 1
 
         # Initialize progress task if needed (only during bootstrap)
-        if self.learning_progress is None and not getattr(self, 'bootstrap_complete', False) and not hasattr(self, '_live_trading_started'):
+        # Skip progress bar if bootstrap is complete OR live trading has started
+        if (self.learning_progress is None and 
+            not getattr(self, 'bootstrap_complete', False) and 
+            not hasattr(self, '_live_trading_started') and
+            self.total_learning_events < 100):  # Only during initial bootstrap phase
             try:
                 prog = _get_progress()
                 if prog is not None:
-                    if not prog.live.is_started:
-                        prog.start()
                     self.learning_progress = prog.add_task(
-                        "[magenta]Microstructure Learning[/magenta]", 
-                        total=None,
+                        "Microstructure Learning", 
                         patterns=0, 
                         avg_strength=0.0
                     )
@@ -537,7 +551,9 @@ class MarketMicrostructureEngine:
         self.patterns[pattern_id]['strength'] = np.mean(self.patterns[pattern_id]['outcomes'][-20:])
         
         # Update progress task (only during bootstrap)
-        if pattern_added and self.learning_progress is not None and not getattr(self, 'bootstrap_complete', False):
+        if (pattern_added and self.learning_progress is not None and 
+            not getattr(self, 'bootstrap_complete', False) and 
+            not hasattr(self, '_live_trading_started')):
             try:
                 prog = _get_progress()
                 if prog is not None:
@@ -545,8 +561,11 @@ class MarketMicrostructureEngine:
             except Exception as e:
                 logger.warning(f"Error updating microstructure progress task: {e}")
         
-        # Update progress task stats every batch
-        if self.total_learning_events % self.learning_batch_size == 0 and self.learning_progress is not None:
+        # Update progress task stats every batch (only during bootstrap)
+        if (self.total_learning_events % self.learning_batch_size == 0 and 
+            self.learning_progress is not None and 
+            not getattr(self, 'bootstrap_complete', False) and 
+            not hasattr(self, '_live_trading_started')):
             try:
                 prog = _get_progress()
                 if prog is not None:
