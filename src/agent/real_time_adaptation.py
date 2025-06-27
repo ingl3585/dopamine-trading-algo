@@ -91,6 +91,55 @@ class MultiArmedBandit:
                 self.arm_performance_by_context[context_key] = \
                     self.arm_performance_by_context[context_key][-50:]
     
+    def _check_emergency_conditions(self, context: Optional[Dict] = None):
+        """Check if emergency conditions warrant special handling"""
+        try:
+            if not context:
+                return
+            
+            # Check for drawdown emergency
+            if 'drawdown_pct' in context:
+                drawdown = context['drawdown_pct']
+                self.drawdown_tracking.append(drawdown)
+                
+                if drawdown > abs(self.emergency_threshold * 100):  # Convert to percentage
+                    if not self.emergency_mode:
+                        logger.warning(f"Entering emergency mode due to {drawdown:.1f}% drawdown")
+                        self.emergency_mode = True
+                        self.emergency_history.append({
+                            'timestamp': time.time(),
+                            'trigger': 'drawdown',
+                            'value': drawdown
+                        })
+                
+                # Exit emergency mode if drawdown improves
+                elif self.emergency_mode and drawdown < abs(self.emergency_threshold * 50):  # Half the threshold
+                    logger.info(f"Exiting emergency mode, drawdown improved to {drawdown:.1f}%")
+                    self.emergency_mode = False
+            
+            # Check for volatility spikes
+            if 'volatility' in context and context['volatility'] > 0.05:  # High volatility
+                if not self.emergency_mode:
+                    logger.warning(f"High volatility detected: {context['volatility']:.3f}")
+                    
+        except Exception as e:
+            logger.error(f"Error checking emergency conditions: {e}")
+    
+    def _emergency_arm_selection(self, context: Optional[Dict] = None) -> int:
+        """Select arm during emergency conditions with higher exploration"""
+        # Use higher exploration rate during emergencies
+        if np.random.random() < self.emergency_exploration_rate:
+            return np.random.randint(self.num_arms)
+        
+        # Conservative selection based on recent performance
+        if self.arm_counts.sum() > 0:
+            avg_rewards = self.arm_rewards / np.maximum(self.arm_counts, 1)
+            # Add small random noise to break ties
+            noise = np.random.normal(0, 0.01, size=self.num_arms)
+            return np.argmax(avg_rewards + noise)
+        
+        return np.random.randint(self.num_arms)
+    
     def _context_to_key(self, context: Dict) -> str:
         # Convert context to string key for storage
         key_parts = []

@@ -4,6 +4,7 @@ Portfolio Manager - Portfolio tracking and optimization
 
 import numpy as np
 import logging
+import time
 from typing import Dict, List
 from datetime import datetime, timedelta
 from collections import deque
@@ -489,3 +490,129 @@ class PortfolioManager:
         except Exception as e:
             logger.error(f"Error calculating performance score: {e}")
             return 50.0  # Neutral score
+    
+    def get_summary(self) -> Dict:
+        """Get portfolio summary compatible with existing system interface"""
+        try:
+            # Get comprehensive analytics
+            analytics = self.get_performance_analytics()
+            
+            # Extract key metrics for backward compatibility
+            returns_metrics = analytics.get('returns', {})
+            position_analytics = analytics.get('positions', {})
+            
+            summary = {
+                'total_trades': returns_metrics.get('total_return', 0),  # Placeholder
+                'winning_trades': 0,  # Would need trade history
+                'losing_trades': 0,   # Would need trade history  
+                'win_rate': returns_metrics.get('win_rate', 0.0),
+                'total_pnl': returns_metrics.get('total_return', 0.0),
+                'daily_pnl': 0.0,  # Would need daily tracking
+                'avg_pnl_per_trade': returns_metrics.get('avg_return', 0.0),
+                'consecutive_losses': 0,  # Would need trade sequence tracking
+                'pending_orders': position_analytics.get('open_positions', 0),
+                # Additional metrics from performance analytics
+                'current_balance': 0.0,  # Would need account tracking
+                'session_return_pct': 0.0,
+                'max_drawdown_pct': analytics.get('risk', {}).get('max_drawdown', 0.0) * 100,
+                'profit_factor': returns_metrics.get('profit_factor', 1.0),
+                'performance_score': analytics.get('performance_score', 50.0)
+            }
+            
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Error getting portfolio summary: {e}")
+            # Return minimal valid summary
+            return {
+                'total_trades': 0,
+                'winning_trades': 0,
+                'losing_trades': 0,
+                'win_rate': 0.0,
+                'total_pnl': 0.0,
+                'daily_pnl': 0.0,
+                'avg_pnl_per_trade': 0.0,
+                'consecutive_losses': 0,
+                'pending_orders': 0,
+                'performance_score': 50.0
+            }
+    
+    def get_total_position_size(self) -> float:
+        """Get total position size across all tracked positions"""
+        try:
+            if not self.positions:
+                return 0.0
+            
+            # Calculate net position size from current positions
+            total_size = 0.0
+            for position in self.positions.values():
+                current_size = position.get('current_size', 0.0)
+                total_size += current_size  # Size can be positive (long) or negative (short)
+            
+            return total_size
+            
+        except Exception as e:
+            logger.error(f"Error getting total position size: {e}")
+            return 0.0
+    
+    def add_pending_order(self, order):
+        """Add pending order to position tracking system"""
+        try:
+            # For PortfolioManager, we'll track this as a pending position
+            # Use order timestamp as unique identifier
+            order_id = str(getattr(order, 'timestamp', time.time()))
+            
+            # Create a pending position entry
+            symbol = 'MNQ'  # Default symbol for this system
+            
+            if symbol not in self.positions:
+                self.positions[symbol] = {}
+            
+            # Store order info for tracking
+            if not hasattr(self, 'pending_orders'):
+                self.pending_orders = {}
+            
+            self.pending_orders[order_id] = {
+                'order': order,
+                'timestamp': getattr(order, 'timestamp', time.time()),
+                'action': getattr(order, 'action', 'unknown'),
+                'size': getattr(order, 'size', 0),
+                'price': getattr(order, 'price', 0.0),
+                'symbol': symbol
+            }
+            
+            logger.info(f"Added pending order: {order.action} {order.size} @ {order.price:.2f}")
+            
+        except Exception as e:
+            logger.error(f"Error adding pending order: {e}")
+    
+    def complete_trade(self, completion_data: Dict):
+        """Complete a trade and update position tracking"""
+        try:
+            # This would be called when NinjaTrader reports trade completion
+            # For now, return a simple trade object for compatibility
+            if not hasattr(self, 'pending_orders') or not self.pending_orders:
+                return None
+            
+            # Find the most recent pending order (simplified matching)
+            latest_order_id = max(self.pending_orders.keys(), key=lambda x: self.pending_orders[x]['timestamp'])
+            order_info = self.pending_orders.pop(latest_order_id)
+            
+            # Create a simple trade completion object
+            trade = type('Trade', (), {
+                'action': order_info['action'],
+                'size': order_info['size'],
+                'pnl': completion_data.get('final_pnl', 0.0),
+                'exit_reason': completion_data.get('exit_reason', 'completed'),
+                'entry_time': order_info['timestamp'],
+                'exit_time': time.time(),
+                'entry_price': order_info['price'],
+                'exit_price': completion_data.get('exit_price', order_info['price'])
+            })()
+            
+            logger.info(f"Trade completed: {trade.action} {trade.size}, P&L: {trade.pnl:.2f}")
+            return trade
+            
+        except Exception as e:
+            logger.error(f"Error completing trade: {e}")
+            return None
