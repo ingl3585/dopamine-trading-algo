@@ -380,8 +380,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        sb.Append($"\"portfolio_heat\":{portfolioHeat.ToString(CultureInfo.InvariantCulture)},");
 		        sb.Append($"\"regime\":\"normal\",");
 		        sb.Append($"\"trend_strength\":0.5,");
-		        long unixSeconds = new DateTimeOffset(DateTime.UtcNow).ToUnixTimeSeconds();
-		        sb.Append($"\"timestamp\":{unixSeconds}");
+		        long marketTimeUnix = new DateTimeOffset(Time[0]).ToUnixTimeSeconds();
+		        sb.Append($"\"timestamp\":{marketTimeUnix}");
 	
 		        sb.Append("}");
 		        return sb.ToString();
@@ -487,19 +487,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 double stopPrice = signal.Item5;
                 bool useTarget = signal.Item6;
                 double targetPrice = signal.Item7;
-                
-                // Safety check: Limit entries per minute to prevent overtrading
                 DateTime currentTime = DateTime.Now;
-                if (currentTime.Minute != lastEntryTime.Minute)
-                {
-                    entriesThisMinute = 0;  // Reset counter for new minute
-                }
-                
-                if (entriesThisMinute >= 3)  // Max 3 entries per minute
-                {
-                    Print($"Entry rate limit reached ({entriesThisMinute} entries this minute). Signal ignored.");
-                    return;
-                }
                 
                 // Check position size limits - but allow position reversals
                 int currentPosition = Math.Abs(Position.Quantity);
@@ -797,7 +785,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		                  $"\"confidence\":0.5," +
 		                  $"\"consensus_strength\":0.5," +
 		                  $"\"primary_tool\":\"ai_signal\"," +
-		                  $"\"timestamp\":{DateTime.Now.Ticks}" +
+		                  $"\"timestamp\":{Time[0].Ticks}" +
 		                  $"}}";
 		        
 		        SendJsonMessage(json);
