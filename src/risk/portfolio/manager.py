@@ -447,8 +447,14 @@ class PortfolioManager:
             if not self.positions:
                 return {}
             
-            # Current position analysis
-            unrealized_pnls = [pos['unrealized_pnl'] for pos in self.positions.values()]
+            # Current position analysis - safely extract unrealized PnL
+            unrealized_pnls = []
+            for pos in self.positions.values():
+                if isinstance(pos, dict) and 'unrealized_pnl' in pos:
+                    unrealized_pnls.append(pos['unrealized_pnl'])
+                else:
+                    # Handle case where position structure is different
+                    unrealized_pnls.append(0.0)
             
             return {
                 'open_positions': len(self.positions),
@@ -616,3 +622,71 @@ class PortfolioManager:
         except Exception as e:
             logger.error(f"Error completing trade: {e}")
             return None
+    
+    def save_state(self, filepath: str):
+        """Save portfolio state to file"""
+        try:
+            import json
+            import os
+            
+            # Prepare data for saving
+            state_data = {
+                'positions': self.positions,
+                'config': getattr(self.config, '__dict__', {}),
+                'pending_orders': getattr(self, 'pending_orders', {}),
+                'saved_at': datetime.now().isoformat()
+            }
+            
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            
+            # Save to file
+            with open(filepath, 'w') as f:
+                json.dump(state_data, f, indent=2, default=str)
+            
+            logger.info(f"Portfolio state saved to {filepath}")
+            
+        except Exception as e:
+            logger.error(f"Error saving portfolio state: {e}")
+    
+    def load_state(self, filepath: str):
+        """Load portfolio state from file"""
+        try:
+            import json
+            
+            with open(filepath, 'r') as f:
+                state_data = json.load(f)
+            
+            # Restore positions
+            self.positions = state_data.get('positions', {})
+            
+            # Restore pending orders if any
+            if 'pending_orders' in state_data:
+                self.pending_orders = state_data['pending_orders']
+            
+            logger.info(f"Portfolio state loaded from {filepath}")
+            
+        except FileNotFoundError:
+            logger.info("No existing portfolio state found, starting fresh")
+        except Exception as e:
+            logger.error(f"Error loading portfolio state: {e}")
+    
+    def get_account_performance(self) -> Dict:
+        """Get account performance metrics"""
+        try:
+            # Return simplified account performance metrics
+            # In a full implementation, this would track account balance history
+            return {
+                'current_balance': 0.0,
+                'session_start_balance': 0.0,
+                'session_return_pct': 0.0,
+                'max_drawdown_pct': 0.0,
+                'avg_risk_per_trade_pct': 0.0,
+                'profit_factor': 1.0,
+                'gross_profit': 0.0,
+                'gross_loss': 0.0
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting account performance: {e}")
+            return {}

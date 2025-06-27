@@ -271,7 +271,8 @@ class TradingSystem:
             intelligence_stats = self.intelligence.get_stats()
             logger.info(f"Intelligence: DNA={intelligence_stats['dna_patterns']}, "
                        f"Micro={intelligence_stats['micro_patterns']}, "
-                       f"Temporal={intelligence_stats['temporal_patterns']}")
+                       f"Temporal={intelligence_stats['temporal_patterns']}, "
+                       f"Immune={intelligence_stats['immune_patterns']}")
             
             # Connection status
             logger.info(f"TCP: {self.tcp_server.data_received} data messages, "
@@ -333,7 +334,8 @@ class TradingSystem:
             logger.info(f"Architecture Generation: {agent_stats['architecture_generation']}")
             logger.info(f"Intelligence Patterns: DNA={intelligence_stats['dna_patterns']}, "
                        f"Micro={intelligence_stats['micro_patterns']}, "
-                       f"Temporal={intelligence_stats['temporal_patterns']}")
+                       f"Temporal={intelligence_stats['temporal_patterns']}, "
+                       f"Immune={intelligence_stats['immune_patterns']}")
             
             # Advanced risk metrics
             logger.info(f"Risk Regime: {risk_summary.get('current_regime', 'unknown')}")
