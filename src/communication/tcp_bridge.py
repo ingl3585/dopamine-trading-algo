@@ -101,7 +101,7 @@ class TCPServer:
     
     def _is_market_data(self, message: dict) -> bool:
         """Check if message contains market data"""
-        required_fields = ['price_1m', 'account_balance', 'buying_power']
+        required_fields = ['price_1m', 'net_liquidation', 'buying_power']
         return any(field in message for field in required_fields)
     
     def _enhance_market_data(self, message: dict) -> dict:
@@ -110,10 +110,9 @@ class TCPServer:
         
         # Ensure all required account fields exist with defaults
         account_defaults = {
-            'account_balance': 25000.0,
+            'net_liquidation': 25000.0,
             'buying_power': 25000.0,
             'daily_pnl': 0.0,
-            'net_liquidation': 25000.0,
             'margin_used': 0.0,
             'available_margin': 25000.0,
             'open_positions': 0
@@ -127,7 +126,9 @@ class TCPServer:
         try:
             # Calculate margin utilization percentage
             margin_used = enhanced.get('margin_used', 0)
-            net_liquidation = enhanced.get('net_liquidation', enhanced.get('account_balance', 25000))
+            net_liquidation = enhanced.get('net_liquidation', 25000)
+            # Ensure we're using net liquidation as the primary account value
+            enhanced['account_balance'] = net_liquidation
             
             if net_liquidation > 0:
                 enhanced['margin_utilization'] = margin_used / net_liquidation
