@@ -115,7 +115,8 @@ class TCPServer:
             'daily_pnl': 0.0,
             'margin_used': 0.0,
             'available_margin': 25000.0,
-            'open_positions': 0
+            'open_positions': 0,
+            'total_position_size': 0
         }
         
         for field, default_value in account_defaults.items():
@@ -129,6 +130,11 @@ class TCPServer:
             net_liquidation = enhanced.get('net_liquidation', 25000)
             # Ensure we're using net liquidation as the primary account value
             enhanced['account_balance'] = net_liquidation
+            
+            # Log position synchronization for debugging
+            total_position = enhanced.get('total_position_size', 0)
+            if total_position != 0:
+                logger.info(f"Position sync: NinjaTrader reports {total_position} contracts")
             
             if net_liquidation > 0:
                 enhanced['margin_utilization'] = margin_used / net_liquidation

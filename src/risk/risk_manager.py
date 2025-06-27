@@ -107,12 +107,16 @@ class RiskManager:
                 'exploration_mode': getattr(decision, 'exploration', False)
             }
             
-            # Negative reward scaled by violation severity
-            negative_reward = -0.1 * violation_data['violation_severity']
+            # Negative reward scaled by violation severity (stronger penalty for learning)
+            negative_reward = -0.5 * violation_data['violation_severity']  # Increased from -0.1 to -0.5
             
             # Update meta-learner with negative feedback
             if hasattr(self.meta_learner, 'update_position_limit_awareness'):
                 self.meta_learner.update_position_limit_awareness(violation_data, negative_reward)
+            
+            # Also send feedback to the main agent for learning
+            if hasattr(self.meta_learner, 'learn_from_rejection'):
+                self.meta_learner.learn_from_rejection('position_limit', violation_data, negative_reward)
             
             # Update risk learning engine
             if hasattr(self.risk_learning, 'learn_from_violation'):
@@ -185,7 +189,9 @@ class RiskManager:
         remaining_capacity = max_contracts - abs(current_position_size)
         
         if remaining_capacity <= 0:
-            logger.info(f"Maximum position limit reached: {current_position_size}/{max_contracts} contracts")
+            logger.warning(f"Maximum position limit reached: {current_position_size}/{max_contracts} contracts")
+            # Set a flag so we know this was a position limit rejection
+            self._position_limit_hit = True
             return 0
         
         # Intelligent exposure-based scaling

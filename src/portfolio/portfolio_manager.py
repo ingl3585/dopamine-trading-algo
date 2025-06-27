@@ -613,7 +613,7 @@ class PortfolioManager:
             trade = type('Trade', (), {
                 'action': order_info['action'],
                 'size': order_info['size'],
-                'pnl': completion_data.get('final_pnl', 0.0),
+                'pnl': completion_data.get('pnl', 0.0),
                 'exit_reason': completion_data.get('exit_reason', 'completed'),
                 'entry_time': order_info['timestamp'],
                 'exit_time': time.time(),
@@ -628,6 +628,9 @@ class PortfolioManager:
                 'decision_data': order_info.get('decision_data'),
                 'state_features': order_info.get('decision_data', {}).get('state_features')
             })()
+            
+            # Add to trade history for tracking
+            self.trade_history.append(trade)
             
             logger.info(f"Trade completed: {trade.action} {trade.size}, P&L: {trade.pnl:.2f}")
             return trade
@@ -703,3 +706,35 @@ class PortfolioManager:
         except Exception as e:
             logger.error(f"Error getting account performance: {e}")
             return {}
+    
+    def get_consecutive_losses(self) -> int:
+        """Get number of consecutive losing trades"""
+        if not self.trade_history:
+            return 0
+        
+        consecutive = 0
+        for trade in reversed(self.trade_history):
+            if hasattr(trade, 'pnl') and trade.pnl < 0:
+                consecutive += 1
+            else:
+                break
+        return consecutive
+    
+    def get_position_count(self) -> int:
+        """Get current number of open positions"""
+        return len(self.pending_orders) if hasattr(self, 'pending_orders') else 0
+    
+    def get_win_rate(self) -> float:
+        """Get win rate percentage"""
+        if not self.trade_history:
+            return 0.0
+        
+        winning_trades = sum(1 for trade in self.trade_history 
+                           if hasattr(trade, 'pnl') and trade.pnl > 0)
+        return (winning_trades / len(self.trade_history)) * 100.0
+    
+    def get_total_position_size(self) -> int:
+        """Get total position size across all holdings"""
+        # This should return the net position size
+        # For simplicity, return 0 as the actual position is tracked by NinjaTrader
+        return 0

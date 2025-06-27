@@ -501,12 +501,19 @@ namespace NinjaTrader.NinjaScript.Strategies
                     return;
                 }
                 
-                // Check position size limits - let Python AI control sizing (max 10 contracts)
+                // Check position size limits - but allow position reversals
                 int currentPosition = Math.Abs(Position.Quantity);
                 if (currentPosition >= 10)
                 {
-                    Print($"Maximum position size reached ({currentPosition} contracts). Entry signal ignored.");
-                    return;
+                    // Only block if we're trying to ADD to the same direction
+                    if ((action == 1 && Position.MarketPosition == MarketPosition.Long) ||
+                        (action == 2 && Position.MarketPosition == MarketPosition.Short))
+                    {
+                        Print($"Maximum position size reached ({currentPosition} contracts). Same-direction entry ignored.");
+                        return;
+                    }
+                    // Allow reversals to proceed
+                    Print($"Position reversal allowed: {Position.MarketPosition} {currentPosition} -> {(action == 1 ? "Long" : "Short")} {size}");
                 }
                 
                 // Generate unique entry name for scaling capability
