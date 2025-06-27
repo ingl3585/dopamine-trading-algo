@@ -5,10 +5,10 @@ from typing import Optional, Dict
 import logging
 import math
 
-from trading_agent import Decision
-from data_processor import MarketData
-from advanced_risk import AdvancedRiskManager
-from risk_learning_engine import RiskLearningEngine
+from src.agent.trading_agent import Decision
+from src.market_analysis.data_processor import MarketData
+from src.risk.advanced_risk import AdvancedRiskManager
+from src.risk.risk_learning_engine import RiskLearningEngine
 
 logger = logging.getLogger(__name__)
 

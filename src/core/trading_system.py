@@ -3,13 +3,13 @@
 import logging
 import time
 
-from data_processor import DataProcessor
-from intelligence_engine import IntelligenceEngine
-from trading_agent import TradingAgent
-from risk_manager import RiskManager
-from tcp_bridge import TCPServer
-from portfolio import Portfolio
-from config import Config
+from src.market_analysis.data_processor import DataProcessor
+from src.intelligence.intelligence_engine import IntelligenceEngine
+from src.agent.trading_agent import TradingAgent
+from src.risk.risk_manager import RiskManager
+from src.communication.tcp_bridge import TCPServer
+from src.risk.portfolio import Portfolio
+from src.core.config import Config
 
 logger = logging.getLogger(__name__)
 

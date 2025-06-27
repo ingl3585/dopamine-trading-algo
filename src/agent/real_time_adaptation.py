@@ -31,16 +31,31 @@ class MultiArmedBandit:
         self.arm_rewards = np.zeros(num_arms)
         self.total_pulls = 0
         
+        # Emergency learning components
+        self.emergency_mode = False
+        self.emergency_threshold = -0.15  # Enter emergency if returns drop below -15%
+        self.emergency_exploration_rate = 0.5  # Higher exploration during emergencies
+        self.emergency_learning_rate = 0.3  # Faster learning during crises
+        self.emergency_history = deque(maxlen=100)
+        
         # Contextual information
         self.context_history = deque(maxlen=1000)
         self.arm_performance_by_context = defaultdict(list)
+        self.drawdown_tracking = deque(maxlen=50)
         
     def select_arm(self, context: Optional[Dict] = None) -> int:
         self.total_pulls += 1
         
+        # Check for emergency conditions
+        self._check_emergency_conditions(context)
+        
         # Pure exploration phase
         if self.total_pulls <= self.num_arms:
             return self.total_pulls - 1
+        
+        # Emergency learning protocol
+        if self.emergency_mode:
+            return self._emergency_arm_selection(context)
         
         # Contextual consideration
         if context:

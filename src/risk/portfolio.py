@@ -8,7 +8,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
-from risk_manager import Order
+from src.risk.risk_manager import Order
 
 @dataclass
 class Trade:

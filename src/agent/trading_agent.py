@@ -13,12 +13,12 @@ from queue import Queue
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 
-from intelligence_engine import Features
-from data_processor import MarketData
-from meta_learner import MetaLearner
-from adaptive_network import AdaptiveTradingNetwork, FeatureLearner, StateEncoder
-from enhanced_neural import SelfEvolvingNetwork, FewShotLearner
-from real_time_adaptation import RealTimeAdaptationEngine
+from src.intelligence.intelligence_engine import Features
+from src.market_analysis.data_processor import MarketData
+from src.agent.meta_learner import MetaLearner
+from src.neural.adaptive_network import AdaptiveTradingNetwork, FeatureLearner, StateEncoder
+from src.neural.enhanced_neural import SelfEvolvingNetwork, FewShotLearner
+from src.agent.real_time_adaptation import RealTimeAdaptationEngine
 
 logger = logging.getLogger(__name__)
 

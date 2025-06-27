@@ -5,7 +5,7 @@ Market Microstructure Analyzer - Uses AI subsystem for advanced analysis
 import logging
 from typing import Dict
 
-from src.ai.intelligence.subsystems.microstructure.domain import MarketMicrostructureEngine
+from src.market_analysis.market_microstructure import MarketMicrostructureEngine
 
 logger = logging.getLogger(__name__)
 

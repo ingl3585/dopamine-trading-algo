@@ -27,11 +27,11 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 
-from subsystem_evolution import EnhancedIntelligenceOrchestrator
-from enhanced_neural import SelfEvolvingNetwork, FewShotLearner
-from market_microstructure import MarketMicrostructureEngine
-from real_time_adaptation import RealTimeAdaptationEngine
-from meta_learner import MetaLearner
+from src.intelligence.subsystem_evolution import EnhancedIntelligenceOrchestrator
+from src.neural.enhanced_neural import SelfEvolvingNetwork, FewShotLearner
+from src.market_analysis.market_microstructure import MarketMicrostructureEngine
+from src.agent.real_time_adaptation import RealTimeAdaptationEngine
+from src.agent.meta_learner import MetaLearner
 
 logger = logging.getLogger(__name__)
 

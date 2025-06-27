@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from data_processor import MarketData
-from subsystem_evolution import EnhancedIntelligenceOrchestrator
-from market_microstructure import MarketMicrostructureEngine
-from real_time_adaptation import RealTimeAdaptationEngine
+from src.market_analysis.data_processor import MarketData
+from src.intelligence.subsystem_evolution import EnhancedIntelligenceOrchestrator
+from src.market_analysis.market_microstructure import MarketMicrostructureEngine
+from src.agent.real_time_adaptation import RealTimeAdaptationEngine
 
 logger = logging.getLogger(__name__)
 
