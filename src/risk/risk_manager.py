@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Optional, Dict
 import logging
 import math
+import time
+from collections import deque
 
 from src.agent.trading_agent import Decision
 from src.market_analysis.data_processor import MarketData
@@ -33,6 +35,10 @@ class RiskManager:
         self.meta_learner = meta_learner
         self.advanced_risk = AdvancedRiskManager(meta_learner)
         self.risk_learning = RiskLearningEngine()
+        
+        # Track violation history for escalating penalties
+        self.violation_history = deque(maxlen=50)
+        self.recent_violations = 0  # Count of violations in recent time window
         
     def validate_order(self, decision: Decision, market_data: MarketData) -> Optional[Order]:
         if decision.action == 'hold':
@@ -97,6 +103,13 @@ class RiskManager:
     def _learn_from_position_limit_rejection(self, decision, market_data, current_position, max_contracts):
         """Provide learning feedback when orders are rejected due to position limits"""
         try:
+            # Record this violation for escalating penalty tracking
+            current_time = time.time()
+            self.violation_history.append(current_time)
+            
+            # Count recent violations (last 10 minutes)
+            self.recent_violations = sum(1 for t in self.violation_history if current_time - t < 600)
+            
             # Create negative reward for position limit violations
             violation_data = {
                 'decision_confidence': decision.confidence,
@@ -104,11 +117,14 @@ class RiskManager:
                 'max_contracts': max_contracts,
                 'violation_severity': abs(current_position) / max_contracts,
                 'primary_tool': getattr(decision, 'primary_tool', 'unknown'),
-                'exploration_mode': getattr(decision, 'exploration', False)
+                'exploration_mode': getattr(decision, 'exploration', False),
+                'recent_violations': self.recent_violations
             }
             
-            # Negative reward scaled by violation severity (stronger penalty for learning)
-            negative_reward = -0.5 * violation_data['violation_severity']  # Increased from -0.1 to -0.5
+            # Escalating penalty: base penalty gets worse with repeated violations
+            base_penalty = -15.0 * violation_data['violation_severity']
+            escalation_multiplier = 1.0 + (self.recent_violations - 1) * 0.5  # +50% per recent violation
+            negative_reward = base_penalty * escalation_multiplier
             
             # Update meta-learner with negative feedback
             if hasattr(self.meta_learner, 'update_position_limit_awareness'):
@@ -122,7 +138,9 @@ class RiskManager:
             if hasattr(self.risk_learning, 'learn_from_violation'):
                 self.risk_learning.learn_from_violation('position_limit', violation_data, negative_reward)
             
-            logger.info(f"Learning from position limit violation: reward={negative_reward:.3f}, "
+            logger.info(f"Learning from position limit violation: reward={negative_reward:.3f} "
+                       f"(base={base_penalty:.1f} * {escalation_multiplier:.1f}x), "
+                       f"recent_violations={self.recent_violations}, "
                        f"tool={violation_data['primary_tool']}, exploration={violation_data['exploration_mode']}")
             
         except Exception as e:

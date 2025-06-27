@@ -25,6 +25,7 @@ class MarketData:
     margin_used: float
     available_margin: float
     open_positions: int
+    total_position_size: int
     # Computed ratios from TCP bridge
     margin_utilization: float
     buying_power_ratio: float
