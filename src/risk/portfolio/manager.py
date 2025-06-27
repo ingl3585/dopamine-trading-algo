@@ -584,7 +584,12 @@ class PortfolioManager:
                 'action': getattr(order, 'action', 'unknown'),
                 'size': getattr(order, 'size', 0),
                 'price': getattr(order, 'price', 0.0),
-                'symbol': symbol
+                'symbol': symbol,
+                # Preserve intelligence data
+                'features': getattr(order, 'features', None),
+                'market_data': getattr(order, 'market_data', None),
+                'intelligence_data': getattr(order, 'intelligence_data', None),
+                'decision_data': getattr(order, 'decision_data', None)
             }
             
             logger.info(f"Added pending order: {order.action} {order.size} @ {order.price:.2f}")
@@ -613,7 +618,15 @@ class PortfolioManager:
                 'entry_time': order_info['timestamp'],
                 'exit_time': time.time(),
                 'entry_price': order_info['price'],
-                'exit_price': completion_data.get('exit_price', order_info['price'])
+                'exit_price': completion_data.get('exit_price', order_info['price']),
+                'exit_account_balance': completion_data.get('account_balance', 0.0),
+                'account_risk_pct': completion_data.get('risk_pct', 0.0),
+                # Restore intelligence data
+                'features': order_info.get('features'),
+                'market_data': order_info.get('market_data'),
+                'intelligence_data': order_info.get('intelligence_data'),
+                'decision_data': order_info.get('decision_data'),
+                'state_features': order_info.get('decision_data', {}).get('state_features')
             })()
             
             logger.info(f"Trade completed: {trade.action} {trade.size}, P&L: {trade.pnl:.2f}")

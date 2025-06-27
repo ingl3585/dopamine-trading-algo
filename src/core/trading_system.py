@@ -196,6 +196,8 @@ class TradingSystem:
     # Rest of the methods remain the same...
     def _process_trade_completion(self, completion_data):
         try:
+            # Debug: Log what we're receiving from NinjaTrader
+            logger.info(f"Raw completion data: {completion_data}")
             trade = self.portfolio.complete_trade(completion_data)
             if trade:
                 # Sequential learning phases to prevent race conditions
