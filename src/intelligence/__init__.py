@@ -10,8 +10,8 @@ Public Interface:
 from .intelligence_engine import IntelligenceEngine
 from .subsystems import DNASubsystem, FFTTemporalSubsystem, EvolvingImmuneSystem
 
-def create_intelligence_engine():
+def create_intelligence_engine(config):
     """Factory to create configured intelligence engine"""
-    return IntelligenceEngine()
+    return IntelligenceEngine(config)
 
 __all__ = ['IntelligenceEngine', 'DNASubsystem', 'FFTTemporalSubsystem', 'EvolvingImmuneSystem', 'create_intelligence_engine']

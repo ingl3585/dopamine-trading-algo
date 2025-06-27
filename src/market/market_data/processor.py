@@ -8,7 +8,7 @@ from typing import Dict, List
 from collections import deque
 from datetime import datetime
 
-from src.shared.types import MarketData
+from src.market_analysis.data_processor import MarketData
 
 logger = logging.getLogger(__name__)
 

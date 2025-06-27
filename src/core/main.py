@@ -30,7 +30,7 @@ class TradingSystemOrchestrator:
         
         # Initialize all domains using factories
         logger.info("Initializing AI domain...")
-        self.intelligence_engine = create_intelligence_engine()
+        self.intelligence_engine = create_intelligence_engine(config)
         
         logger.info("Initializing Trading domain...")
         self.trading_service = create_trading_service(config)

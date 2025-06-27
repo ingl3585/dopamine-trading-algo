@@ -17,11 +17,12 @@ from src.shared.intelligence_types import Features
 logger = logging.getLogger(__name__)
 
 class IntelligenceEngine:
-    def __init__(self, memory_file="data/intelligence_memory.json"):
+    def __init__(self, config, memory_file="data/intelligence_memory.json"):
+        self.config = config
         self.memory_file = memory_file
         
         # Core subsystem orchestration (DNA, Temporal, Immune)
-        self.orchestrator = EnhancedIntelligenceOrchestrator()
+        self.orchestrator = EnhancedIntelligenceOrchestrator(config)
         
         # Microstructure analysis (4th subsystem)
         self.microstructure_engine = MarketMicrostructureEngine()

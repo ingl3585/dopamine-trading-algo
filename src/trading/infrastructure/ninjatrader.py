@@ -9,7 +9,7 @@ from typing import Dict
 from ..domain.repositories import TradingRepository, ExecutionResult
 from ..domain.models import Trade, Position, Account
 from src.communication.tcp_bridge import TCPServer
-from src.shared.types import Order
+from src.risk.risk_manager import Order
 
 logger = logging.getLogger(__name__)
 

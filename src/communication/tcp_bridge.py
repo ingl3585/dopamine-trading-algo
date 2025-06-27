@@ -9,7 +9,7 @@ import time
 
 from typing import Callable, Optional
 
-from src.shared.types import Order
+from src.risk.risk_manager import Order
 
 logger = logging.getLogger(__name__)
 

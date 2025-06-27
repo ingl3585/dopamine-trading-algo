@@ -8,7 +8,7 @@ from src.intelligence.intelligence_engine import IntelligenceEngine
 from src.agent.trading_agent import TradingAgent
 from src.risk.risk_manager import RiskManager
 from src.communication.tcp_bridge import TCPServer
-from src.risk.portfolio import Portfolio
+from src.risk.portfolio.manager import PortfolioManager
 from src.core.config import Config
 
 logger = logging.getLogger(__name__)
@@ -16,10 +16,10 @@ logger = logging.getLogger(__name__)
 class TradingSystem:
     def __init__(self):
         logger.info("Initializing trading system with historical bootstrapping")
-        
-        self.portfolio = Portfolio()
+        self.config = Config()
+        self.portfolio = PortfolioManager(self.config)
         self.data_processor = DataProcessor()
-        self.intelligence = IntelligenceEngine()
+        self.intelligence = IntelligenceEngine(self.config)
         self.agent = TradingAgent(self.intelligence, self.portfolio)
         self.risk_manager = RiskManager(self.portfolio, self.agent.meta_learner)
         

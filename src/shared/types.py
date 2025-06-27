@@ -3,15 +3,6 @@ from typing import Dict, List, Optional
 from datetime import datetime
 
 @dataclass
-class MarketData:
-    timestamp: float
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float
-    
-@dataclass
 class Signal:
     value: float
     confidence: float
@@ -44,12 +35,3 @@ class AccountInfo:
     unrealized_pnl: float = 0.0
     realized_pnl: float = 0.0
 
-@dataclass
-class Order:
-    action: str  # 'buy' or 'sell'
-    size: float
-    price: float = 0.0
-    confidence: float = 0.7
-    stop_price: float = 0.0
-    target_price: float = 0.0
-    primary_tool: str = "ai_agent"
