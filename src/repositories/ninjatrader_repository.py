@@ -6,8 +6,8 @@ import json
 import logging
 from typing import Dict
 
-from ..domain.repositories import TradingRepository, ExecutionResult
-from ..domain.models import Trade, Position, Account
+from .trading_repository import TradingRepository, ExecutionResult
+from src.data_models.trading_domain_models import Trade, Position, Account
 from src.communication.tcp_bridge import TCPServer
 from src.risk.risk_manager import Order
 

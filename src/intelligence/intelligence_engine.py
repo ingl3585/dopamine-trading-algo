@@ -11,8 +11,8 @@ from typing import Dict, List, Optional
 
 from src.market_analysis.data_processor import MarketData
 from src.intelligence.subsystem_evolution import EnhancedIntelligenceOrchestrator
-from src.market_analysis.market_microstructure import MarketMicrostructureEngine
-from src.shared.intelligence_types import Features
+from src.market_analysis.microstructure_analyzer import MarketMicrostructureEngine
+from src.shared.types import Features
 
 logger = logging.getLogger(__name__)
 

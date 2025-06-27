@@ -8,7 +8,7 @@ from src.intelligence.intelligence_engine import IntelligenceEngine
 from src.agent.trading_agent import TradingAgent
 from src.risk.risk_manager import RiskManager
 from src.communication.tcp_bridge import TCPServer
-from src.risk.portfolio.manager import PortfolioManager
+from src.portfolio.portfolio_manager import PortfolioManager
 from src.core.config import Config
 
 logger = logging.getLogger(__name__)

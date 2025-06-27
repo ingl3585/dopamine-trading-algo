@@ -11,8 +11,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 from src.core.config import Config
 from src.intelligence import create_intelligence_engine
-from src.trading import create_trading_service
-from src.market import create_market_processor
+from src.services import create_trading_service
+from src.market_data import create_market_processor
 from src.risk import create_risk_manager
 from src.shared.types import TradeDecision
 from src.communication.tcp_bridge import TCPServer

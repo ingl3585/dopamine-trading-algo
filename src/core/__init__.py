@@ -1,4 +1,4 @@
-from .main import main
+from .trading_system_orchestrator import main
 from .config import Config
 from .trading_system import TradingSystem
 

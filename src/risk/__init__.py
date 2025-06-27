@@ -7,8 +7,8 @@ Public Interface:
 - manage_portfolio: Portfolio management and tracking
 """
 
-from .management.service import RiskManagementService
-from .portfolio.manager import PortfolioManager
+from ..services.risk_service import RiskManagementService
+from ..portfolio.portfolio_manager import PortfolioManager
 
 def create_risk_manager(config):
     """Factory to create configured risk manager"""

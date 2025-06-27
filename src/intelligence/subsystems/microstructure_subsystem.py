@@ -1,17 +1,17 @@
 """
-Market Microstructure Analyzer - Uses AI subsystem for advanced analysis
+Microstructure Intelligence Subsystem - Order flow and regime analysis
 """
 
 import logging
 from typing import Dict
 
-from src.market_analysis.market_microstructure import MarketMicrostructureEngine
+from src.market_analysis.microstructure_analyzer import MarketMicrostructureEngine
 
 logger = logging.getLogger(__name__)
 
-class MicrostructureAnalyzer:
+class MicrostructureSubsystem:
     """
-    Market microstructure analysis service that wraps the AI subsystem
+    Microstructure intelligence subsystem for order flow analysis and regime detection
     """
     
     def __init__(self, config):
@@ -42,8 +42,8 @@ class MicrostructureAnalyzer:
             logger.error(f"Error in liquidity analysis: {e}")
             return 0.5
     
-    def get_comprehensive_analysis(self, market_data: Dict, market_features: Dict) -> Dict:
-        """Get comprehensive microstructure analysis"""
+    def get_signal(self, market_data: Dict, market_features: Dict) -> Dict:
+        """Get microstructure intelligence signal"""
         try:
             return {
                 'order_flow_signal': self.analyze_order_flow(market_data),
@@ -55,7 +55,7 @@ class MicrostructureAnalyzer:
                 'stats': self.microstructure_engine.get_microstructure_stats()
             }
         except Exception as e:
-            logger.error(f"Error in comprehensive microstructure analysis: {e}")
+            logger.error(f"Error in microstructure signal generation: {e}")
             return {
                 'order_flow_signal': 0.0,
                 'market_regime': 'unknown',

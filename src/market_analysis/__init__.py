@@ -1,5 +1,5 @@
 from .data_processor import DataProcessor, MarketData
-from .market_microstructure import MarketMicrostructureEngine
-from .advanced_market_intelligence import AdvancedMarketIntelligence
+from .microstructure_analyzer import MarketMicrostructureEngine
+from ..intelligence.advanced_market_intelligence import AdvancedMarketIntelligence
 
 __all__ = ['DataProcessor', 'MarketData', 'MarketMicrostructureEngine', 'AdvancedMarketIntelligence']

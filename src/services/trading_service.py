@@ -7,8 +7,8 @@ from typing import Dict, Optional
 from datetime import datetime
 
 from src.shared.types import TradeDecision, TradeOutcome, AccountInfo
-from .models import Trade, Position, Account, TradeAction, TradeStatus
-from .repositories import TradingRepository
+from src.data_models.trading_domain_models import Trade, Position, Account, TradeAction, TradeStatus
+from src.repositories.trading_repository import TradingRepository
 
 logger = logging.getLogger(__name__)
 

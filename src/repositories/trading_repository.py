@@ -4,7 +4,7 @@ Trading Repository Interfaces - Abstract data access
 
 from abc import ABC, abstractmethod
 from typing import Dict
-from .models import Trade, Position, Account
+from src.data_models.trading_domain_models import Trade, Position, Account
 
 class ExecutionResult:
     def __init__(self, success: bool, execution_price: float = 0.0, pnl: float = 0.0, 

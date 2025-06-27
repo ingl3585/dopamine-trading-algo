@@ -29,7 +29,7 @@ from dataclasses import dataclass
 
 from src.intelligence.subsystem_evolution import EnhancedIntelligenceOrchestrator
 from src.neural.enhanced_neural import SelfEvolvingNetwork, FewShotLearner
-from src.market_analysis.market_microstructure import MarketMicrostructureEngine
+from src.market_analysis.microstructure_analyzer import MarketMicrostructureEngine
 from src.agent.real_time_adaptation import RealTimeAdaptationEngine
 from src.agent.meta_learner import MetaLearner
 

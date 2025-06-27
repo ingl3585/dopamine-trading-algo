@@ -8,6 +8,7 @@ import random
 from .dna_subsystem import DNASubsystem
 from .temporal_subsystem import FFTTemporalSubsystem
 from .immune_subsystem import EvolvingImmuneSystem
+from .microstructure_subsystem import MicrostructureSubsystem
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,7 @@ class EnhancedIntelligenceOrchestrator:
         self.dna_subsystem = DNASubsystem()
         self.temporal_subsystem = FFTTemporalSubsystem()
         self.immune_subsystem = EvolvingImmuneSystem()
+        self.microstructure_subsystem = MicrostructureSubsystem({})
         
         # Swarm Intelligence Components
         self.subsystem_votes = deque(maxlen=200)
