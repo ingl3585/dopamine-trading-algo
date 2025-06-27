@@ -137,6 +137,10 @@ class RiskManager:
         if current_position_size == 0:
             current_position_size = self.portfolio.get_total_position_size()
         
+        # Debug logging for position tracking
+        logger.info(f"Position check: NinjaTrader={getattr(market_data, 'total_position_size', 'MISSING')}, "
+                   f"Portfolio={self.portfolio.get_total_position_size()}, Using={current_position_size}")
+        
         # Learned position sizing parameters
         max_contracts = int(self.meta_learner.get_parameter('max_contracts_limit'))  # Learned, starts at 10
         
@@ -189,9 +193,9 @@ class RiskManager:
         remaining_capacity = max_contracts - abs(current_position_size)
         
         if remaining_capacity <= 0:
-            logger.warning(f"Maximum position limit reached: {current_position_size}/{max_contracts} contracts")
-            # Set a flag so we know this was a position limit rejection
-            self._position_limit_hit = True
+            logger.warning(f"POSITION LIMIT HIT: {current_position_size}/{max_contracts} contracts - BLOCKING TRADE")
+            # Trigger immediate learning feedback
+            self._learn_from_position_limit_rejection(decision, market_data, current_position_size, max_contracts)
             return 0
         
         # Intelligent exposure-based scaling
