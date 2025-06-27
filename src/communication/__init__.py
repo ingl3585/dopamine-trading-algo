@@ -1,3 +1,3 @@
-from .tcp_bridge import TCPBridge
+from .tcp_bridge import TCPServer
 
-__all__ = ['TCPBridge']
+__all__ = ['TCPServer']

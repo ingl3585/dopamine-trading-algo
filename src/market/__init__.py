@@ -7,7 +7,7 @@ Public Interface:
 - analyze_microstructure: Microstructure analysis
 """
 
-from .data.processor import MarketDataProcessor
+from .market_data.processor import MarketDataProcessor
 from .microstructure.analyzer import MicrostructureAnalyzer
 
 def create_market_processor(config):

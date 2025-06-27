@@ -13,7 +13,7 @@ from queue import Queue
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 
-from src.intelligence.intelligence_engine import Features
+from src.shared.intelligence_types import Features
 from src.market_analysis.data_processor import MarketData
 from src.agent.meta_learner import MetaLearner
 from src.neural.adaptive_network import AdaptiveTradingNetwork, FeatureLearner, StateEncoder
