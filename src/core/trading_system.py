@@ -13,6 +13,17 @@ from src.core.config import Config
 
 logger = logging.getLogger(__name__)
 
+# AI Trading Personality Integration
+try:
+    from src.personality.config_manager import PersonalityConfigManager
+    from src.personality.trading_personality import TradingPersonality, TriggerEvent
+    PERSONALITY_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Personality system not available: {e}")
+    PERSONALITY_AVAILABLE = False
+
+logger = logging.getLogger(__name__)
+
 class TradingSystem:
     def __init__(self):
         logger.info("Initializing trading system with historical bootstrapping")
@@ -41,6 +52,21 @@ class TradingSystem:
         # Account monitoring
         self.last_account_balance = 0.0
         self.account_change_threshold = 0.05
+        
+        # AI Trading Personality Integration
+        self.personality = None
+        if PERSONALITY_AVAILABLE:
+            try:
+                personality_config_manager = PersonalityConfigManager()
+                personality_config = personality_config_manager.get_personality_config()
+                if personality_config_manager.get_integration_config().enabled:
+                    self.personality = TradingPersonality(personality_config)
+                    logger.info(f"AI Trading Personality '{personality_config.personality_name}' initialized")
+                else:
+                    logger.info("AI Trading Personality disabled in configuration")
+            except Exception as e:
+                logger.error(f"Failed to initialize AI Trading Personality: {e}")
+                self.personality = None
         
         # Load previous state if available
         self._load_state()
@@ -175,6 +201,8 @@ class TradingSystem:
                     account_risk = (order.size * 100) / market_data.account_balance * 100
                     logger.info(f"Order placed: {order.action.upper()} {order.size} @ {order.price:.2f} "
                                     f"(Risk: {account_risk:.1f}%, Balance: ${market_data.account_balance:.0f})")
+                    
+                    # AI Personality Commentary moved to periodic system status updates
                 else:
                     logger.warning("Failed to send signal to NinjaTrader")
             else:
@@ -222,6 +250,8 @@ class TradingSystem:
                           f"P&L: ${trade.pnl:.2f} ({account_impact:.2f}% of account) "
                           f"Reason: {trade.exit_reason} "
                           f"Regime: {risk_summary.get('current_regime', 'unknown')}")
+                
+                # AI Personality Commentary removed - only triggers on system status
                 
                 # Check for significant account changes after trade
                 if hasattr(trade, 'exit_account_balance') and trade.exit_account_balance > 0:
@@ -279,6 +309,10 @@ class TradingSystem:
             # Connection status
             logger.info(f"TCP: {self.tcp_server.data_received} data messages, "
                        f"{self.tcp_server.signals_sent} signals sent")
+            
+            # AI Personality Commentary - Only on System Status
+            if self.personality:
+                self._trigger_personality_system_update()
             
             logger.info("=" * 20)
             
@@ -452,4 +486,173 @@ class TradingSystem:
                        f"Micro={intelligence_stats['micro_patterns']}, "
                        f"Temporal={intelligence_stats['temporal_patterns']}")
         
+        # Shutdown personality system
+        if self.personality:
+            self.personality.shutdown()
+            
         logger.info("Trading system shutdown complete")
+
+    def _trigger_personality_commentary(self, event, features, market_data, order=None, decision=None):
+        """Trigger AI personality commentary for trading events"""
+        if not self.personality:
+            return
+            
+        try:
+            # Build comprehensive context for personality
+            context = {
+                'subsystem_signals': {
+                    'dna': float(features.dna_signal),
+                    'temporal': float(features.temporal_signal), 
+                    'immune': float(features.immune_signal),
+                    'microstructure': float(getattr(features, 'microstructure_signal', 0.0)),
+                    'dopamine': float(getattr(features, 'dopamine_signal', 0.0)),
+                    'regime': float(getattr(features, 'regime_signal', 0.0))
+                },
+                'market_data': {
+                    'price': float(market_data.price),
+                    'volatility': float(getattr(market_data, 'volatility', 0.02)),
+                    'trend_strength': float(getattr(features, 'trend_strength', 0.0)),
+                    'volume_regime': float(getattr(features, 'volume_regime', 0.5)),
+                    'regime': getattr(market_data, 'regime', 'normal')
+                },
+                'portfolio_state': self._get_portfolio_state(),
+                'decision_context': {
+                    'decision_type': event.value if hasattr(event, 'value') else str(event),
+                    'confidence': float(features.confidence),
+                    'overall_signal': float(features.overall_signal),
+                    'primary_tool': getattr(decision, 'primary_tool', 'unknown') if decision else 'unknown',
+                    'exploration': getattr(decision, 'exploration', False) if decision else False
+                }
+            }
+            
+            # Add order-specific context if available
+            if order:
+                context['order_details'] = {
+                    'action': order.action,
+                    'size': float(order.size),
+                    'price': float(order.price)
+                }
+            
+            # Trigger async commentary (don't wait for it)
+            import asyncio
+            try:
+                # Try to run in existing event loop
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Schedule as task in running loop
+                    loop.create_task(self._async_personality_commentary(event, context))
+                else:
+                    # Create new event loop
+                    asyncio.run(self._async_personality_commentary(event, context))
+            except RuntimeError:
+                # No event loop, create new one
+                asyncio.run(self._async_personality_commentary(event, context))
+                
+        except Exception as e:
+            logger.error(f"Error triggering personality commentary: {e}")
+
+    async def _async_personality_commentary(self, event, context):
+        """Async handler for personality commentary - DISABLED to only allow system status commentary"""
+        # Commentary disabled except for system status updates
+        pass
+
+    def _get_portfolio_state(self):
+        """Get portfolio state for personality context"""
+        try:
+            summary = self.portfolio.get_summary()
+            return {
+                'positions': dict(self.portfolio.positions) if hasattr(self.portfolio, 'positions') else {},
+                'unrealized_pnl': float(summary.get('total_pnl', 0.0)),
+                'daily_pnl': float(summary.get('daily_pnl', 0.0)),
+                'recent_performance': [trade.pnl for trade in list(self.portfolio.trade_history)[-5:]] if hasattr(self.portfolio, 'trade_history') else []
+            }
+        except Exception as e:
+            logger.warning(f"Error getting portfolio state for personality: {e}")
+            return {
+                'positions': {},
+                'unrealized_pnl': 0.0,
+                'daily_pnl': 0.0,
+                'recent_performance': []
+            }
+
+    def _trigger_personality_system_update(self):
+        """Trigger personality commentary during system status updates"""
+        if not self.personality:
+            return
+            
+        try:
+            # Get current system state for personality context
+            portfolio_summary = self.portfolio.get_summary()
+            agent_stats = self.agent.get_stats()
+            intelligence_stats = self.intelligence.get_stats()
+            
+            # Create comprehensive context for periodic update
+            context = {
+                'subsystem_signals': {
+                    'dna': float(intelligence_stats.get('dna_patterns', 0) / 300.0),  # Normalize
+                    'temporal': float(intelligence_stats.get('temporal_patterns', 0) / 50.0),
+                    'immune': float(intelligence_stats.get('immune_patterns', 0) / 10.0),
+                    'microstructure': float(intelligence_stats.get('micro_patterns', 0) / 100.0),
+                    'dopamine': 0.5,  # Would need actual dopamine signal
+                    'regime': 0.0     # Would need actual regime signal
+                },
+                'market_data': {
+                    'price': 0.0,  # Current price not available in status context
+                    'volatility': 0.02,  # Default volatility
+                    'trend_strength': 0.0,
+                    'volume_regime': 0.5,
+                    'regime': 'normal'
+                },
+                'portfolio_state': self._get_portfolio_state(),
+                'decision_context': {
+                    'decision_type': 'periodic_update',
+                    'confidence': float(agent_stats.get('success_rate', 0.5)),
+                    'overall_signal': 0.0,
+                    'total_decisions': self.total_decisions,
+                    'recent_activity': 'monitoring' if self.total_decisions % 10 > 5 else 'active',
+                    'agent_learning_efficiency': float(agent_stats.get('learning_efficiency', 0.0)),
+                    'recent_rewards': agent_stats.get('recent_rewards', []),
+                    'current_strategy': agent_stats.get('current_strategy', 'unknown'),
+                    'exploration_rate': agent_stats.get('exploration_rate', 0.0),
+                    'meta_learner_updates': agent_stats.get('meta_learner_updates', 0),
+                    'successful_adaptations': agent_stats.get('successful_adaptations', 0)
+                },
+                'system_performance': {
+                    'data_updates': self.data_updates_received,
+                    'decisions_made': self.total_decisions,
+                    'win_rate': portfolio_summary.get('win_rate', 0.0),
+                    'daily_pnl': portfolio_summary.get('daily_pnl', 0.0)
+                }
+            }
+            
+            # Trigger async commentary (don't wait for it)
+            import asyncio
+            try:
+                # Try to run in existing event loop
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    # Schedule as task in running loop
+                    loop.create_task(self._async_personality_system_commentary(context))
+                else:
+                    # Create new event loop
+                    asyncio.run(self._async_personality_system_commentary(context))
+            except RuntimeError:
+                # No event loop, create new one
+                asyncio.run(self._async_personality_system_commentary(context))
+                
+        except Exception as e:
+            logger.error(f"Error triggering personality system update: {e}")
+
+    async def _async_personality_system_commentary(self, context):
+        """Async handler for periodic personality commentary"""
+        try:
+            commentary = await self.personality.process_trading_event(TriggerEvent.PERIODIC_UPDATE, context)
+            if commentary:
+                # Log the commentary prominently 
+                logger.info(f"AI {self.personality.config.personality_name}: {commentary.text}")
+                
+                # Also print to console for immediate visibility
+                print(f"\n[{self.personality.config.personality_name}]: {commentary.text}\n")
+                
+        except Exception as e:
+            logger.error(f"Error in async personality system commentary: {e}")

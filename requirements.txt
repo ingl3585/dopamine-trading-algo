@@ -24,3 +24,26 @@ pytest-cov>=2.12.0
 
 # Type Checking (optional)
 mypy>=0.910
+
+# AI Trading Personality System
+# Core personality dependencies (required for personality features)
+aiohttp>=3.8.0  # HTTP client for Ollama and custom LLM APIs
+pyttsx3>=2.90  # Local text-to-speech synthesis
+
+# LLM API integrations (optional - choose one)
+# openai>=1.0.0  # OpenAI GPT models  
+# anthropic>=0.3.0  # Anthropic Claude models
+# Note: For free setup, use Ollama (no Python package needed)
+
+# Advanced voice synthesis (optional upgrades)
+# elevenlabs>=0.2.0  # ElevenLabs TTS
+# azure-cognitiveservices-speech>=1.24.0  # Azure TTS
+# google-cloud-texttospeech>=2.14.0  # Google Cloud TTS
+# boto3>=1.26.0  # Amazon Polly
+
+# Audio processing (optional)
+# pygame>=2.1.0  # Audio playback
+# pydub>=0.25.0  # Audio processing
+
+# Development and testing for personality system
+# asyncio is built-in with Python 3.7+

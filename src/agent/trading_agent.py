@@ -112,6 +112,9 @@ class TradingAgent:
         self.last_trade_time = 0.0
         self.regime_transitions = 0
         self.adaptation_events = 0
+        self.current_strategy = 'conservative'  # Default strategy
+        self.exploration_rate = 0.1  # Default exploration rate
+        self.successful_adaptations = 0  # Track successful adaptations
         
         # Performance tracking for different strategies
         self.strategy_performance = {
@@ -701,13 +704,13 @@ class TradingAgent:
         if meta_context.get('adaptation_events', 0) > 0.1:  # Too many adaptation events
             return False
         
-        # CRITICAL: Position limit awareness - prevent agent from trying to trade at limits
+        # CRITICAL: Position limit awareness - allow exits but prevent further entries
         current_position = getattr(market_data, 'total_position_size', 0)
         max_contracts = int(self.meta_learner.get_parameter('max_contracts_limit'))
         
-        # If we're at or near position limits, don't consider trading
-        if abs(current_position) >= max_contracts:
-            return False
+        # At position limits, only allow trades that reduce position (exits)
+        # Don't block ALL trading - this prevents exiting losing positions!
+        # The risk manager will handle blocking invalid trades
         
         # If we're close to limits and have had recent rejections, be more conservative
         exposure_ratio = abs(current_position) / max_contracts if max_contracts > 0 else 0
@@ -753,7 +756,7 @@ class TradingAgent:
             
             if not hasattr(trade, 'intelligence_data'):
                 logger.warning("Trade missing intelligence_data - creating minimal data")
-                trade.intelligence_data = {'subsystem_signals': [0,0,0,0,0]}
+                trade.intelligence_data = {'subsystem_signals': [0,0,0,0,0,0]}
             
             # Update statistics
             if trade.pnl > 0:
@@ -776,7 +779,7 @@ class TradingAgent:
                     'account_balance': float(account_balance),
                     'hold_time': float(trade.exit_time - trade.entry_time),
                     'was_exploration': bool(getattr(trade, 'exploration', False)),
-                    'subsystem_contributions': torch.tensor([0,0,0,0,0], dtype=torch.float64),  # Safe default
+                    'subsystem_contributions': torch.tensor([0,0,0,0,0,0], dtype=torch.float64),  # Safe default
                     'subsystem_agreement': 0.5,  # Safe default
                     'confidence': float(getattr(trade, 'confidence', 0.5)),
                     'primary_tool': str(getattr(trade, 'primary_tool', 'unknown')),
@@ -789,9 +792,9 @@ class TradingAgent:
                 
                 # Safely extract subsystem contributions
                 if hasattr(trade, 'intelligence_data') and trade.intelligence_data:
-                    signals = trade.intelligence_data.get('subsystem_signals', [0,0,0,0,0])
+                    signals = trade.intelligence_data.get('subsystem_signals', [0,0,0,0,0,0])
                     if isinstance(signals, (list, tuple)) and len(signals) >= 3:
-                        trade_data['subsystem_contributions'] = torch.tensor(signals[:5] + [0]*(5-len(signals)), dtype=torch.float64)
+                        trade_data['subsystem_contributions'] = torch.tensor(signals[:6] + [0]*(6-len(signals)), dtype=torch.float64)
                         trade_data['subsystem_agreement'] = self._calculate_enhanced_subsystem_agreement(trade.intelligence_data)
                         trade_data['regime_confidence'] = trade.intelligence_data.get('regime_context', {}).get('regime_confidence', 0.5)
                 
@@ -805,7 +808,7 @@ class TradingAgent:
                     'account_balance': 1000.0,
                     'hold_time': 60.0,
                     'was_exploration': False,
-                    'subsystem_contributions': torch.tensor([0,0,0,0,0], dtype=torch.float64),
+                    'subsystem_contributions': torch.tensor([0,0,0,0,0,0], dtype=torch.float64),
                     'subsystem_agreement': 0.5,
                     'confidence': 0.5,
                     'primary_tool': 'unknown',
@@ -936,7 +939,7 @@ class TradingAgent:
     
     def _calculate_enhanced_subsystem_agreement(self, intelligence_data: Dict) -> float:
         """Enhanced subsystem agreement calculation"""
-        signals = intelligence_data.get('subsystem_signals', [0, 0, 0, 0, 0])
+        signals = intelligence_data.get('subsystem_signals', [0, 0, 0, 0, 0, 0])
         
         if not signals or all(s == 0 for s in signals):
             return 0.5
@@ -1161,7 +1164,13 @@ class TradingAgent:
     def load_model(self, filepath: str):
         """Enhanced model loading"""
         try:
-            checkpoint = torch.load(filepath, map_location=self.device)
+            # Handle PyTorch 2.6+ security requirements
+            try:
+                checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
+            except Exception as weights_error:
+                # Fallback for older PyTorch versions or if weights_only fails
+                logger.warning(f"weights_only=False failed, trying alternative loading: {weights_error}")
+                checkpoint = torch.load(filepath, map_location=self.device)
             
             self.network.load_state_dict(checkpoint['network_state'])
             self.target_network.load_state_dict(checkpoint['target_network_state'])
@@ -1222,7 +1231,12 @@ class TradingAgent:
             'current_sizes': self.meta_learner.architecture_evolver.current_sizes,
             'subsystem_weights': self.meta_learner.get_subsystem_weights().detach().cpu().numpy().tolist(),
             'regime_transitions': self.regime_transitions,
-            'adaptation_events': self.adaptation_events
+            'adaptation_events': self.adaptation_events,
+            'recent_rewards': list(self.meta_learner.outcome_history)[-5:] if hasattr(self.meta_learner, 'outcome_history') else [],
+            'current_strategy': self.current_strategy,
+            'exploration_rate': self.exploration_rate,
+            'meta_learner_updates': getattr(self.meta_learner, 'total_updates', 0),
+            'successful_adaptations': self.successful_adaptations
         }
         
         # Strategy performance stats
@@ -1306,6 +1320,25 @@ class TradingAgent:
                 # Update meta-learner parameters to be more conservative
                 if hasattr(self.meta_learner, 'learn_from_negative_feedback'):
                     self.meta_learner.learn_from_negative_feedback(rejection_data, reward)
+                
+                # Also create a trade data entry with position violation flag for immediate learning
+                violation_trade_data = {
+                    'pnl': 0.0,  # No P&L for rejected trades
+                    'account_balance': rejection_data.get('account_balance', 10000),
+                    'hold_time': 0.0,
+                    'action': 'trade',
+                    'decision_confidence': rejection_data.get('decision_confidence', 0.5),
+                    'position_limit_violation': True,  # Critical flag for heavy penalty
+                    'subsystem_agreement': 0.5
+                }
+                
+                # Compute and apply the heavy penalty immediately using the rejection engine
+                violation_reward = self.meta_learner.reward_engine.compute_rejection_reward('position_limit', violation_data)
+                logger.warning(f"Position limit violation: Applied reward penalty: {violation_reward}")
+                
+                # Add to meta-learner outcome history for learning
+                if hasattr(self.meta_learner, 'outcome_history'):
+                    self.meta_learner.outcome_history.append(violation_reward)
                 
                 # Update exploration strategy to avoid position limits
                 if hasattr(self.adaptation_engine, 'update_exploration_constraints'):
