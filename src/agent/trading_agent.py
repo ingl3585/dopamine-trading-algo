@@ -122,6 +122,11 @@ class TradingAgent:
             'adaptive': deque(maxlen=100)
         }
         
+        # Position limit rejection tracking
+        self.recent_position_rejections = 0
+        self.position_rejection_timestamps = deque(maxlen=50)
+        self.last_position_rejection_time = 0.0
+        
         # Model ensemble for uncertainty quantification
         self.ensemble_predictions = deque(maxlen=10)
     
@@ -600,6 +605,11 @@ class TradingAgent:
             float(market_data.margin_utilization),
             float(market_data.buying_power_ratio),
             
+            # CRITICAL: Position limit awareness - current position context
+            float(getattr(market_data, 'total_position_size', 0) / 10.0),  # Normalized position
+            float(abs(getattr(market_data, 'total_position_size', 0)) / int(self.meta_learner.get_parameter('max_contracts_limit'))),  # Position ratio
+            float(min(1.0, self.recent_position_rejections / 10.0)),  # Recent rejection ratio
+            
             # Time-based features
             float(np.sin(2 * np.pi * features.time_of_day)),  # Cyclical time
             float(np.cos(2 * np.pi * features.time_of_day)),
@@ -689,6 +699,24 @@ class TradingAgent:
         # Adaptation engine emergency mode
         if meta_context.get('adaptation_events', 0) > 0.1:  # Too many adaptation events
             return False
+        
+        # CRITICAL: Position limit awareness - prevent agent from trying to trade at limits
+        current_position = getattr(market_data, 'total_position_size', 0)
+        max_contracts = int(self.meta_learner.get_parameter('max_contracts_limit'))
+        
+        # If we're at or near position limits, don't consider trading
+        if abs(current_position) >= max_contracts:
+            return False
+        
+        # If we're close to limits and have had recent rejections, be more conservative
+        exposure_ratio = abs(current_position) / max_contracts if max_contracts > 0 else 0
+        exposure_threshold = self.meta_learner.get_parameter('exposure_scaling_threshold')
+        
+        if exposure_ratio > exposure_threshold:
+            # Check if we've had recent position limit rejections
+            recent_rejections = getattr(self, 'recent_position_rejections', 0)
+            if recent_rejections > 3:  # Had recent rejections
+                return False
         
         return True
     
@@ -1237,3 +1265,56 @@ class TradingAgent:
                 'previous_task': self._buffer_size('previous_task')
             }
         }
+    
+    def learn_from_rejection(self, rejection_type: str, rejection_data: Dict, reward: float):
+        """Learn from order rejections to prevent future repeated failures"""
+        try:
+            import time
+            current_time = time.time()
+            
+            if rejection_type == 'position_limit':
+                # Update position rejection tracking
+                self.recent_position_rejections += 1
+                self.position_rejection_timestamps.append(current_time)
+                self.last_position_rejection_time = current_time
+                
+                # Clean up old timestamps (older than 10 minutes)
+                cutoff_time = current_time - 600
+                while (self.position_rejection_timestamps and 
+                       self.position_rejection_timestamps[0] < cutoff_time):
+                    self.position_rejection_timestamps.popleft()
+                
+                # Update recent count based on cleaned timestamps
+                self.recent_position_rejections = len(self.position_rejection_timestamps)
+                
+                # Create learning experience for immediate behavioral change
+                rejection_experience = {
+                    'rejection_type': rejection_type,
+                    'current_position': rejection_data.get('current_position', 0),
+                    'max_contracts': rejection_data.get('max_contracts', 10),
+                    'tool_used': rejection_data.get('primary_tool', 'unknown'),
+                    'exploration_mode': rejection_data.get('exploration_mode', False),
+                    'rejection_count': self.recent_position_rejections,
+                    'negative_reward': reward,
+                    'timestamp': current_time
+                }
+                
+                # Store high-priority negative experience
+                self._buffer_append(rejection_experience, 'priority')
+                
+                # Update meta-learner parameters to be more conservative
+                if hasattr(self.meta_learner, 'learn_from_negative_feedback'):
+                    self.meta_learner.learn_from_negative_feedback(rejection_data, reward)
+                
+                # Update exploration strategy to avoid position limits
+                if hasattr(self.adaptation_engine, 'update_exploration_constraints'):
+                    self.adaptation_engine.update_exploration_constraints('position_limit', rejection_data)
+                
+                logger.info(f"Learning from {rejection_type} rejection: "
+                           f"recent_rejections={self.recent_position_rejections}, "
+                           f"reward={reward:.1f}, tool={rejection_data.get('primary_tool', 'unknown')}")
+                
+        except Exception as e:
+            logger.error(f"Error in learn_from_rejection: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")

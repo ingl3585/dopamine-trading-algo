@@ -85,6 +85,7 @@ class DataProcessor:
             margin_used=raw_data.get('margin_used', 0),
             available_margin=raw_data.get('available_margin', 25000),
             open_positions=raw_data.get('open_positions', 0),
+            total_position_size=raw_data.get('total_position_size', 0.0),
             # Computed ratios from TCP bridge
             margin_utilization=raw_data.get('margin_utilization', 0.0),
             buying_power_ratio=raw_data.get('buying_power_ratio', 1.0),

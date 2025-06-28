@@ -30,9 +30,10 @@ class Order:
 
 
 class RiskManager:
-    def __init__(self, portfolio, meta_learner):
+    def __init__(self, portfolio, meta_learner, agent=None):
         self.portfolio = portfolio
         self.meta_learner = meta_learner
+        self.agent = agent  # Reference to trading agent for immediate feedback
         self.advanced_risk = AdvancedRiskManager(meta_learner)
         self.risk_learning = RiskLearningEngine()
         
@@ -130,7 +131,11 @@ class RiskManager:
             if hasattr(self.meta_learner, 'update_position_limit_awareness'):
                 self.meta_learner.update_position_limit_awareness(violation_data, negative_reward)
             
-            # Also send feedback to the main agent for learning
+            # CRITICAL: Send immediate feedback to the trading agent
+            if self.agent and hasattr(self.agent, 'learn_from_rejection'):
+                self.agent.learn_from_rejection('position_limit', violation_data, negative_reward)
+            
+            # Also send feedback to the main agent for learning (legacy)
             if hasattr(self.meta_learner, 'learn_from_rejection'):
                 self.meta_learner.learn_from_rejection('position_limit', violation_data, negative_reward)
             

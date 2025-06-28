@@ -21,7 +21,7 @@ class TradingSystem:
         self.data_processor = DataProcessor()
         self.intelligence = IntelligenceEngine(self.config)
         self.agent = TradingAgent(self.intelligence, self.portfolio)
-        self.risk_manager = RiskManager(self.portfolio, self.agent.meta_learner)
+        self.risk_manager = RiskManager(self.portfolio, self.agent.meta_learner, self.agent)
         
         self.tcp_server = TCPServer()
         self.tcp_server.on_market_data = self._process_market_data
