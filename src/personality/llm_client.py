@@ -38,7 +38,7 @@ class CommentaryRequest:
     portfolio_context: Dict
     style: CommentaryStyle = CommentaryStyle.ANALYTICAL
     tone: CommentaryTone = CommentaryTone.PROFESSIONAL
-    max_length: int = 200
+    max_length: int = 400
     urgency: float = 0.5
 
 @dataclass
