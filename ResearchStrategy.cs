@@ -2,7 +2,7 @@
 // Advanced AI Trading Strategy with Multi-Entry Scaling and Position Reversal Capability
 //
 // Key Features:
-// - Supports up to 5 entries per direction for position scaling
+// - Supports up to 10 entries per direction for position scaling
 // - Automatic position reversals (long to short, short to long)
 // - Each entry gets unique signal name for proper tracking
 // - Individual stop loss and profit target management per entry
@@ -351,6 +351,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        double currentBalance     = Account.Get(AccountItem.CashValue,             Currency.UsDollar);
 		        double currentBuyingPower = Account.Get(AccountItem.ExcessIntradayMargin,  Currency.UsDollar);
 		        double totalPnL           = Account.Get(AccountItem.RealizedProfitLoss,    Currency.UsDollar);
+		        double unrealizedPnL      = Account.Get(AccountItem.UnrealizedProfitLoss,  Currency.UsDollar);
 		        double dailyPnL           = sessionStartSet ? (totalPnL - sessionStartPnL) : 0;
 		        double netLiquidation     = Account.Get(AccountItem.NetLiquidation,        Currency.UsDollar);
 		        double marginUsed         = Account.Get(AccountItem.InitialMargin,         Currency.UsDollar);
@@ -369,6 +370,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        sb.Append($"\"account_balance\":{currentBalance.ToString(CultureInfo.InvariantCulture)},");
 		        sb.Append($"\"buying_power\":{currentBuyingPower.ToString(CultureInfo.InvariantCulture)},");
 		        sb.Append($"\"daily_pnl\":{dailyPnL.ToString(CultureInfo.InvariantCulture)},");
+		        sb.Append($"\"unrealized_pnl\":{unrealizedPnL.ToString(CultureInfo.InvariantCulture)},");
 		        sb.Append($"\"net_liquidation\":{netLiquidation.ToString(CultureInfo.InvariantCulture)},");
 		        sb.Append($"\"margin_used\":{marginUsed.ToString(CultureInfo.InvariantCulture)},");
 		        sb.Append($"\"available_margin\":{availableMargin.ToString(CultureInfo.InvariantCulture)},");

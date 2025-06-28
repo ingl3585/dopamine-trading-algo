@@ -46,12 +46,13 @@ class Features:
     pattern_score: float
     confidence: float
     
-    # All four subsystem signals
+    # All five subsystem signals
     dna_signal: float
     micro_signal: float
     temporal_signal: float
     immune_signal: float
     microstructure_signal: float
+    dopamine_signal: float
     overall_signal: float
     
     # Enhanced context

@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 from src.market_analysis.data_processor import MarketData
 from src.intelligence.subsystem_evolution import EnhancedIntelligenceOrchestrator
 from src.market_analysis.microstructure_analyzer import MarketMicrostructureEngine
+from src.intelligence.subsystems.dopamine_subsystem import DopamineSubsystem
 from src.shared.types import Features
 
 logger = logging.getLogger(__name__)
@@ -26,6 +27,9 @@ class IntelligenceEngine:
         
         # Microstructure analysis (4th subsystem)
         self.microstructure_engine = MarketMicrostructureEngine()
+        
+        # Dopamine subsystem (5th subsystem) - P&L-based reward system
+        self.dopamine_subsystem = DopamineSubsystem(config)
         
         # Real-time adaptation (lazy import to avoid circular dependency)
         self.adaptation_engine = None
@@ -997,9 +1001,9 @@ class IntelligenceEngine:
         return Features(
             price_momentum=0, volume_momentum=0, price_position=0.5, volatility=0,
             time_of_day=0.5, pattern_score=0, confidence=0, 
-            # All four subsystem signals
+            # All five subsystem signals
             dna_signal=0, micro_signal=0, temporal_signal=0, immune_signal=0, 
-            microstructure_signal=0.0, overall_signal=0,
+            microstructure_signal=0.0, dopamine_signal=0.0, overall_signal=0,
             # Enhanced features
             regime_adjusted_signal=0.0, adaptation_quality=0.5,
             smart_money_flow=0.0, liquidity_depth=0.5, regime_confidence=0.5
@@ -1151,16 +1155,25 @@ class IntelligenceEngine:
             smart_money_flow = order_flow.get('smart_money_flow', 0.0)
             liquidity_depth = order_flow.get('liquidity_depth', 0.5)
             regime_confidence = regime_state.get('confidence', 0.5)
+            
+            # 5. Dopamine Subsystem - P&L-based reward signal
+            dopamine_market_data = {
+                'unrealized_pnl': getattr(data, 'unrealized_pnl', 0.0),
+                'daily_pnl': getattr(data, 'daily_pnl', 0.0),
+                'open_positions': getattr(data, 'open_positions', 0.0),
+                'current_price': data.prices_1m[-1] if data.prices_1m else 0.0
+            }
+            dopamine_signal = self.dopamine_subsystem.process_pnl_update(dopamine_market_data)
 
         except Exception as e:
             logger.error(f"Error during subsystem processing in extract_features: {e}")
             return self._default_features()
 
         # --- Feature Aggregation and Confidence ---
-        subsystem_signals = [dna_signal, temporal_signal, immune_signal, microstructure_signal]
+        subsystem_signals = [dna_signal, temporal_signal, immune_signal, microstructure_signal, dopamine_signal]
         consensus_strength = self._calculate_enhanced_consensus(subsystem_signals)
         
-        weights = [0.3, 0.25, 0.2, 0.25]  # DNA, Temporal, Immune, Microstructure
+        weights = [0.25, 0.2, 0.15, 0.2, 0.2]  # DNA, Temporal, Immune, Microstructure, Dopamine
         overall_signal = sum(signal * weight for signal, weight in zip(subsystem_signals, weights))
         
         signal_strength = sum(abs(s) for s in subsystem_signals)
@@ -1206,6 +1219,7 @@ class IntelligenceEngine:
             temporal_signal=temporal_signal,
             immune_signal=immune_signal,
             microstructure_signal=microstructure_signal,
+            dopamine_signal=dopamine_signal,
             overall_signal=overall_signal,
             regime_adjusted_signal=regime_adjusted_signal,
             adaptation_quality=adaptation_quality,

@@ -113,6 +113,7 @@ class TCPServer:
             'net_liquidation': 25000.0,
             'buying_power': 25000.0,
             'daily_pnl': 0.0,
+            'unrealized_pnl': 0.0,
             'margin_used': 0.0,
             'available_margin': 25000.0,
             'open_positions': 0,
