@@ -24,3 +24,20 @@ pytest-cov>=2.12.0
 
 # Type Checking (optional)
 mypy>=0.910
+
+# AI Trading Personality System (optional)
+# For LLM integration
+openai>=1.0.0  # OpenAI GPT models
+anthropic>=0.3.0  # Anthropic Claude models
+aiohttp>=3.8.0  # Custom API endpoints
+
+# For voice synthesis (optional)
+# elevenlabs>=0.2.0  # ElevenLabs TTS
+# azure-cognitiveservices-speech>=1.24.0  # Azure TTS
+# google-cloud-texttospeech>=2.14.0  # Google Cloud TTS
+# boto3>=1.26.0  # Amazon Polly
+# pyttsx3>=2.90  # Local TTS
+
+# For audio playback (optional)  
+# pygame>=2.1.0  # Audio playback
+# pydub>=0.25.0  # Audio processing
