@@ -287,19 +287,25 @@ class TradingAgent:
             # Strategy selection based on adaptation engine
             selected_strategy = adaptation_decision.get('strategy_name', 'conservative')
             
+            # CRITICAL FIX: Add position awareness to prevent position limit violations
+            current_position = getattr(market_data, 'total_position_size', 0)
+            max_contracts = int(self.meta_learner.get_parameter('max_contracts_limit'))
+            
             if should_explore or adaptation_decision.get('emergency_mode', False):
-                # Enhanced exploration with strategy awareness
+                # Enhanced exploration with strategy awareness AND position awareness
                 action_idx = self._strategic_exploration(
-                    weighted_signal, selected_strategy, features, adaptation_decision
+                    weighted_signal, selected_strategy, features, adaptation_decision, current_position, max_contracts
                 )
                 exploration = True
             else:
-                # Exploitation with uncertainty consideration
+                # Exploitation with uncertainty consideration AND position awareness
                 uncertainty = adaptation_decision.get('uncertainty', 0.5)
                 if uncertainty > 0.7:  # High uncertainty, be more conservative
                     action_probs[0] *= 1.5  # Boost hold probability
                     action_probs = action_probs / np.sum(action_probs)  # Renormalize
                 
+                # Apply position-aware action filtering
+                action_probs = self._apply_position_filtering(action_probs, current_position, max_contracts)
                 action_idx = np.argmax(action_probs)
                 exploration = False
             
@@ -412,47 +418,106 @@ class TradingAgent:
         )
     
     def _strategic_exploration(self, weighted_signal: torch.Tensor, strategy: str, 
-                             features: Features, adaptation_decision: Dict) -> int:
-        """Enhanced exploration based on selected strategy"""
+                             features: Features, adaptation_decision: Dict, 
+                             current_position: int = 0, max_contracts: int = 10) -> int:
+        """Enhanced exploration based on selected strategy with position awareness"""
+        
+        # First determine raw action preference based on strategy
+        raw_action = None
         
         if strategy == 'conservative':
             # Conservative exploration - only trade with strong signals
             if abs(weighted_signal) > 0.3:
-                return 1 if weighted_signal > 0 else 2
-            return 0
+                raw_action = 1 if weighted_signal > 0 else 2
+            else:
+                raw_action = 0
         
         elif strategy == 'aggressive':
             # Aggressive exploration - trade on weaker signals
             if abs(weighted_signal) > 0.1:
-                return 1 if weighted_signal > 0 else 2
-            return 0
+                raw_action = 1 if weighted_signal > 0 else 2
+            else:
+                raw_action = 0
         
         elif strategy == 'momentum':
             # Momentum strategy - follow trends
             if features.price_momentum > 0.01:
-                return 1
+                raw_action = 1
             elif features.price_momentum < -0.01:
-                return 2
-            return 0
+                raw_action = 2
+            else:
+                raw_action = 0
         
         elif strategy == 'mean_reversion':
             # Mean reversion - trade against extremes
             if features.price_position > 0.8:
-                return 2  # Sell at highs
+                raw_action = 2  # Sell at highs
             elif features.price_position < 0.2:
-                return 1  # Buy at lows
-            return 0
+                raw_action = 1  # Buy at lows
+            else:
+                raw_action = 0
         
         else:  # adaptive
             # Adaptive strategy based on current conditions
             if adaptation_decision.get('emergency_mode', False):
-                return 0  # Hold in emergency
-            elif features.regime_confidence > 0.7:
-                # High confidence regime - follow signals
-                return 1 if weighted_signal > 0.1 else (2 if weighted_signal < -0.1 else 0)
+                raw_action = 0  # Hold in emergency
             else:
-                # Low confidence regime - be conservative
-                return 1 if weighted_signal > 0.2 else (2 if weighted_signal < -0.2 else 0)
+                raw_action = 1 if weighted_signal > 0 else 2
+        
+        # CRITICAL: Apply position-aware filtering to prevent limit violations
+        return self._filter_action_by_position(raw_action, current_position, max_contracts)
+    
+    def _apply_position_filtering(self, action_probs: np.ndarray, current_position: int, max_contracts: int) -> np.ndarray:
+        """Apply position-aware filtering to action probabilities"""
+        filtered_probs = action_probs.copy()
+        
+        # If at maximum long position, prevent BUY actions (index 1)
+        if current_position >= max_contracts:
+            filtered_probs[1] = 0.0  # Zero out BUY probability
+            logger.info(f"Position filtering: Blocked BUY - at max long position ({current_position}/{max_contracts})")
+        
+        # If at maximum short position, prevent SELL actions (index 2) 
+        elif current_position <= -max_contracts:
+            filtered_probs[2] = 0.0  # Zero out SELL probability
+            logger.info(f"Position filtering: Blocked SELL - at max short position ({current_position}/{max_contracts})")
+        
+        # Renormalize probabilities after filtering
+        prob_sum = np.sum(filtered_probs)
+        if prob_sum > 0:
+            filtered_probs = filtered_probs / prob_sum
+        else:
+            # Emergency fallback - force HOLD
+            filtered_probs = np.array([1.0, 0.0, 0.0])
+            logger.warning("Position filtering resulted in zero probabilities - forcing HOLD")
+        
+        return filtered_probs
+    
+    def _filter_action_by_position(self, action_idx: int, current_position: int, max_contracts: int) -> int:
+        """Filter individual action based on current position to prevent limit violations"""
+        
+        # Action mapping: 0=HOLD, 1=BUY, 2=SELL
+        
+        # If at maximum long position and trying to BUY more
+        if current_position >= max_contracts and action_idx == 1:
+            logger.info(f"Position filter: Changed BUY to HOLD - at max long ({current_position}/{max_contracts})")
+            return 0  # Change to HOLD
+        
+        # If at maximum short position and trying to SELL more
+        elif current_position <= -max_contracts and action_idx == 2:
+            logger.info(f"Position filter: Changed SELL to HOLD - at max short ({current_position}/{max_contracts})")
+            return 0  # Change to HOLD
+        
+        # For positions near the limit, prefer opposite direction to reduce exposure
+        elif abs(current_position) >= max_contracts * 0.8:  # 80% of limit
+            if current_position > 0 and action_idx == 1:  # Long position, wants to buy more
+                logger.info(f"Position filter: Changed BUY to SELL - reducing long exposure ({current_position}/{max_contracts})")
+                return 2  # Change to SELL to reduce position
+            elif current_position < 0 and action_idx == 2:  # Short position, wants to sell more
+                logger.info(f"Position filter: Changed SELL to BUY - reducing short exposure ({current_position}/{max_contracts})")
+                return 1  # Change to BUY to reduce position
+        
+        # Action is safe - return as-is
+        return action_idx
     
     def _calculate_enhanced_levels(self, action: str, market_data: MarketData,
                                  use_stop: bool, stop_distance: float,

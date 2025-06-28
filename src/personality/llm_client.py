@@ -128,6 +128,8 @@ You have access to 5 advanced subsystems:
 - Microstructure Subsystem: Order flow and liquidity analysis
 - Dopamine Subsystem: Real-time P&L feedback and emotional learning
 
+IMPORTANT: You only have access to 1-minute, 5-minute, and 15-minute timeframe data. Do not reference 4-hour, daily, or other timeframes that are not available. Focus on the subsystem signals and market context you are actually provided.
+
 Current emotional state: {request.emotional_context.get('emotional_description', 'calm and analytical')}
 """
         
@@ -159,11 +161,13 @@ EMOTIONAL STATE:
         response_instructions = f"""
 Please provide a {request.max_length}-character response that:
 
-1. Explains what you're seeing in the market/signals
+1. Explains what you're seeing in the market/signals (use ONLY the data provided)
 2. Shares your emotional reaction honestly
 3. Discusses your decision-making process
 4. Shows vulnerability when uncertain
 5. Demonstrates confidence when signals align
+
+CRITICAL: Only reference timeframes, indicators, and data that are explicitly provided in the context above. Do not invent or assume data that isn't given to you.
 
 Style: {request.style.value}
 Tone: {request.tone.value}
@@ -178,29 +182,44 @@ Respond as if you're thinking out loud about the trading situation. Be genuine, 
         return full_prompt
     
     def _format_market_context(self, market_context: Dict) -> str:
-        """Format market context for LLM consumption"""
+        """Format market context for LLM consumption - with actual available data"""
         
         lines = []
         
+        # Available timeframes - be explicit about what we actually have
+        lines.append("Available timeframes: 1-minute, 5-minute, 15-minute bars")
+        
         volatility = market_context.get('volatility', 0.02)
-        lines.append(f"Volatility: {volatility:.3f} ({'High' if volatility > 0.04 else 'Normal' if volatility > 0.015 else 'Low'})")
+        lines.append(f"Current volatility: {volatility:.3f} ({'High' if volatility > 0.04 else 'Normal' if volatility > 0.015 else 'Low'})")
         
         trend_strength = market_context.get('trend_strength', 0.0)
         if trend_strength > 0.02:
-            lines.append(f"Trend: Strong uptrend ({trend_strength:.3f})")
+            lines.append(f"Price momentum: Bullish ({trend_strength:.3f})")
         elif trend_strength < -0.02:
-            lines.append(f"Trend: Strong downtrend ({trend_strength:.3f})")
+            lines.append(f"Price momentum: Bearish ({trend_strength:.3f})")
         else:
-            lines.append("Trend: Sideways/unclear")
+            lines.append("Price momentum: Neutral/sideways")
         
+        # Regime information
         regime = market_context.get('regime', 'normal')
-        lines.append(f"Market regime: {regime}")
+        regime_confidence = market_context.get('regime_confidence', 0.5)
+        lines.append(f"Market regime: {regime} (confidence: {regime_confidence:.2f})")
         
+        # Volume context
         volume_regime = market_context.get('volume_regime', 0.5)
         if volume_regime > 0.7:
             lines.append("Volume: Above average (institutional activity)")
         elif volume_regime < 0.3:
             lines.append("Volume: Below average (low participation)")
+        else:
+            lines.append("Volume: Normal levels")
+        
+        # Time context
+        time_of_day = market_context.get('time_of_day', 0.5)
+        if 0.25 < time_of_day < 0.75:
+            lines.append("Session: Active trading hours")
+        else:
+            lines.append("Session: Off-peak hours")
         
         return "\n".join(lines)
     
@@ -312,7 +331,7 @@ Respond as if you're thinking out loud about the trading situation. Be genuine, 
         tone_guides = {
             CommentaryTone.PROFESSIONAL: "Use formal trading terminology. Be precise.",
             CommentaryTone.CASUAL: "Use everyday language. Be conversational and relatable.",
-            CommentaryTone.TECHNICAL: "Use technical analysis terms. Be specific about indicators.",
+            CommentaryTone.TECHNICAL: "Focus on the subsystem signals and patterns. Only reference data you have been given.",
             CommentaryTone.EMOTIONAL: "Be open about feelings. Share your psychological state."
         }
         

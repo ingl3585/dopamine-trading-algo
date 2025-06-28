@@ -201,12 +201,34 @@ class RiskManager:
         # Use learned size as primary, but cap with traditional methods
         base_size = min(learned_optimal_size, min(sizes[1:]))  # Learned size capped by traditional
         
-        # Apply position concentration limits
-        remaining_capacity = max_contracts - abs(current_position_size)
+        # CRITICAL FIX: Apply position concentration limits with exit allowance
+        # Calculate if this trade would increase or decrease position size
+        action = decision.action.lower()
         
-        if remaining_capacity <= 0:
+        if action == 'buy':
+            new_position_size = current_position_size + base_size
+        elif action == 'sell':
+            new_position_size = current_position_size - base_size
+        else:
+            new_position_size = current_position_size
+        
+        # Check if new position would exceed limits
+        if abs(new_position_size) > max_contracts:
+            # Only block trades that would INCREASE position beyond limits
+            if abs(new_position_size) > abs(current_position_size):
+                logger.warning(f"POSITION LIMIT HIT: {current_position_size}/{max_contracts} contracts - BLOCKING TRADE (would increase to {new_position_size})")
+                # Trigger immediate learning feedback
+                self._learn_from_position_limit_rejection(decision, market_data, current_position_size, max_contracts)
+                return 0
+            else:
+                # Allow position reduction even if still above limit
+                logger.info(f"Allowing position reduction: {current_position_size} -> {new_position_size} (within limits)")
+        
+        # Calculate remaining capacity for new positions only
+        remaining_capacity = max_contracts - abs(current_position_size)
+        if remaining_capacity <= 0 and abs(new_position_size) > abs(current_position_size):
+            # Only block if this would increase position size
             logger.warning(f"POSITION LIMIT HIT: {current_position_size}/{max_contracts} contracts - BLOCKING TRADE")
-            # Trigger immediate learning feedback
             self._learn_from_position_limit_rejection(decision, market_data, current_position_size, max_contracts)
             return 0
         
@@ -218,14 +240,23 @@ class RiskManager:
             # Scale down based on exposure
             scaling_factor = 1.0 - ((exposure_ratio - exposure_threshold) / (1.0 - exposure_threshold)) * 0.7
             final_size = max(1, int(base_size * scaling_factor))
-            final_size = min(final_size, remaining_capacity)
             logger.info(f"Exposure scaling applied: {exposure_ratio:.1%} > {exposure_threshold:.1%}, "
                        f"scaling factor: {scaling_factor:.2f}")
         else:
-            final_size = min(base_size, remaining_capacity)
+            final_size = base_size
         
-        # Absolute maximum enforcement
-        final_size = min(final_size, max_contracts)
+        # Smart size enforcement based on position direction
+        if abs(new_position_size) <= max_contracts:
+            # Trade is within limits - allow full size
+            final_size = min(final_size, max_contracts)
+        else:
+            # For position reduction trades, allow the maximum reduction possible
+            if abs(new_position_size) < abs(current_position_size):
+                max_reduction = abs(current_position_size) - max_contracts
+                final_size = min(final_size, max_reduction + 1)  # Allow at least some reduction
+            else:
+                # For position increases, limit by remaining capacity
+                final_size = min(final_size, max(0, remaining_capacity))
         
         # Record this sizing decision for learning
         self.risk_learning.record_risk_event(
