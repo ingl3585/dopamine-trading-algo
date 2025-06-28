@@ -64,8 +64,7 @@ class RiskManager:
             
             if abs(current_position) >= max_contracts:
                 logger.warning(f"Order REJECTED: Position limit reached ({current_position}/{max_contracts} contracts)")
-                # Provide negative learning feedback for position limit violations
-                self._learn_from_position_limit_rejection(decision, market_data, current_position, max_contracts)
+                # Note: Position limit learning will be handled in position sizing logic to avoid duplicates
             else:
                 logger.info("Position size calculated as 0 (other risk factors)")
             return None
@@ -122,25 +121,17 @@ class RiskManager:
                 'recent_violations': self.recent_violations
             }
             
-            # Use the new reward engine for consistent rejection rewards
-            negative_reward = -15.0 * violation_data['violation_severity']
-            # The reward engine will handle escalation internally
+            # The reward engine handles penalties, so just trigger learning without additional penalty
+            # This prevents double/triple penalization of the same violation
+            negative_reward = 0.0  # No additional penalty - reward engine handles this
             
-            # Update meta-learner with negative feedback
-            if hasattr(self.meta_learner, 'update_position_limit_awareness'):
-                self.meta_learner.update_position_limit_awareness(violation_data, negative_reward)
-            
-            # CRITICAL: Send immediate feedback to the trading agent
+            # CRITICAL: Send feedback to the trading agent for learning (reward engine will handle penalty)
             if self.agent and hasattr(self.agent, 'learn_from_rejection'):
                 self.agent.learn_from_rejection('position_limit', violation_data, negative_reward)
             
-            # Also send feedback to the main agent for learning (legacy)
-            if hasattr(self.meta_learner, 'learn_from_rejection'):
-                self.meta_learner.learn_from_rejection('position_limit', violation_data, negative_reward)
-            
-            # Update risk learning engine
+            # Update risk learning engine for behavioral tracking (no penalty - just learning)
             if hasattr(self.risk_learning, 'learn_from_violation'):
-                self.risk_learning.learn_from_violation('position_limit', violation_data, negative_reward)
+                self.risk_learning.learn_from_violation('position_limit', violation_data, 0.0)
             
             logger.info(f"Learning from position limit violation: reward={negative_reward:.3f} "
                        f"recent_violations={self.recent_violations}, "
