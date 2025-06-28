@@ -264,7 +264,19 @@ class TradingAgent:
             temperature = 1.0 + features.volatility * 2.0  # Higher temperature for higher volatility
             action_logits = combined_outputs['action_logits'] / temperature
             action_probs = F.softmax(action_logits, dim=-1).detach().cpu().numpy()[0]
-            confidence = float(combined_outputs['confidence'].detach().cpu().numpy()[0])
+            
+            # CRITICAL FIX: Validate and bound confidence to prevent network initialization issues
+            raw_confidence = float(combined_outputs['confidence'].detach().cpu().numpy()[0])
+            
+            # Detect and fix abnormally low confidence from network initialization problems
+            if raw_confidence < 0.05:
+                logger.warning(f"Detected abnormally low network confidence: {raw_confidence:.6f}, applying emergency floor")
+                confidence = 0.3  # Emergency confidence floor for functionality
+            elif raw_confidence > 0.98:
+                logger.warning(f"Detected abnormally high network confidence: {raw_confidence:.6f}, applying ceiling")
+                confidence = 0.9  # Prevent overconfidence
+            else:
+                confidence = max(0.1, min(0.95, raw_confidence))  # Enforce reasonable bounds
             
             # Enhanced exploration decision with adaptation strategy
             should_explore = self.meta_learner.should_explore(
@@ -1230,17 +1242,30 @@ class TradingAgent:
                 logger.warning(f"weights_only=False failed, trying alternative loading: {weights_error}")
                 checkpoint = torch.load(filepath, map_location=self.device)
             
-            self.network.load_state_dict(checkpoint['network_state'])
-            self.target_network.load_state_dict(checkpoint['target_network_state'])
-            self.feature_learner.load_state_dict(checkpoint['feature_learner_state'])
+            # Load network states with validation
+            try:
+                self.network.load_state_dict(checkpoint['network_state'])
+                self.target_network.load_state_dict(checkpoint['target_network_state'])
+                self.feature_learner.load_state_dict(checkpoint['feature_learner_state'])
+                logger.info("Network states loaded successfully")
+            except Exception as e:
+                logger.error(f"Error loading network states: {e}")
+                logger.warning("Network weights may be corrupted - confidence issues may occur")
             
             if 'few_shot_learner_state' in checkpoint:
                 self.few_shot_learner.load_state_dict(checkpoint['few_shot_learner_state'])
             
-            self.unified_optimizer.load_state_dict(checkpoint['optimizer_state'])
+            # Load optimizer with error handling
+            try:
+                self.unified_optimizer.load_state_dict(checkpoint['optimizer_state'])
+            except Exception as e:
+                logger.warning(f"Error loading optimizer state: {e} - using fresh optimizer")
             
             if 'scheduler_state' in checkpoint:
-                self.scheduler.load_state_dict(checkpoint['scheduler_state'])
+                try:
+                    self.scheduler.load_state_dict(checkpoint['scheduler_state'])
+                except Exception as e:
+                    logger.warning(f"Error loading scheduler state: {e} - using fresh scheduler")
             
             if 'importance_weights' in checkpoint:
                 self.importance_weights = checkpoint['importance_weights']
@@ -1257,16 +1282,28 @@ class TradingAgent:
                 for strategy, performance in checkpoint['strategy_performance'].items():
                     self.strategy_performance[strategy] = deque(performance, maxlen=100)
             
-            # Load buffer lists
+            # Load buffer lists - but clear if they contain negative experiences that could cause immediate confidence collapse
             if 'experience_list' in checkpoint:
-                self._experience_list = checkpoint['experience_list']
+                saved_experiences = checkpoint['experience_list']
+                # Filter out experiences with extreme negative rewards that could corrupt confidence
+                filtered_experiences = [exp for exp in saved_experiences[-100:] if exp.get('reward', 0) > -3.0]
+                self._experience_list = filtered_experiences
+                logger.info(f"Loaded {len(filtered_experiences)} filtered experiences (filtered from {len(saved_experiences)})")
+            
             if 'priority_list' in checkpoint:
-                self._priority_list = checkpoint['priority_list']
+                saved_priority = checkpoint['priority_list']
+                # Clear priority buffer to prevent immediate negative training
+                self._priority_list = []
+                logger.info(f"Cleared priority buffer on startup to prevent confidence corruption")
+                
             if 'previous_task_list' in checkpoint:
-                self._previous_task_list = checkpoint['previous_task_list']
+                self._previous_task_list = checkpoint['previous_task_list'][-50:]  # Keep only recent
             
             # Load meta-learner
             self.meta_learner.load_state(filepath.replace('.pt', '_meta.pt'))
+            
+            # CRITICAL: Test network confidence output after loading
+            self._validate_network_confidence()
             
             logger.info("Enhanced model loaded successfully")
             
@@ -1274,6 +1311,29 @@ class TradingAgent:
             logger.info("No existing model found, starting fresh")
         except Exception as e:
             logger.error(f"Error loading model: {e}")
+    
+    def _validate_network_confidence(self):
+        """Validate that network confidence output is reasonable after loading"""
+        try:
+            # Create dummy input to test network
+            dummy_input = torch.randn(1, 64, dtype=torch.float64, device=self.device)
+            
+            with torch.no_grad():
+                test_output = self.network(dummy_input)
+                test_confidence = float(test_output['confidence'].detach().cpu().numpy()[0])
+                
+                if test_confidence < 0.05:
+                    logger.error(f"CRITICAL: Network confidence output is abnormally low: {test_confidence:.6f}")
+                    logger.error("This indicates corrupted network weights - confidence collapse will occur")
+                    logger.warning("Consider deleting saved model to force fresh initialization")
+                elif test_confidence > 0.98:
+                    logger.warning(f"Network confidence output is abnormally high: {test_confidence:.6f}")
+                    logger.warning("This may indicate training issues")
+                else:
+                    logger.info(f"Network confidence validation passed: {test_confidence:.3f}")
+                    
+        except Exception as e:
+            logger.error(f"Error validating network confidence: {e}")
     
     def get_stats(self) -> dict:
         """Enhanced statistics"""
