@@ -560,16 +560,36 @@ class TradingSystem:
         """Get portfolio state for personality context"""
         try:
             summary = self.portfolio.get_summary()
+            
+            # Get current position from market data (NinjaTrader real-time data)
+            current_position_size = 0
+            if hasattr(self, 'last_market_data') and self.last_market_data:
+                current_position_size = getattr(self.last_market_data, 'total_position_size', 0)
+            
+            # Create positions dict with real-time position data
+            positions = dict(self.portfolio.positions) if hasattr(self.portfolio, 'positions') else {}
+            
+            # If we have a real-time position but no portfolio positions, create one
+            if current_position_size != 0 and not positions:
+                positions['current'] = {
+                    'size': current_position_size,
+                    'direction': 'long' if current_position_size > 0 else 'short',
+                    'entry_price': getattr(self.last_market_data, 'price', 0),
+                    'unrealized_pnl': getattr(self.last_market_data, 'unrealized_pnl', 0)
+                }
+            
             return {
-                'positions': dict(self.portfolio.positions) if hasattr(self.portfolio, 'positions') else {},
-                'unrealized_pnl': float(summary.get('total_pnl', 0.0)),
-                'daily_pnl': float(summary.get('daily_pnl', 0.0)),
+                'positions': positions,
+                'current_position_size': current_position_size,  # Add explicit position size
+                'unrealized_pnl': float(getattr(self.last_market_data, 'unrealized_pnl', summary.get('total_pnl', 0.0))),
+                'daily_pnl': float(getattr(self.last_market_data, 'daily_pnl', summary.get('daily_pnl', 0.0))),
                 'recent_performance': [trade.pnl for trade in list(self.portfolio.trade_history)[-5:]] if hasattr(self.portfolio, 'trade_history') else []
             }
         except Exception as e:
             logger.warning(f"Error getting portfolio state for personality: {e}")
             return {
                 'positions': {},
+                'current_position_size': 0,
                 'unrealized_pnl': 0.0,
                 'daily_pnl': 0.0,
                 'recent_performance': []

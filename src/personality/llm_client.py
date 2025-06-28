@@ -262,10 +262,26 @@ Respond as if you're thinking out loud about the trading situation. Be genuine, 
         
         lines = []
         
+        # Use real-time position size from NinjaTrader
+        current_position_size = portfolio_context.get('current_position_size', 0)
         positions = portfolio_context.get('positions', {})
-        if positions:
+        
+        if current_position_size != 0:
+            direction = "LONG" if current_position_size > 0 else "SHORT"
+            lines.append(f"Position: {direction} {abs(current_position_size)} contracts")
+            
+            # Add position status relative to limits
+            max_contracts = 10  # Known from config
+            utilization = abs(current_position_size) / max_contracts
+            if utilization >= 1.0:
+                lines.append(f"Position Status: MAXED OUT ({abs(current_position_size)}/{max_contracts} contracts)")
+            elif utilization >= 0.8:
+                lines.append(f"Position Status: Near limit ({abs(current_position_size)}/{max_contracts} contracts)")
+            else:
+                lines.append(f"Position Status: Moderate exposure ({abs(current_position_size)}/{max_contracts} contracts)")
+        elif positions:
             total_size = sum(abs(pos.get('size', 0)) for pos in positions.values())
-            lines.append(f"Open positions: {len(positions)} (total size: {total_size})")
+            lines.append(f"Position: {len(positions)} open positions (total size: {total_size})")
         else:
             lines.append("Position: Flat (no open positions)")
         
