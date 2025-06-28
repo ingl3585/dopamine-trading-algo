@@ -297,8 +297,24 @@ class TradingAgent:
             volatility_adjustment = features.volatility * 0.3
             confidence_threshold = base_threshold + regime_adjustment + volatility_adjustment
             
-            if confidence < confidence_threshold and not exploration:
+            # CRITICAL FIX: Add minimum confidence floor to prevent complete paralysis
+            # Even if confidence is very low, still allow some decision making capability
+            min_confidence_floor = 0.05  # Minimum confidence to maintain basic functionality
+            
+            if confidence < max(confidence_threshold, min_confidence_floor) and not exploration:
+                # If confidence is above floor but below threshold, still allow hold
                 action_idx = 0
+            elif confidence <= min_confidence_floor and not exploration:
+                # Even below floor, allow emergency decisions based on position
+                current_position = getattr(market_data, 'total_position_size', 0)
+                if abs(current_position) > 0 and np.random.random() < 0.1:  # 10% chance to make exit decision
+                    # Make emergency exit decision based on position direction
+                    if current_position > 0:
+                        action_idx = 2  # Sell to reduce long position
+                    else:
+                        action_idx = 1  # Buy to reduce short position
+                else:
+                    action_idx = 0  # Hold
             
             # Enhanced sizing and risk parameters
             raw_position_size = float(combined_outputs['position_size'].detach().cpu().numpy()[0])
@@ -1017,8 +1033,20 @@ class TradingAgent:
         uncertainty_weights = 1.0 / (uncertainties + 0.1)
         policy_loss = -(selected_probs * rewards * uncertainty_weights).mean()
         
-        # Value losses with uncertainty consideration
-        confidence_target = torch.abs(rewards).unsqueeze(1) * uncertainty_weights.unsqueeze(1)
+        # Value losses with uncertainty consideration - FIXED CONFIDENCE TARGET
+        # Separate position limit violations from confidence learning to prevent confidence collapse
+        position_limit_mask = torch.tensor([exp.get('trade_data', {}).get('position_limit_violation', False) for exp in batch], 
+                                         dtype=torch.bool, device=self.device)
+        
+        # For position limit violations, use a base confidence target instead of reward-based
+        base_confidence_target = torch.abs(rewards).unsqueeze(1) * uncertainty_weights.unsqueeze(1)
+        
+        # Cap confidence targets to prevent collapse and set minimum for violations
+        confidence_target = torch.clamp(base_confidence_target, min=0.2, max=1.0)
+        
+        # For position limit violations, override with fixed moderate confidence to maintain decision capability
+        confidence_target[position_limit_mask] = 0.3
+        
         confidence_loss = F.mse_loss(outputs['confidence'], confidence_target)
         
         # Position size loss (reward-weighted with uncertainty)

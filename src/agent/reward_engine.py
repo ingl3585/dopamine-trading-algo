@@ -241,11 +241,13 @@ class CoreRewardEngine:
         decision_action = trade_data.get('action', 'trade')  # 'hold' or 'trade'
         decision_confidence = trade_data.get('decision_confidence', 0.5)
         
-        # Heavy penalty for position limit violations
+        # Heavy penalty for position limit violations - but moderate to prevent confidence collapse
         position_limit_violation = trade_data.get('position_limit_violation', False)
         if position_limit_violation:
-            logger.warning(f"POSITION LIMIT VIOLATION PENALTY: -5.0")
-            return -5.0  # Immediate heavy penalty, no other calculations needed
+            # Reduced penalty to prevent confidence collapse while still discouraging violations
+            penalty = -2.0  # Reduced from -5.0 to prevent overwhelming the learning system
+            logger.warning(f"POSITION LIMIT VIOLATION PENALTY: {penalty}")
+            return penalty
         
         # Account-normalized PnL component - heavily reward profitable trades
         pnl_norm = np.tanh(pnl / (account_balance * 0.01))  # Normalize by 1% of account

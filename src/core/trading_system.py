@@ -651,8 +651,5 @@ class TradingSystem:
                 # Log the commentary prominently 
                 logger.info(f"AI {self.personality.config.personality_name}: {commentary.text}")
                 
-                # Also print to console for immediate visibility
-                print(f"\n[{self.personality.config.personality_name}]: {commentary.text}\n")
-                
         except Exception as e:
             logger.error(f"Error in async personality system commentary: {e}")
