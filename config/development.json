@@ -1,0 +1,18 @@
+{
+    "log_level": "DEBUG",
+    "tcp_data_port": 5556,
+    "tcp_signal_port": 5557,
+    "tcp_host": "localhost",
+    "tcp_timeout": 30,
+    "trading_interval_seconds": 30,
+    "min_trade_interval_seconds": 60,
+    "max_position_size": 0.02,
+    "max_daily_loss": 0.005,
+    "kelly_lookback": 50,
+    "max_hold_time_hours": 4,
+    "max_daily_trades": 5,
+    "close_positions_on_shutdown": true,
+    "emergency_max_margin_usage": 0.70,
+    "emergency_max_drawdown": 0.10,
+    "historical_data_timeout": 30
+}

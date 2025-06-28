@@ -9,51 +9,26 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from data_processor import MarketData
-from subsystem_evolution import EnhancedIntelligenceOrchestrator
-from market_microstructure import MarketMicrostructureEngine
-from real_time_adaptation import RealTimeAdaptationEngine
+from src.market_analysis.data_processor import MarketData
+from src.intelligence.subsystem_evolution import EnhancedIntelligenceOrchestrator
+from src.market_analysis.microstructure_analyzer import MarketMicrostructureEngine
+from src.shared.types import Features
 
 logger = logging.getLogger(__name__)
 
-@dataclass
-class Features:
-    # Core market features
-    price_momentum: float
-    volume_momentum: float
-    price_position: float
-    volatility: float
-    time_of_day: float
-    pattern_score: float
-    confidence: float
-    
-    # All four subsystem signals
-    dna_signal: float
-    micro_signal: float
-    temporal_signal: float
-    immune_signal: float
-    microstructure_signal: float
-    overall_signal: float
-    
-    # Enhanced context
-    regime_adjusted_signal: float = 0.0
-    adaptation_quality: float = 0.0
-    smart_money_flow: float = 0.0
-    liquidity_depth: float = 0.5
-    regime_confidence: float = 0.5
-
 class IntelligenceEngine:
-    def __init__(self, memory_file="data/intelligence_memory.json"):
+    def __init__(self, config, memory_file="data/intelligence_memory.json"):
+        self.config = config
         self.memory_file = memory_file
         
         # Core subsystem orchestration (DNA, Temporal, Immune)
-        self.orchestrator = EnhancedIntelligenceOrchestrator()
+        self.orchestrator = EnhancedIntelligenceOrchestrator(config)
         
         # Microstructure analysis (4th subsystem)
         self.microstructure_engine = MarketMicrostructureEngine()
         
-        # Real-time adaptation
-        self.adaptation_engine = RealTimeAdaptationEngine(model_dim=64)
+        # Real-time adaptation (lazy import to avoid circular dependency)
+        self.adaptation_engine = None
         
         # Pattern storage
         self.patterns = defaultdict(list)
@@ -81,11 +56,18 @@ class IntelligenceEngine:
         
         self.load_patterns(self.memory_file)
 
+    def _get_adaptation_engine(self):
+        """Lazy initialization of adaptation engine to avoid circular dependency"""
+        if self.adaptation_engine is None:
+            from src.agent.real_time_adaptation import RealTimeAdaptationEngine
+            self.adaptation_engine = RealTimeAdaptationEngine(model_dim=64)
+        return self.adaptation_engine
+
     def save_patterns(self, filepath: str):
         """Enhanced save with all subsystem patterns"""
         orchestrator_stats = self.orchestrator.get_comprehensive_stats()
         microstructure_features = self.microstructure_engine.get_microstructure_features()
-        adaptation_stats = self.adaptation_engine.get_comprehensive_stats()
+        adaptation_stats = self._get_adaptation_engine().get_comprehensive_stats()
         
         data = {
             'patterns': dict(self.patterns),
@@ -707,7 +689,7 @@ class IntelligenceEngine:
         
         # Process initialization events for each subsystem
         for i in range(10):
-            self.adaptation_engine.process_market_event(
+            self._get_adaptation_engine().process_market_event(
                 'initialization',
                 {
                     'pattern_count': i * 10, 
@@ -925,11 +907,11 @@ class IntelligenceEngine:
                 'volatility': learning_context['market_state'].get('volatility', 0.02),
                 'predicted_confidence': getattr(trade, 'confidence', 0.5)
             }
-            self.adaptation_engine.update_from_outcome(outcome, adaptation_context)
+            self._get_adaptation_engine().update_from_outcome(outcome, adaptation_context)
             
             # Process adaptation event
             urgency = min(1.0, abs(outcome) * 2.0)
-            self.adaptation_engine.process_market_event(
+            self._get_adaptation_engine().process_market_event(
                 'trade_outcome',
                 {'pnl': outcome, 'trade_data': trade},
                 urgency=urgency
@@ -1047,7 +1029,7 @@ class IntelligenceEngine:
     def get_stats(self) -> Dict:
         """Enhanced statistics with all four subsystems"""
         orchestrator_stats = self.orchestrator.get_comprehensive_stats()
-        adaptation_stats = self.adaptation_engine.get_comprehensive_stats()
+        adaptation_stats = self._get_adaptation_engine().get_comprehensive_stats()
         microstructure_features = self.microstructure_engine.get_microstructure_features()
         
         # Extract subsystem counts
@@ -1205,7 +1187,7 @@ class IntelligenceEngine:
                                                        {'dna_signal': dna_signal, 'temporal_signal': temporal_signal, 
                                                         'immune_signal': immune_signal, 'overall_signal': overall_signal},
                                                        microstructure_result)
-            adaptation_decision = self.adaptation_engine.get_adaptation_decision(feature_tensor, adaptation_context)
+            adaptation_decision = self._get_adaptation_engine().get_adaptation_decision(feature_tensor, adaptation_context)
             adaptation_quality = adaptation_decision.get('adaptation_quality', 0.5)
         except Exception as e:
             logger.error(f"Adaptation engine failed during feature extraction: {e}")

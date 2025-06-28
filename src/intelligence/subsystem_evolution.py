@@ -1,4 +1,4 @@
-# subsystem_evolution.py
+# src/intelligence/subsystem_evolution.py
 
 import numpy as np
 import torch
@@ -70,7 +70,8 @@ def _reset_progress():
 
 
 class DNASubsystem:
-    def __init__(self):
+    def __init__(self, config):
+        self.config = config
         # 16-base DNA encoding for market patterns
         self.bases = {
             'A': 'price_up_vol_high',      'B': 'price_up_vol_med',
@@ -618,7 +619,8 @@ class DNASubsystem:
 
 
 class FFTTemporalSubsystem:
-    def __init__(self):
+    def __init__(self, config):
+        self.config = config
         self.cycle_memory = {}  # frequency -> {'strength': float, 'phase': float, 'performance': float, 'confidence': float}
         self.dominant_cycles = deque(maxlen=100)
         self.interference_patterns = {}
@@ -1011,7 +1013,8 @@ class FFTTemporalSubsystem:
 
 
 class EvolvingImmuneSystem:
-    def __init__(self):
+    def __init__(self, config):
+        self.config = config
         self.antibodies = {}  # pattern -> {'strength': float, 'specificity': float, 'memory_count': int, 'generation': int}
         self.t_cell_memory = deque(maxlen=200)
         self.threat_evolution_tracker = {}
@@ -1460,10 +1463,11 @@ class EvolvingImmuneSystem:
 
 
 class EnhancedIntelligenceOrchestrator:
-    def __init__(self):
-        self.dna_subsystem = DNASubsystem()
-        self.temporal_subsystem = FFTTemporalSubsystem()
-        self.immune_subsystem = EvolvingImmuneSystem()
+    def __init__(self, config):
+        self.config = config
+        self.dna_subsystem = DNASubsystem(self.config)
+        self.temporal_subsystem = FFTTemporalSubsystem(self.config)
+        self.immune_subsystem = EvolvingImmuneSystem(self.config)
         
         # Enhanced swarm intelligence
         self.subsystem_votes = deque(maxlen=200)

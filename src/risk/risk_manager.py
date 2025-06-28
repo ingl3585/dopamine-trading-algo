@@ -4,11 +4,13 @@ from dataclasses import dataclass
 from typing import Optional, Dict
 import logging
 import math
+import time
+from collections import deque
 
-from trading_agent import Decision
-from data_processor import MarketData
-from advanced_risk import AdvancedRiskManager
-from risk_learning_engine import RiskLearningEngine
+from src.agent.trading_agent import Decision
+from src.market_analysis.data_processor import MarketData
+from src.risk.advanced_risk_manager import AdvancedRiskManager
+from src.risk.risk_engine import RiskLearningEngine
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +30,16 @@ class Order:
 
 
 class RiskManager:
-    def __init__(self, portfolio, meta_learner):
+    def __init__(self, portfolio, meta_learner, agent=None):
         self.portfolio = portfolio
         self.meta_learner = meta_learner
+        self.agent = agent  # Reference to trading agent for immediate feedback
         self.advanced_risk = AdvancedRiskManager(meta_learner)
         self.risk_learning = RiskLearningEngine()
+        
+        # Track violation history for escalating penalties
+        self.violation_history = deque(maxlen=50)
+        self.recent_violations = 0  # Count of violations in recent time window
         
     def validate_order(self, decision: Decision, market_data: MarketData) -> Optional[Order]:
         if decision.action == 'hold':
@@ -51,7 +58,16 @@ class RiskManager:
         # Calculate position size using enhanced account data
         size = self._calculate_adaptive_position_size(decision, market_data)
         if size == 0:
-            logger.info("Position size calculated as 0")
+            # Check if this was due to position limits for learning
+            current_position = getattr(market_data, 'total_position_size', 0)
+            max_contracts = int(self.meta_learner.get_parameter('max_contracts_limit'))
+            
+            if abs(current_position) >= max_contracts:
+                logger.warning(f"Order REJECTED: Position limit reached ({current_position}/{max_contracts} contracts)")
+                # Provide negative learning feedback for position limit violations
+                self._learn_from_position_limit_rejection(decision, market_data, current_position, max_contracts)
+            else:
+                logger.info("Position size calculated as 0 (other risk factors)")
             return None
         
         # Apply advanced risk management - Kelly optimization and drawdown prevention
@@ -85,11 +101,68 @@ class RiskManager:
             confidence=decision.confidence
         )
     
+    def _learn_from_position_limit_rejection(self, decision, market_data, current_position, max_contracts):
+        """Provide learning feedback when orders are rejected due to position limits"""
+        try:
+            # Record this violation for escalating penalty tracking
+            current_time = time.time()
+            self.violation_history.append(current_time)
+            
+            # Count recent violations (last 10 minutes)
+            self.recent_violations = sum(1 for t in self.violation_history if current_time - t < 600)
+            
+            # Create negative reward for position limit violations
+            violation_data = {
+                'decision_confidence': decision.confidence,
+                'current_position': current_position,
+                'max_contracts': max_contracts,
+                'violation_severity': abs(current_position) / max_contracts,
+                'primary_tool': getattr(decision, 'primary_tool', 'unknown'),
+                'exploration_mode': getattr(decision, 'exploration', False),
+                'recent_violations': self.recent_violations
+            }
+            
+            # Escalating penalty: base penalty gets worse with repeated violations
+            base_penalty = -15.0 * violation_data['violation_severity']
+            escalation_multiplier = 1.0 + (self.recent_violations - 1) * 0.5  # +50% per recent violation
+            negative_reward = base_penalty * escalation_multiplier
+            
+            # Update meta-learner with negative feedback
+            if hasattr(self.meta_learner, 'update_position_limit_awareness'):
+                self.meta_learner.update_position_limit_awareness(violation_data, negative_reward)
+            
+            # CRITICAL: Send immediate feedback to the trading agent
+            if self.agent and hasattr(self.agent, 'learn_from_rejection'):
+                self.agent.learn_from_rejection('position_limit', violation_data, negative_reward)
+            
+            # Also send feedback to the main agent for learning (legacy)
+            if hasattr(self.meta_learner, 'learn_from_rejection'):
+                self.meta_learner.learn_from_rejection('position_limit', violation_data, negative_reward)
+            
+            # Update risk learning engine
+            if hasattr(self.risk_learning, 'learn_from_violation'):
+                self.risk_learning.learn_from_violation('position_limit', violation_data, negative_reward)
+            
+            logger.info(f"Learning from position limit violation: reward={negative_reward:.3f} "
+                       f"(base={base_penalty:.1f} * {escalation_multiplier:.1f}x), "
+                       f"recent_violations={self.recent_violations}, "
+                       f"tool={violation_data['primary_tool']}, exploration={violation_data['exploration_mode']}")
+            
+        except Exception as e:
+            logger.error(f"Error learning from position limit rejection: {e}")
+    
     def _calculate_adaptive_position_size(self, decision: Decision, market_data: MarketData) -> int:
         """Enhanced position sizing with intelligent learning-based awareness"""
         
-        # Get current position exposure
-        current_position_size = self.portfolio.get_total_position_size()
+        # Get current position exposure from NinjaTrader (real position)
+        current_position_size = getattr(market_data, 'total_position_size', 0)
+        # Fallback to portfolio tracking if NinjaTrader data unavailable
+        if current_position_size == 0:
+            current_position_size = self.portfolio.get_total_position_size()
+        
+        # Debug logging for position tracking
+        logger.info(f"Position check: NinjaTrader={getattr(market_data, 'total_position_size', 'MISSING')}, "
+                   f"Portfolio={self.portfolio.get_total_position_size()}, Using={current_position_size}")
         
         # Learned position sizing parameters
         max_contracts = int(self.meta_learner.get_parameter('max_contracts_limit'))  # Learned, starts at 10
@@ -143,7 +216,9 @@ class RiskManager:
         remaining_capacity = max_contracts - abs(current_position_size)
         
         if remaining_capacity <= 0:
-            logger.info(f"Maximum position limit reached: {current_position_size}/{max_contracts} contracts")
+            logger.warning(f"POSITION LIMIT HIT: {current_position_size}/{max_contracts} contracts - BLOCKING TRADE")
+            # Trigger immediate learning feedback
+            self._learn_from_position_limit_rejection(decision, market_data, current_position_size, max_contracts)
             return 0
         
         # Intelligent exposure-based scaling

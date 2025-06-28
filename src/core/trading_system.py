@@ -3,25 +3,25 @@
 import logging
 import time
 
-from data_processor import DataProcessor
-from intelligence_engine import IntelligenceEngine
-from trading_agent import TradingAgent
-from risk_manager import RiskManager
-from tcp_bridge import TCPServer
-from portfolio import Portfolio
-from config import Config
+from src.market_analysis.data_processor import DataProcessor
+from src.intelligence.intelligence_engine import IntelligenceEngine
+from src.agent.trading_agent import TradingAgent
+from src.risk.risk_manager import RiskManager
+from src.communication.tcp_bridge import TCPServer
+from src.portfolio.portfolio_manager import PortfolioManager
+from src.core.config import Config
 
 logger = logging.getLogger(__name__)
 
 class TradingSystem:
     def __init__(self):
         logger.info("Initializing trading system with historical bootstrapping")
-        
-        self.portfolio = Portfolio()
+        self.config = Config()
+        self.portfolio = PortfolioManager(self.config)
         self.data_processor = DataProcessor()
-        self.intelligence = IntelligenceEngine()
+        self.intelligence = IntelligenceEngine(self.config)
         self.agent = TradingAgent(self.intelligence, self.portfolio)
-        self.risk_manager = RiskManager(self.portfolio, self.agent.meta_learner)
+        self.risk_manager = RiskManager(self.portfolio, self.agent.meta_learner, self.agent)
         
         self.tcp_server = TCPServer()
         self.tcp_server.on_market_data = self._process_market_data
@@ -196,6 +196,8 @@ class TradingSystem:
     # Rest of the methods remain the same...
     def _process_trade_completion(self, completion_data):
         try:
+            # Debug: Log what we're receiving from NinjaTrader
+            logger.info(f"Raw completion data: {completion_data}")
             trade = self.portfolio.complete_trade(completion_data)
             if trade:
                 # Sequential learning phases to prevent race conditions
@@ -271,7 +273,8 @@ class TradingSystem:
             intelligence_stats = self.intelligence.get_stats()
             logger.info(f"Intelligence: DNA={intelligence_stats['dna_patterns']}, "
                        f"Micro={intelligence_stats['micro_patterns']}, "
-                       f"Temporal={intelligence_stats['temporal_patterns']}")
+                       f"Temporal={intelligence_stats['temporal_patterns']}, "
+                       f"Immune={intelligence_stats['immune_patterns']}")
             
             # Connection status
             logger.info(f"TCP: {self.tcp_server.data_received} data messages, "
@@ -333,7 +336,8 @@ class TradingSystem:
             logger.info(f"Architecture Generation: {agent_stats['architecture_generation']}")
             logger.info(f"Intelligence Patterns: DNA={intelligence_stats['dna_patterns']}, "
                        f"Micro={intelligence_stats['micro_patterns']}, "
-                       f"Temporal={intelligence_stats['temporal_patterns']}")
+                       f"Temporal={intelligence_stats['temporal_patterns']}, "
+                       f"Immune={intelligence_stats['immune_patterns']}")
             
             # Advanced risk metrics
             logger.info(f"Risk Regime: {risk_summary.get('current_regime', 'unknown')}")

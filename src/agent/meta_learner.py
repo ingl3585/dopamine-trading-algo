@@ -3,9 +3,14 @@
 import torch
 import torch.nn as nn
 import numpy as np
+import time
 from collections import deque
 from dataclasses import dataclass
 from typing import Dict, Any, Tuple, List
+from src.neural.uncertainty_estimator import UncertaintyEstimator
+import logging
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class MetaParameter:
@@ -104,6 +109,10 @@ class RewardEngine:
         was_winner = pnl > 0
         subsystem_agreement = trade_data.get('subsystem_agreement', 0.5)
         
+        # Check if this was a holding decision vs trading decision
+        decision_action = trade_data.get('action', 'trade')  # 'hold' or 'trade'
+        decision_confidence = trade_data.get('decision_confidence', 0.5)
+        
         # Account-normalized PnL component
         pnl_norm = np.tanh(pnl / (account_balance * 0.01))  # Normalize by 1% of account
         
@@ -121,13 +130,46 @@ class RewardEngine:
         risk_pct = abs(pnl) / account_balance
         preservation_bonus = max(0, 0.02 - risk_pct) * 5.0  # Bonus for risks < 2%
         
+        # Context-dependent holding rewards
+        holding_bonus = 0.0
+        if decision_action == 'hold':
+            # Reward holding when confidence is low (uncertain conditions)
+            if decision_confidence < 0.3:
+                holding_bonus = 0.05 * (0.3 - decision_confidence)  # Up to +0.015 for very uncertain
+            # Small penalty for holding during high-confidence signals (missed opportunities)
+            elif decision_confidence > 0.7:
+                holding_bonus = -0.02 * (decision_confidence - 0.7)  # Up to -0.006 for high confidence
+        elif decision_action == 'trade' and decision_confidence < 0.2:
+            # Small penalty for trading when very uncertain
+            holding_bonus = -0.01
+        
+        # Debug logging for reward calculation
+        pnl_component = self.components['pnl_weight'].value * pnl_norm
+        hold_component = self.components['hold_time_factor'].value * (-hold_penalty)
+        win_component = self.components['win_rate_bonus'].value * win_rate_bonus
+        consistency_component = self.components['subsystem_consistency'].value * consistency_bonus
+        preservation_component = self.components['account_preservation'].value * preservation_bonus
+        # Note: holding_bonus is not weighted, it's a direct behavioral incentive
+        
         reward = (
-            self.components['pnl_weight'].value * pnl_norm +
-            self.components['hold_time_factor'].value * (-hold_penalty) +
-            self.components['win_rate_bonus'].value * win_rate_bonus +
-            self.components['subsystem_consistency'].value * consistency_bonus +
-            self.components['account_preservation'].value * preservation_bonus
+            pnl_component +
+            hold_component +
+            win_component +
+            consistency_component +
+            preservation_component +
+            holding_bonus
         )
+        
+        # Log reward breakdown for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"REWARD BREAKDOWN - PnL=${pnl:.2f}, Action={decision_action}, Conf={decision_confidence:.2f} -> Total={reward:.6f}")
+        logger.info(f"  PnL: {pnl_norm:.3f} * {self.components['pnl_weight'].value:.3f} = {pnl_component:.6f}")
+        logger.info(f"  Hold: {-hold_penalty:.3f} * {self.components['hold_time_factor'].value:.3f} = {hold_component:.6f}")
+        logger.info(f"  Win: {win_rate_bonus:.3f} * {self.components['win_rate_bonus'].value:.3f} = {win_component:.6f}")
+        logger.info(f"  Consistency: {consistency_bonus:.3f} * {self.components['subsystem_consistency'].value:.3f} = {consistency_component:.6f}")
+        logger.info(f"  Preservation: {preservation_bonus:.3f} * {self.components['account_preservation'].value:.3f} = {preservation_component:.6f}")
+        logger.info(f"  Holding: {holding_bonus:.6f} (direct incentive)")
         
         self.outcome_history.append(reward)
         
@@ -273,6 +315,18 @@ class MetaLearner:
     
     def compute_reward(self, trade_data: Dict[str, Any]) -> float:
         return self.reward_engine.compute_reward(trade_data)
+    
+    def compute_holding_reward(self, decision_confidence: float, market_conditions: Dict[str, Any]) -> float:
+        """Compute reward for holding decisions based on context"""
+        holding_data = {
+            'pnl': 0.0,  # No immediate PnL from holding
+            'action': 'hold',
+            'decision_confidence': decision_confidence,
+            'account_balance': market_conditions.get('account_balance', 25000),
+            'hold_time': 0.0,  # No hold time for instant decision
+            'subsystem_agreement': market_conditions.get('subsystem_agreement', 0.5)
+        }
+        return self.reward_engine.compute_reward(holding_data)
     
     def should_evolve_architecture(self) -> bool:
         return self.architecture_evolver.should_evolve()

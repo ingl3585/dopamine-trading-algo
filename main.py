@@ -7,7 +7,7 @@ import signal
 import sys
 from pathlib import Path
 
-from trading_system import TradingSystem
+from src.core.trading_system import TradingSystem
 
 def setup_logging():
     logging.basicConfig(

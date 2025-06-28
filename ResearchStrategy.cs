@@ -2,7 +2,7 @@
 // Advanced AI Trading Strategy with Multi-Entry Scaling and Position Reversal Capability
 //
 // Key Features:
-// - Supports up to 10 entries per direction for position scaling
+// - Supports up to 5 entries per direction for position scaling
 // - Automatic position reversals (long to short, short to long)
 // - Each entry gets unique signal name for proper tracking
 // - Individual stop loss and profit target management per entry
@@ -122,13 +122,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    if (HasValidData())
 		    {
 		        SendDataToPython();
-		        dataSendCount++;
-		        
-		        // Debug logging every 5 sends
-		        if (dataSendCount % 5 == 0)
-		        {
-		            Print($"Live data sent #{dataSendCount} - Primary: {Close[0]:F2}, 15m: {(BarsArray.Length > 1 && BarsArray[1].Count > 0 ? Closes[1][0].ToString("F2") : "N/A")}, Time: {Time[0]:HH:mm:ss}");
-		        }
+		        dataSendCount++;		    
 		    }
 		}
 		
@@ -275,23 +269,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		    // Note: BarsArray[3] would be 1m, but we're using the primary series as our minute data
 		    // If you want true 1m data separate from primary, you'd access it here as Closes[3][0]
 		}
-		
-		private void LogDataSeriesInfo()
-		{
-		    Print($"Data Series Info:");
-		    Print($"  Primary (BarsArray[0]): {BarsArray[0].Count} bars, Current: {Close[0]:F2}");
-		    
-		    if (BarsArray.Length > 1)
-		        Print($"  15m (BarsArray[1]): {BarsArray[1].Count} bars, Current: {(BarsArray[1].Count > 0 ? Closes[1][0].ToString("F2") : "N/A")}");
-		    
-		    if (BarsArray.Length > 2)
-		        Print($"  5m (BarsArray[2]): {BarsArray[2].Count} bars, Current: {(BarsArray[2].Count > 0 ? Closes[2][0].ToString("F2") : "N/A")}");
-		        
-		    if (BarsArray.Length > 3)
-		        Print($"  1m (BarsArray[3]): {BarsArray[3].Count} bars, Current: {(BarsArray[3].Count > 0 ? Closes[3][0].ToString("F2") : "N/A")}");
-		        
-		    Print($"  Lists - 1m: {prices1m.Count}, 5m: {prices5m.Count}, 15m: {prices15m.Count}");
-		}
         
         private void UpdateList(List<double> list, double value, int maxSize)
         {
@@ -311,9 +288,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        isConnected = true;
 		        
 		        Print("Connected to Python AI system successfully");
-		        
-		        // Log initial data series info for debugging
-		        LogDataSeriesInfo();
 		    }
 		    catch (Exception ex)
 		    {
@@ -341,8 +315,6 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        }
 		        
 		        SendJsonMessage(json);
-		        
-		        Print($"Data send #{dataSendCount} - Lists: 1m={prices1m.Count}, 5m={prices5m.Count}, 15m={prices15m.Count}");
 		    }
 		    catch (Exception ex)
 		    {
@@ -408,8 +380,8 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        sb.Append($"\"portfolio_heat\":{portfolioHeat.ToString(CultureInfo.InvariantCulture)},");
 		        sb.Append($"\"regime\":\"normal\",");
 		        sb.Append($"\"trend_strength\":0.5,");
-		        long unixSeconds = new DateTimeOffset(DateTime.UtcNow).ToUnixTimeSeconds();
-		        sb.Append($"\"timestamp\":{unixSeconds}");
+		        long marketTimeUnix = new DateTimeOffset(Time[0]).ToUnixTimeSeconds();
+		        sb.Append($"\"timestamp\":{marketTimeUnix}");
 	
 		        sb.Append("}");
 		        return sb.ToString();
@@ -515,26 +487,21 @@ namespace NinjaTrader.NinjaScript.Strategies
                 double stopPrice = signal.Item5;
                 bool useTarget = signal.Item6;
                 double targetPrice = signal.Item7;
-                
-                // Safety check: Limit entries per minute to prevent overtrading
                 DateTime currentTime = DateTime.Now;
-                if (currentTime.Minute != lastEntryTime.Minute)
-                {
-                    entriesThisMinute = 0;  // Reset counter for new minute
-                }
                 
-                if (entriesThisMinute >= 3)  // Max 3 entries per minute
-                {
-                    Print($"Entry rate limit reached ({entriesThisMinute} entries this minute). Signal ignored.");
-                    return;
-                }
-                
-                // Check position size limits - let Python AI control sizing (max 10 contracts)
+                // Check position size limits - but allow position reversals
                 int currentPosition = Math.Abs(Position.Quantity);
                 if (currentPosition >= 10)
                 {
-                    Print($"Maximum position size reached ({currentPosition} contracts). Entry signal ignored.");
-                    return;
+                    // Only block if we're trying to ADD to the same direction
+                    if ((action == 1 && Position.MarketPosition == MarketPosition.Long) ||
+                        (action == 2 && Position.MarketPosition == MarketPosition.Short))
+                    {
+                        Print($"Maximum position size reached ({currentPosition} contracts). Same-direction entry ignored.");
+                        return;
+                    }
+                    // Allow reversals to proceed
+                    Print($"Position reversal allowed: {Position.MarketPosition} {currentPosition} -> {(action == 1 ? "Long" : "Short")} {size}");
                 }
                 
                 // Generate unique entry name for scaling capability
@@ -818,7 +785,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		                  $"\"confidence\":0.5," +
 		                  $"\"consensus_strength\":0.5," +
 		                  $"\"primary_tool\":\"ai_signal\"," +
-		                  $"\"timestamp\":{DateTime.Now.Ticks}" +
+		                  $"\"timestamp\":{Time[0].Ticks}" +
 		                  $"}}";
 		        
 		        SendJsonMessage(json);
