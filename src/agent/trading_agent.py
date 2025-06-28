@@ -211,6 +211,7 @@ class TradingAgent:
             float(features.temporal_signal),
             float(features.immune_signal),
             float(features.microstructure_signal),  # Enhanced with microstructure
+            float(features.dopamine_signal),  # Real-time P&L-based reward signal
             float(features.regime_adjusted_signal)
         ], dtype=torch.float64, device=self.device)
         
@@ -724,7 +725,7 @@ class TradingAgent:
                                  features: Features) -> str:
         """Enhanced primary tool identification"""
         weighted_signals = torch.abs(signals * weights[:len(signals)])
-        tool_names = ['dna', 'temporal', 'immune', 'microstructure', 'regime']
+        tool_names = ['dna', 'temporal', 'immune', 'microstructure', 'dopamine', 'regime']
         
         if torch.sum(weighted_signals) == 0:
             return 'basic'

@@ -21,6 +21,7 @@ class MarketData:
     account_balance: float
     buying_power: float
     daily_pnl: float
+    unrealized_pnl: float
     net_liquidation: float
     margin_used: float
     available_margin: float
@@ -81,6 +82,7 @@ class DataProcessor:
             account_balance=raw_data.get('account_balance', 25000),
             buying_power=raw_data.get('buying_power', 25000),
             daily_pnl=raw_data.get('daily_pnl', 0),
+            unrealized_pnl=raw_data.get('unrealized_pnl', 0),
             net_liquidation=raw_data.get('net_liquidation', 25000),
             margin_used=raw_data.get('margin_used', 0),
             available_margin=raw_data.get('available_margin', 25000),
