@@ -229,15 +229,32 @@ class VoiceSynthesizer:
     def _init_local_client(self):
         """Initialize local TTS client"""
         try:
-            # Placeholder for local TTS (pyttsx3, espeak, etc.)
-            # import pyttsx3
-            # engine = pyttsx3.init()
-            # return engine
+            # Try to use pyttsx3 for real local TTS
+            import pyttsx3
+            engine = pyttsx3.init()
             
-            logger.info("Local TTS client initialized (placeholder)")
-            return MockTTSClient("Local")
+            # Configure voice settings
+            voices = engine.getProperty('voices')
+            if voices:
+                # Try to find a good voice
+                for voice in voices:
+                    if 'english' in voice.name.lower() or 'zira' in voice.name.lower():
+                        engine.setProperty('voice', voice.id)
+                        break
+            
+            # Set speaking rate and volume
+            engine.setProperty('rate', 200)  # Speed of speech
+            engine.setProperty('volume', 0.8)  # Volume level (0.0 to 1.0)
+            
+            logger.info("Local TTS (pyttsx3) client initialized successfully")
+            return LocalTTSClient(engine)
+            
         except ImportError:
-            logger.warning("Local TTS package not available, using mock client")
+            logger.warning("pyttsx3 not available. Install with: pip install pyttsx3")
+            logger.info("Using mock TTS client")
+            return MockTTSClient("Local")
+        except Exception as e:
+            logger.error(f"Error initializing local TTS: {e}")
             return MockTTSClient("Local")
     
     def _adjust_voice_for_emotion(self, emotional_context: Dict = None) -> VoiceSettings:
@@ -436,6 +453,47 @@ class VoiceSynthesizer:
                 'style': self.voice_settings.style.value
             }
         }
+
+class LocalTTSClient:
+    """Real local TTS client using pyttsx3"""
+    
+    def __init__(self, engine):
+        self.engine = engine
+        self.service_name = "Local TTS"
+    
+    async def synthesize(self, text: str, settings: VoiceSettings, output_path: str) -> bool:
+        """Real local TTS synthesis"""
+        
+        try:
+            # Adjust voice settings based on emotion
+            rate = int(200 * settings.speed)
+            volume = settings.volume
+            
+            self.engine.setProperty('rate', rate)
+            self.engine.setProperty('volume', volume)
+            
+            logger.info(f"Local TTS synthesizing: '{text[:50]}...' "
+                       f"(speed: {settings.speed:.1f}, volume: {settings.volume:.1f})")
+            
+            # For real-time speaking (no file output needed for local TTS)
+            await asyncio.get_event_loop().run_in_executor(
+                None, self.engine.say, text
+            )
+            await asyncio.get_event_loop().run_in_executor(
+                None, self.engine.runAndWait
+            )
+            
+            # Create a marker file to indicate success
+            import os
+            os.makedirs(os.path.dirname(output_path), exist_ok=True)
+            with open(output_path, 'w') as f:
+                f.write(f"Local TTS spoken: {text}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Local TTS synthesis error: {e}")
+            return False
 
 class MockTTSClient:
     """Mock TTS client for development and testing"""

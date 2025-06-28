@@ -350,6 +350,8 @@ Respond as if you're thinking out loud about the trading situation. Be genuine, 
                 return await self._call_openai_api(prompt, request)
             elif self.api_key and 'claude' in self.model_name.lower():
                 return await self._call_anthropic_api(prompt, request)
+            elif 'localhost' in self.base_url or 'ollama' in self.base_url:
+                return await self._call_ollama_api(prompt, request)
             elif self.api_key and self.base_url:
                 return await self._call_custom_api(prompt, request)
             else:
@@ -406,6 +408,51 @@ Respond as if you're thinking out loud about the trading situation. Be genuine, 
             return await self._call_mock_llm(prompt, request)
         except Exception as e:
             logger.error(f"Anthropic API error: {e}")
+            return await self._call_mock_llm(prompt, request)
+
+    async def _call_ollama_api(self, prompt: str, request: CommentaryRequest) -> str:
+        """Call Ollama local API"""
+        try:
+            import aiohttp
+            
+            # Ollama API format
+            payload = {
+                "model": self.model_name,
+                "prompt": prompt,
+                "stream": False,
+                "options": {
+                    "temperature": self.temperature,
+                    "num_predict": self.max_tokens,
+                    "top_k": 40,
+                    "top_p": 0.9
+                }
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.base_url}/api/generate",
+                    json=payload,
+                    timeout=60.0
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        generated_text = data.get("response", "").strip()
+                        
+                        # Clean up the response
+                        if generated_text:
+                            return generated_text
+                        else:
+                            logger.warning("Empty response from Ollama")
+                            return await self._call_mock_llm(prompt, request)
+                    else:
+                        logger.error(f"Ollama API error: {response.status}")
+                        return await self._call_mock_llm(prompt, request)
+                        
+        except ImportError:
+            logger.error("aiohttp package not installed. Install with: pip install aiohttp")
+            return await self._call_mock_llm(prompt, request)
+        except Exception as e:
+            logger.error(f"Ollama API error: {e}")
             return await self._call_mock_llm(prompt, request)
 
     async def _call_custom_api(self, prompt: str, request: CommentaryRequest) -> str:
