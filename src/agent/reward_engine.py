@@ -241,11 +241,12 @@ class CoreRewardEngine:
         decision_action = trade_data.get('action', 'trade')  # 'hold' or 'trade'
         decision_confidence = trade_data.get('decision_confidence', 0.5)
         
-        # Heavy penalty for position limit violations - but moderate to prevent confidence collapse
+        # Moderate penalty for position limit violations - prevent confidence system destruction
         position_limit_violation = trade_data.get('position_limit_violation', False)
         if position_limit_violation:
-            # Reduced penalty to prevent confidence collapse while still discouraging violations
-            penalty = -2.0  # Reduced from -5.0 to prevent overwhelming the learning system
+            # Much more moderate penalty to prevent overwhelming the confidence system
+            # The escalating penalty from RejectionRewardEngine will handle progression
+            penalty = -0.5  # Reduced from -2.0 to work with new confidence system
             logger.warning(f"POSITION LIMIT VIOLATION PENALTY: {penalty}")
             return penalty
         
@@ -359,8 +360,9 @@ class RejectionRewardEngine:
         """Compute reward penalty for trade rejections"""
         
         if rejection_type == 'position_limit':
-            # Escalating penalty for repeated position limit violations
-            penalty_multiplier = 1.0 + (self.recent_position_rejections * 0.5)
+            # Moderate escalating penalty - cap maximum to prevent confidence destruction
+            penalty_multiplier = 1.0 + (self.recent_position_rejections * 0.2)  # Reduced from 0.5
+            penalty_multiplier = min(penalty_multiplier, 2.0)  # Cap at 2x maximum
             rejection_reward = base_reward * penalty_multiplier
             
             # Track rejection for learning

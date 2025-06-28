@@ -305,16 +305,23 @@ class TradingAgent:
                 # If confidence is above floor but below threshold, still allow hold
                 action_idx = 0
             elif confidence <= min_confidence_floor and not exploration:
-                # Even below floor, allow emergency decisions based on position
+                # Enhanced emergency mode for confidence recovery
                 current_position = getattr(market_data, 'total_position_size', 0)
-                if abs(current_position) > 0 and np.random.random() < 0.1:  # 10% chance to make exit decision
-                    # Make emergency exit decision based on position direction
-                    if current_position > 0:
-                        action_idx = 2  # Sell to reduce long position
+                if abs(current_position) > 0:
+                    # Higher chance of exit decisions to enable position management
+                    if np.random.random() < 0.2:  # Increased from 10% to 20%
+                        # Make emergency exit decision based on position direction and P&L
+                        unrealized_pnl = getattr(market_data, 'unrealized_pnl', 0.0)
+                        if current_position > 0:
+                            action_idx = 2  # Sell to reduce long position
+                        else:
+                            action_idx = 1  # Buy to reduce short position
+                        logger.info(f"Emergency exit decision: confidence={confidence:.3f}, position={current_position}, pnl={unrealized_pnl:.2f}")
                     else:
-                        action_idx = 1  # Buy to reduce short position
+                        action_idx = 0  # Hold
                 else:
-                    action_idx = 0  # Hold
+                    # No position - always hold when confidence is very low
+                    action_idx = 0
             
             # Enhanced sizing and risk parameters
             raw_position_size = float(combined_outputs['position_size'].detach().cpu().numpy()[0])
@@ -1033,19 +1040,42 @@ class TradingAgent:
         uncertainty_weights = 1.0 / (uncertainties + 0.1)
         policy_loss = -(selected_probs * rewards * uncertainty_weights).mean()
         
-        # Value losses with uncertainty consideration - FIXED CONFIDENCE TARGET
-        # Separate position limit violations from confidence learning to prevent confidence collapse
+        # COMPLETELY FIXED CONFIDENCE TARGET CALCULATION
+        # The old method used torch.abs(rewards) * uncertainty_weights which created impossible targets > 1.0
+        # This caused confidence collapse because sigmoid output can only reach [0,1]
+        
         position_limit_mask = torch.tensor([exp.get('trade_data', {}).get('position_limit_violation', False) for exp in batch], 
                                          dtype=torch.bool, device=self.device)
         
-        # For position limit violations, use a base confidence target instead of reward-based
-        base_confidence_target = torch.abs(rewards).unsqueeze(1) * uncertainty_weights.unsqueeze(1)
+        # PROPER confidence target calculation for sigmoid-activated network
+        # Map rewards to [0,1] confidence range using a sigmoid-compatible function
+        def reward_to_confidence(reward_vals):
+            # Positive rewards -> higher confidence, negative rewards -> lower confidence
+            # Map rewards from [-5, +5] to [0.1, 0.9] confidence range
+            normalized_rewards = torch.tanh(reward_vals / 2.0)  # Maps to [-1, +1]
+            confidence_vals = 0.5 + 0.4 * normalized_rewards    # Maps to [0.1, 0.9]
+            return torch.clamp(confidence_vals, 0.1, 0.9)
         
-        # Cap confidence targets to prevent collapse and set minimum for violations
-        confidence_target = torch.clamp(base_confidence_target, min=0.2, max=1.0)
+        # Calculate base confidence targets using proper mapping
+        base_confidence_target = reward_to_confidence(rewards).unsqueeze(1)
         
-        # For position limit violations, override with fixed moderate confidence to maintain decision capability
-        confidence_target[position_limit_mask] = 0.3
+        # Adjust for uncertainty - higher uncertainty -> lower confidence targets
+        uncertainty_adjustment = 1.0 / (1.0 + uncertainties.unsqueeze(1))  # [0.5, 1.0] range
+        confidence_target = base_confidence_target * uncertainty_adjustment
+        
+        # Special handling for position limit violations - moderate confidence to maintain functionality
+        confidence_target[position_limit_mask] = 0.4  # Increased from 0.3 for better recovery
+        
+        # Add confidence recovery mechanism - prevent permanent collapse
+        current_confidence = outputs['confidence'].detach()
+        very_low_confidence_mask = current_confidence < 0.1
+        
+        # For very low confidence, gradually increase targets to enable recovery
+        recovery_target = torch.max(confidence_target, current_confidence + 0.05)
+        confidence_target = torch.where(very_low_confidence_mask, recovery_target, confidence_target)
+        
+        # Ensure all targets are in valid [0.1, 0.9] range for sigmoid output
+        confidence_target = torch.clamp(confidence_target, 0.1, 0.9)
         
         confidence_loss = F.mse_loss(outputs['confidence'], confidence_target)
         
