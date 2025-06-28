@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 from src.market_analysis.data_processor import MarketData
 from src.intelligence.subsystem_evolution import EnhancedIntelligenceOrchestrator
 from src.market_analysis.microstructure_analyzer import MarketMicrostructureEngine
-from src.intelligence.subsystems.dopamine_subsystem import DopamineSubsystem
+from src.agent.reward_engine import DopamineRewardComponent
 from src.shared.types import Features
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ class IntelligenceEngine:
         self.microstructure_engine = MarketMicrostructureEngine()
         
         # Dopamine subsystem (5th subsystem) - P&L-based reward system
-        self.dopamine_subsystem = DopamineSubsystem(config)
+        self.dopamine_subsystem = DopamineRewardComponent(config)
         
         # Real-time adaptation (lazy import to avoid circular dependency)
         self.adaptation_engine = None

@@ -303,7 +303,10 @@ class PersonalityConfigManager:
             min_commentary_interval=config_data.get('commentary', {}).get('min_interval', 30.0),
             llm_model=config_data.get('llm', {}).get('model_name', 'gpt-4'),
             llm_temperature=config_data.get('llm', {}).get('temperature', 0.7),
-            llm_max_tokens=config_data.get('llm', {}).get('max_tokens', 300)
+            llm_max_tokens=config_data.get('llm', {}).get('max_tokens', 300),
+            llm_base_url=config_data.get('llm', {}).get('base_url', 'http://localhost:11434'),
+            llm_api_key=config_data.get('llm', {}).get('api_key', ''),
+            mock_llm=config_data.get('development', {}).get('mock_llm', False)
         )
         
         # Extract integration configuration

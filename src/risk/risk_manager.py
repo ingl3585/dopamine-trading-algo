@@ -122,10 +122,9 @@ class RiskManager:
                 'recent_violations': self.recent_violations
             }
             
-            # Escalating penalty: base penalty gets worse with repeated violations
-            base_penalty = -15.0 * violation_data['violation_severity']
-            escalation_multiplier = 1.0 + (self.recent_violations - 1) * 0.5  # +50% per recent violation
-            negative_reward = base_penalty * escalation_multiplier
+            # Use the new reward engine for consistent rejection rewards
+            negative_reward = -15.0 * violation_data['violation_severity']
+            # The reward engine will handle escalation internally
             
             # Update meta-learner with negative feedback
             if hasattr(self.meta_learner, 'update_position_limit_awareness'):

@@ -342,7 +342,7 @@ Respond as if you're thinking out loud about the trading situation. Be genuine, 
         
         try:
             # Check if we should use mock mode for development
-            if self.config.get('mock_mode', True):
+            if self.config.get('mock_mode', False) or self.config.get('mock_llm', False):
                 return await self._call_mock_llm(prompt, request)
             
             # Real LLM API integration
@@ -534,9 +534,21 @@ Respond as if you're thinking out loud about the trading situation. Be genuine, 
         # Clean up response
         cleaned_text = response_text.strip()
         
-        # Truncate if too long
+        # Truncate if too long, but try to end at a sentence boundary
         if len(cleaned_text) > request.max_length:
-            cleaned_text = cleaned_text[:request.max_length-3] + "..."
+            # Try to find the last sentence boundary within the limit
+            truncate_point = request.max_length - 3
+            sentence_end = max(
+                cleaned_text.rfind('.', 0, truncate_point),
+                cleaned_text.rfind('!', 0, truncate_point),
+                cleaned_text.rfind('?', 0, truncate_point)
+            )
+            
+            if sentence_end > request.max_length * 0.7:  # If we found a good break point
+                cleaned_text = cleaned_text[:sentence_end + 1]
+            else:
+                # Fallback to character limit
+                cleaned_text = cleaned_text[:truncate_point] + "..."
         
         # Extract key themes (simple keyword extraction)
         key_themes = self._extract_key_themes(cleaned_text)

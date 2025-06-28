@@ -1,417 +1,609 @@
-# Actor-Critic ML Trading System
+```
+██████╗  ██████╗ ██████╗  █████╗ ███╗   ███╗██╗███╗   ██╗███████╗
+██╔══██╗██╔═══██╗██╔══██╗██╔══██╗████╗ ████║██║████╗  ██║██╔════╝
+██║  ██║██║   ██║██████╔╝███████║██╔████╔██║██║██╔██╗ ██║█████╗  
+██║  ██║██║   ██║██╔═══╝ ██╔══██║██║╚██╔╝██║██║██║╚██╗██║██╔══╝  
+██████╔╝╚██████╔╝██║     ██║  ██║██║ ╚═╝ ██║██║██║ ╚████║███████╗
+╚═════╝  ╚═════╝ ╚═╝     ╚═╝  ╚═╝╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝╚══════╝
+```
 
-A fully autonomous, self-evolving black-box trading algorithm for MNQ futures using reinforcement learning. Built with Domain-Driven Design (DDD) and Clean Architecture patterns. Features advanced AI subsystems including genetic algorithms, FFT-based temporal analysis, evolving immune systems, and market microstructure intelligence.
+# **Dopamine Trading System**
+*A Neuromorphic AI Trading Platform with Unified Reward Engine*
 
-## 🎯 **Key Features**
-- **Fully Autonomous**: No hardcoded trading rules - learns optimal behavior through experience
-- **Self-Evolving**: Meta-learning adapts all parameters based on market feedback
-- **Position-Aware Learning**: Intelligent position limits with economic penalty learning
-- **Context-Dependent Holding**: Rewards intelligent patience vs overtrading
-- **Emergency Exit Capability**: Always allows position reversals for risk management
+**Dopamine** is a fully autonomous, self-evolving black-box trading algorithm for MNQ futures that mimics neurological reward systems. Built with a centralized reward engine and dopamine-inspired learning mechanisms, it discovers optimal trading strategies through economic incentives and real-time P&L feedback.
+
+---
+
+## 🧠 **Core Philosophy**
+- **Neuromorphic Learning**: Mimics dopamine reward pathways for immediate P&L feedback
+- **Economic Evolution**: All parameters learned through profit/loss incentives
+- **Unified Rewards**: Centralized reward engine consolidates all feedback mechanisms
+- **Autonomous Discovery**: No hardcoded rules - AI learns optimal behavior through experience
+
+---
+
+## 🚀 **Key Features**
+
+### 🧬 **Unified Reward Engine**
+- **Centralized Logic**: All reward calculations in `agent/reward_engine.py`
+- **Dopamine Component**: Real-time P&L reward system with momentum tracking
+- **Rejection Engine**: Economic penalties for trade violations with escalation
+- **Modular Design**: Core, dopamine, and rejection engines with consistent interface
+
+### 🎯 **Autonomous Intelligence**
+- **Position-Aware Learning**: Economic penalties teach position limits (-$15+ violations)
+- **Context-Dependent Holding**: Rewards patience vs penalizes missed opportunities
 - **Real-Time Adaptation**: Works with NinjaTrader at 1x-10x replay speeds
+- **Self-Evolving Architecture**: Neural networks adapt structure based on performance
 
-## 🏗️ Architecture Overview
+### 🛡️ **Smart Risk Management**
+- **Economic Enforcement**: Violations cost more than potential profits
+- **Emergency Exits**: Position reversals always allowed for risk management
+- **Escalating Penalties**: Repeated violations get exponentially worse
+- **Account-Aware Scaling**: Risk parameters automatically adjust for account size
 
-### Domain-Driven Design Structure
+---
+
+## 🏗️ **System Architecture**
+
+```mermaid
+graph TB
+    subgraph "🧠 Intelligence Domain"
+        IE[Intelligence Engine]
+        DNA[DNA Subsystem]
+        TEMP[Temporal Subsystem]
+        IMM[Immune Subsystem]
+        MICRO[Microstructure Subsystem]
+        DOPA[Dopamine Subsystem]
+    end
+    
+    subgraph "🤖 Agent Domain"
+        TA[Trading Agent]
+        ML[Meta Learner]
+        RTA[Real-Time Adaptation]
+        RE[Reward Engine]
+    end
+    
+    subgraph "🧪 Neural Domain"
+        AN[Adaptive Network]
+        EN[Enhanced Neural]
+        UE[Uncertainty Estimator]
+    end
+    
+    subgraph "💰 Risk Domain"
+        RM[Risk Manager]
+        ARM[Advanced Risk Manager]
+        PM[Portfolio Manager]
+        RLE[Risk Learning Engine]
+    end
+    
+    subgraph "📊 Market Domain"
+        DP[Data Processor]
+        MA[Market Analysis]
+        MMA[Microstructure Analyzer]
+    end
+    
+    subgraph "🎭 Personality Domain"
+        TP[Trading Personality]
+        EE[Emotional Engine]
+        LC[LLM Client]
+        VS[Voice Synthesis]
+    end
+    
+    subgraph "🔧 Core Domain"
+        TS[Trading System]
+        TO[Trading Orchestrator]
+        CFG[Config Manager]
+    end
+    
+    subgraph "📡 Communication"
+        TCP[TCP Bridge]
+        NT[NinjaTrader Interface]
+    end
+    
+    IE --> DNA
+    IE --> TEMP
+    IE --> IMM
+    IE --> MICRO
+    IE --> DOPA
+    
+    TA --> ML
+    TA --> RTA
+    TA --> RE
+    ML --> RE
+    
+    TA --> AN
+    TA --> EN
+    TA --> UE
+    
+    TA --> RM
+    RM --> ARM
+    RM --> PM
+    RM --> RLE
+    
+    TA --> DP
+    DP --> MA
+    MA --> MMA
+    
+    TA --> TP
+    TP --> EE
+    TP --> LC
+    TP --> VS
+    
+    TS --> TO
+    TS --> CFG
+    
+    TS --> TCP
+    TCP --> NT
+    
+    RE -.->|Unified Rewards| TA
+    RE -.->|Dopamine Signals| DOPA
+    RE -.->|Rejection Penalties| RM
+    
+    style RE fill:#ff6b6b,stroke:#d63447,stroke-width:3px
+    style DOPA fill:#4ecdc4,stroke:#26d0ce,stroke-width:2px
+    style TA fill:#ffe66d,stroke:#ff8b94,stroke-width:2px
+```
+
+---
+
+## 📁 **File Structure**
 
 ```
-src/
-├── intelligence/                # INTELLIGENCE DOMAIN - AI & ML Components
-│   ├── intelligence_engine.py   # Main AI orchestrator with swarm intelligence
-│   └── subsystems/              # Four specialized AI subsystems (consolidated)
-│       ├── dna_subsystem.py     # 16-base genetic encoding & evolution
-│       ├── temporal_subsystem.py # FFT cycle detection & lunar patterns
-│       ├── immune_subsystem.py  # Adaptive threat detection system
-│       ├── microstructure_subsystem.py # Market microstructure analysis (moved from market/)
-│       └── orchestrator.py      # Subsystem coordination
-├── agent/                       # AGENT DOMAIN - Trading Agents & Meta-Learning
-│   ├── trading_agent.py         # Main trading agent with actor-critic
-│   ├── meta_learner.py          # Meta-learning with context-dependent holding rewards
-│   └── real_time_adaptation.py  # Real-time market adaptation engine
-├── neural/                      # NEURAL DOMAIN - Neural Networks
-│   ├── adaptive_network.py      # Self-evolving neural architectures
-│   └── enhanced_neural.py       # Advanced neural components
-├── market_analysis/             # MARKET DATA DOMAIN - Data Processing & Analysis
-│   ├── data_processor.py        # Market data processing with position synchronization
-│   ├── market_microstructure.py # Smart money & order flow analysis
-│   └── advanced_market_intelligence.py # Comprehensive market AI
-├── market_data/                 # MARKET DATA INTERFACES (flattened from market/)
-│   └── processor.py             # Market data interfaces (moved up from market/market_data/)
-├── data_models/                 # DATA MODELS (separated from trading/)
-│   └── models.py                # Trading domain models
-├── repositories/                # DATA REPOSITORIES (separated from trading/)
-│   └── repositories.py          # Trading data repositories
-├── services/                    # SERVICES (separated from trading/)
-│   └── trading_service.py       # Trading service layer
-├── risk/                        # RISK DOMAIN - Risk Management with Economic Penalties
-│   ├── risk_manager.py          # Enhanced with escalating position limit penalties
-│   ├── advanced_risk.py         # Advanced risk algorithms
-│   ├── portfolio/               # Portfolio management
-│   │   └── manager.py           # Portfolio optimization with comprehensive analytics
-│   ├── portfolio.py             # Portfolio tracking and analytics
-│   └── risk_learning_engine.py  # Risk learning engine
-├── communication/               # COMMUNICATION DOMAIN - External Interfaces
-│   └── tcp_bridge.py            # TCP server with net liquidation prioritization
-├── monitoring/                  # MONITORING DOMAIN - System Health
-│   └── system_monitor.py        # System performance monitoring
-├── core/                        # CORE SYSTEM - Integration & Configuration
-│   ├── orchestrator.py          # Main system orchestrator (renamed from main.py)
-│   ├── trading_system.py        # Main trading system coordinator
-│   └── config.py                # Environment-aware configuration
-└── shared/                      # SHARED KERNEL - Common Types (consolidated)
-    └── types.py                 # Combined intelligence & shared types
+📦 Dopamine Trading System
+├── 📁 src/
+│   ├── 🧠 agent/                          # AGENT DOMAIN - Trading Intelligence
+│   │   ├── 🎯 trading_agent.py            # Main trading agent with actor-critic
+│   │   ├── 🧬 meta_learner.py             # Meta-learning with adaptive parameters
+│   │   ├── ⚡ real_time_adaptation.py     # Real-time market adaptation engine
+│   │   └── 🏆 reward_engine.py            # UNIFIED REWARD ENGINE ⭐
+│   │       ├── UnifiedRewardEngine        # Main reward interface
+│   │       ├── CoreRewardEngine           # Core trading rewards
+│   │       ├── DopamineRewardComponent    # Real-time P&L rewards
+│   │       └── RejectionRewardEngine      # Trade rejection penalties
+│   │
+│   ├── 🧠 intelligence/                   # INTELLIGENCE DOMAIN - AI Systems
+│   │   ├── 🎛️ intelligence_engine.py      # Main AI orchestrator
+│   │   ├── 🔬 advanced_market_intelligence.py # Advanced market AI
+│   │   ├── 🦠 subsystem_evolution.py      # Subsystem evolution engine
+│   │   └── 📁 subsystems/                 # Specialized AI Subsystems
+│   │       ├── 🧬 dna_subsystem.py        # Genetic pattern encoding
+│   │       ├── ⏰ temporal_subsystem.py   # FFT cycle detection
+│   │       ├── 🛡️ immune_subsystem.py     # Threat detection system
+│   │       ├── 📈 microstructure_subsystem.py # Market microstructure
+│   │       ├── 💉 dopamine_subsystem.py   # P&L reward system (LEGACY)
+│   │       └── 🎭 subsystem_orchestrator.py # Subsystem coordination
+│   │
+│   ├── 🧪 neural/                         # NEURAL DOMAIN - Neural Networks
+│   │   ├── 🔄 adaptive_network.py         # Self-evolving architectures
+│   │   ├── ⚡ enhanced_neural.py          # Advanced neural components
+│   │   └── 🎲 uncertainty_estimator.py    # Uncertainty quantification
+│   │
+│   ├── 📊 market_analysis/                # MARKET ANALYSIS DOMAIN
+│   │   ├── 🔄 data_processor.py           # Market data processing
+│   │   └── 🔬 microstructure_analyzer.py  # Smart money analysis
+│   │
+│   ├── 📡 market_data/                    # MARKET DATA INTERFACES
+│   │   └── 🔄 processor.py                # Data stream interfaces
+│   │
+│   ├── 🛡️ risk/                           # RISK MANAGEMENT DOMAIN
+│   │   ├── ⚖️ risk_manager.py             # Main risk management
+│   │   ├── 🎯 advanced_risk_manager.py    # Advanced risk algorithms
+│   │   ├── 🧠 risk_engine.py              # Risk learning engine
+│   │   └── 💼 risk_service.py             # Risk service layer
+│   │
+│   ├── 💼 portfolio/                      # PORTFOLIO DOMAIN
+│   │   ├── 📊 portfolio.py                # Portfolio tracking
+│   │   └── 🎯 portfolio_manager.py        # Portfolio optimization
+│   │
+│   ├── 🎭 personality/                    # PERSONALITY DOMAIN - AI Persona
+│   │   ├── 🤖 trading_personality.py      # Main personality system
+│   │   ├── 💭 emotional_engine.py         # Emotional state engine
+│   │   ├── 🗣️ llm_client.py               # LLM integration
+│   │   ├── 🔊 voice_synthesis.py          # Voice synthesis
+│   │   ├── 🧠 personality_memory.py       # Personality memory
+│   │   ├── 🔧 config_manager.py           # Personality configuration
+│   │   └── 🔗 personality_integration.py  # System integration
+│   │
+│   ├── 📁 data_models/                    # DATA MODELS
+│   │   └── 📋 trading_domain_models.py    # Trading data models
+│   │
+│   ├── 📁 repositories/                   # DATA REPOSITORIES
+│   │   ├── 📊 trading_repository.py       # Trading data access
+│   │   └── 🥷 ninjatrader_repository.py   # NinjaTrader integration
+│   │
+│   ├── 📁 services/                       # BUSINESS SERVICES
+│   │   ├── 💱 trading_service.py          # Trading service layer
+│   │   └── 🛡️ risk_service.py             # Risk service layer
+│   │
+│   ├── 📡 communication/                  # COMMUNICATION DOMAIN
+│   │   └── 🌐 tcp_bridge.py               # TCP server interface
+│   │
+│   ├── 📊 monitoring/                     # MONITORING DOMAIN
+│   │   └── 🔍 system_monitor.py           # System health monitoring
+│   │
+│   ├── ⚙️ core/                           # CORE SYSTEM
+│   │   ├── 🎛️ trading_system.py           # Main system coordinator
+│   │   ├── 🎯 trading_system_orchestrator.py # System orchestration
+│   │   └── ⚙️ config.py                   # Configuration management
+│   │
+│   └── 🔧 shared/                         # SHARED KERNEL
+│       └── 📋 types.py                    # Common data types
+│
+├── 📁 config/                             # CONFIGURATION FILES
+│   ├── ⚙️ development.json                # Development settings
+│   ├── ⚙️ production.json                 # Production settings
+│   ├── 🎭 personality_config.json         # Personality configuration
+│   └── 📊 logging_config.json             # Logging configuration
+│
+├── 🧪 tests/                              # TEST SUITE
+│   └── 🧪 test_personality_system.py      # Personality system tests
+│
+├── 📋 requirements.txt                    # Python dependencies
+├── 🚀 main.py                             # Main entry point
+├── 🥷 ResearchStrategy.cs                 # NinjaTrader strategy
+└── 📖 README.md                           # This file
 ```
 
-### 🔄 **Recent Architecture Improvements**
+---
 
-#### **Directory Restructuring**
-- **Flattened market_data/**: Moved `processor.py` up from `market/market_data/` to `market_data/`
-- **Separated trading domain**: Split `trading/` into `data_models/`, `repositories/`, and `services/`
-- **Microstructure consolidation**: Moved to `intelligence/subsystems/microstructure_subsystem.py`
-- **Types consolidation**: Combined `intelligence_types.py` and `shared/types.py`
+## 🎯 **Reward Engine Architecture**
 
-## 🚀 Quick Start
+The **Unified Reward Engine** (`src/agent/reward_engine.py`) is the heart of the Dopamine system:
+
+### 🏆 **UnifiedRewardEngine**
+```python
+class UnifiedRewardEngine:
+    """Main interface combining all reward components"""
+    - compute_trade_reward()      # Complete trade analysis
+    - compute_holding_reward()    # Context-dependent holding
+    - compute_rejection_reward()  # Trade violation penalties
+    - process_realtime_pnl()     # Immediate dopamine feedback
+```
+
+### 🧠 **CoreRewardEngine**
+- **P&L Rewards**: Account-normalized profit/loss feedback
+- **Holding Context**: Rewards patience vs penalizes missed opportunities
+- **Consistency Bonus**: Subsystem agreement rewards
+- **Account Preservation**: Risk-adjusted reward scaling
+
+### 💉 **DopamineRewardComponent**
+- **Real-Time P&L**: Immediate feedback on unrealized P&L changes
+- **Momentum Tracking**: Consecutive gain/loss amplification
+- **Expectation Error**: Prediction vs reality reward adjustment
+- **Peak/Trough Analysis**: Drawdown and breakthrough signals
+
+### ❌ **RejectionRewardEngine**
+- **Position Limits**: Escalating penalties for repeated violations
+- **Economic Learning**: Violations cost more than potential profits
+- **Margin Violations**: Graduated penalties for risk breaches
+- **Invalid Orders**: Light penalties for technical issues
+
+---
+
+## 🚀 **Quick Start**
 
 ### Prerequisites
-
-- Python 3.8+
-- NinjaTrader 8 with TCP bridge capability
-- Required Python packages (see requirements.txt)
+- **Python 3.8+** with pip package manager
+- **NinjaTrader 8** with TCP bridge capability
+- **Windows Environment** (for NinjaTrader integration)
 
 ### Installation
 
-1. **Clone and setup**:
+1. **Clone and Setup**:
    ```bash
+   git clone <repository>
    cd Actor_Critic_ML_NT
    pip install -r requirements.txt
    ```
 
-2. **Configure environment**:
+2. **Configure Environment**:
    ```bash
-   # Development
+   # Development mode
    export TRADING_ENV=development
    
-   # Production
+   # Production mode
    export TRADING_ENV=production
    ```
 
-3. **Start the system**:
+3. **Deploy NinjaTrader Strategy**:
+   - Copy `ResearchStrategy.cs` to NinjaTrader strategies folder
+   - Compile and enable the strategy in NinjaTrader
+   - Configure for MNQ futures trading
+
+4. **Start Dopamine System**:
    ```bash
-   # Main trading system entry point
    python main.py
-   
-   # Alternative DDD orchestrator
-   python src/core/main.py
    ```
 
-### NinjaTrader Setup
+### NinjaTrader Configuration
 
-1. **Deploy ResearchStrategy.cs** to NinjaTrader 8 strategies folder
-2. **Configure TCP ports**:
-   - Data Port: 5556 (market data streaming)
-   - Signal Port: 5557 (AI signal reception)
-3. **Enable multi-entry support**: Strategy supports up to 10 entries per direction
-4. **Set instrument**: Configured for MNQ futures trading
-5. **Historical data**: Ensure 10+ days of historical data for bootstrap
+#### TCP Bridge Setup
+| Setting | Value | Description |
+|---------|-------|-------------|
+| Data Port | 5556 | Market data streaming |
+| Signal Port | 5557 | AI signal reception |
+| Instrument | MNQ | Micro E-mini NASDAQ |
+| Max Position | 10 | Per direction limit |
 
-#### **NinjaTrader Features**
-- **Position Reversal Logic**: Automatically handles long↔short reversals
-- **Smart Position Limits**: Blocks same-direction scaling at 10 contracts, allows exits
-- **Market Time Synchronization**: Uses `Time[0]` for 10x replay compatibility
-- **Enhanced Account Data**: Streams net liquidation, margin usage, position size
-- **Trade Completion Tracking**: Detailed P&L and timing data to Python
+#### Strategy Features
+- **Smart Position Limits**: Blocks same-direction scaling, allows exits
+- **Position Reversal Logic**: Automatic long↔short transitions
+- **Market Time Sync**: Uses `Time[0]` for replay compatibility
+- **Enhanced Data Stream**: Net liquidation, margin, position tracking
 
-## 🔧 Configuration
+---
+
+## ⚙️ **Configuration**
 
 ### Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `TRADING_ENV` | Environment (development/production) | development |
-| `TRADING_TCP_DATA_PORT` | TCP data port | 5556 |
-| `TRADING_TCP_SIGNAL_PORT` | TCP signal port | 5557 |
-| `TRADING_MAX_POSITION_SIZE` | Max position size (0-1) | 0.1 |
-| `TRADING_MAX_DAILY_LOSS` | Max daily loss (0-1) | 0.02 |
+| `TRADING_ENV` | Environment mode | development |
+| `TRADING_TCP_DATA_PORT` | Market data port | 5556 |
+| `TRADING_TCP_SIGNAL_PORT` | Trading signal port | 5557 |
+| `TRADING_MAX_POSITION_SIZE` | Position size limit (0-1) | 0.1 |
+| `TRADING_MAX_DAILY_LOSS` | Daily loss limit (0-1) | 0.02 |
 | `TRADING_LEVERAGE` | Trading leverage | 50.0 |
 
 ### Configuration Files
 
-- `config/development.json` - Development settings
-- `config/production.json` - Production settings
+**Development** (`config/development.json`):
+```json
+{
+    "log_level": "DEBUG",
+    "max_position_size": 0.1,
+    "max_daily_loss": 0.03,
+    "reward_engine": {
+        "core_weight": 1.0,
+        "dopamine_weight": 0.3,
+        "rejection_weight": 1.0
+    }
+}
+```
 
-Example production config:
+**Production** (`config/production.json`):
 ```json
 {
     "log_level": "INFO",
     "max_position_size": 0.05,
     "max_daily_loss": 0.015,
-    "kelly_lookback": 200,
-    "close_positions_on_shutdown": true
+    "reward_engine": {
+        "dopamine": {
+            "sensitivity": 0.1,
+            "momentum_factor": 0.2
+        }
+    }
 }
 ```
 
-## 🧠 AI Architecture
+---
 
-### 🎯 **Autonomous Learning System**
+## 🧠 **AI Intelligence Systems**
 
-The system implements a sophisticated **economic learning mechanism** that teaches optimal trading behavior through experience:
+### 🧬 **DNA Subsystem**
+Genetic pattern encoding and evolution:
+- **16-base encoding** (A-P) for market patterns
+- **Elite population management** with breeding algorithms  
+- **Mutation and selection** for pattern optimization
+- **Performance-based survival** and aging mechanisms
 
-#### **Position Limit Learning**
-- **Economic Penalties**: Position limit violations cost -$15+ (3-5x average profit)
-- **Escalating Punishments**: Repeated violations get +50% worse each time
-- **Smart Boundary Testing**: AI learns limits naturally through economic feedback
-- **Emergency Exits Preserved**: Position reversals always allowed for risk management
+### ⏰ **Temporal Subsystem**
+FFT-based cycle detection and prediction:
+- **Multi-timeframe analysis** (64, 128, 256 periods)
+- **Seasonal and lunar patterns** with interference modeling
+- **Dominant cycle tracking** and future prediction
+- **Performance-weighted importance** scoring
 
-#### **Context-Dependent Holding Rewards**
-- **Intelligent Patience**: Rewards holding during uncertain conditions (confidence < 0.3)
-- **Opportunity Cost**: Small penalties for holding during high-confidence signals (> 0.7)
-- **Anti-Overtrading**: Discourages trading with very low confidence (< 0.2)
-- **Balanced Learning**: Prevents both overtrading and excessive inaction
+### 🛡️ **Immune Subsystem**
+Adaptive threat detection and memory:
+- **Evolving antibody system** for market anomalies
+- **T-cell memory** with pattern recognition
+- **Autoimmune prevention** against false signals
+- **Similarity matching** with threat classification
 
-#### **Meta-Learning Adaptation**
-- **Self-Evolving Parameters**: All trading parameters adapt based on market feedback
-- **Multi-Component Rewards**: PnL, hold time, win rate, consistency, preservation, holding context
-- **Account-Aware Scaling**: Risk parameters adjust automatically for account size
-- **Real-Time Learning**: No need for offline training or manual parameter tuning
+### 📈 **Microstructure Engine**
+Smart money and order flow analysis:
+- **Retail vs institutional** flow detection
+- **Order book depth analysis** and liquidity assessment
+- **Real-time tape reading** with momentum detection
+- **Market regime classification** and adaptation
 
-### Intelligence Domain (`src/intelligence/`)
-Central AI coordination with four specialized subsystems:
+### 💉 **Dopamine Integration**
+Real-time P&L reward system:
+- **Immediate feedback** on unrealized P&L changes
+- **Momentum amplification** for consecutive gains/losses
+- **Expectation error signals** for prediction accuracy
+- **Peak/trough detection** for trend continuation
 
-#### 1. DNA Subsystem (`dna_subsystem.py`)
-- **16-base genetic encoding** of market patterns (A-P bases)
-- **Genetic breeding algorithms** with elite population management
-- **Mutation and natural selection** for pattern evolution
-- **Performance-based sequence survival** and aging mechanisms
+---
 
-#### 2. Temporal Subsystem (`temporal_subsystem.py`)
-- **FFT-based cycle detection** across multiple timeframes (64, 128, 256)
-- **Seasonal and lunar pattern analysis** with interference modeling
-- **Dominant cycle tracking** and prediction algorithms
-- **Cycle importance weighting** based on historical performance
+## 🛡️ **Risk Management**
 
-#### 3. Immune Subsystem (`immune_subsystem.py`)
-- **Evolving antibody system** for market threat detection
-- **T-cell memory** with adaptive response learning
-- **Autoimmune prevention** to avoid false positives
-- **Pattern signature matching** with similarity algorithms
+### Economic Learning System
+- **Position Limit Discovery**: AI learns boundaries through expensive violations
+- **Escalating Penalties**: Repeated violations get +50% worse each time
+- **Emergency Exits**: Position reversals always allowed for safety
+- **Account-Aware Scaling**: Risk parameters adjust for account size
 
-#### 4. Microstructure Engine (`market_analysis/market_microstructure.py`)
-- **Smart money vs retail flow** pattern detection
-- **Order flow analysis** with regime classification
-- **Market depth and liquidity** assessment algorithms
-- **Real-time tape reading** and momentum detection
+### Advanced Risk Features
+- **Kelly Criterion Optimization**: Dynamic position sizing
+- **Monte Carlo Simulation**: Risk scenario analysis
+- **Real-Time Drawdown Protection**: Dynamic position adjustments
+- **Multi-Factor Assessment**: Confidence, volatility, market conditions
 
-### Agent Domain (`src/agent/`)
-Trading agents with advanced learning capabilities:
-- **Actor-Critic Trading Agent** with self-evolving architecture
-- **Meta-Learning Engine** for rapid adaptation
-- **Real-Time Adaptation** with multi-armed bandit algorithms
-- **Few-Shot Learning** for new market conditions
+### Risk Learning Engine
+```python
+# Position limit violation example
+violation_penalty = -15.0 * violation_severity * escalation_multiplier
+# Where escalation_multiplier = 1.0 + (recent_violations - 1) * 0.5
+```
 
-## 📊 Risk Management
-
-### 🛡️ **Intelligent Risk Learning**
-
-#### **Economic Position Limits**
-- **Learning-Based Limits**: AI discovers optimal position sizes through experience
-- **Economic Enforcement**: Violations cost more than potential profits (-$15+ penalties)
-- **Escalating Consequences**: Repeated violations within 10 minutes get exponentially worse
-- **Position Synchronization**: Real-time position tracking between NinjaTrader and Python
-
-#### **Advanced Position Sizing**
-- **Kelly Criterion Optimization**: Dynamic position sizing based on historical performance
-- **Multi-Factor Assessment**: Confidence, volatility, account balance, and market conditions
-- **Risk Learning Engine**: Learns optimal sizing for different market regimes
-- **Account-Aware Scaling**: Risk parameters automatically adjust for account size
-
-#### **Multi-Layer Risk Protection**
-- **Real-Time Drawdown Prevention**: Dynamic position adjustments during losses
-- **Monte Carlo Simulation**: Risk scenario analysis for position sizing
-- **Emergency Exit Logic**: Position reversals always allowed regardless of limits
-- **Daily Loss Limits**: Configurable maximum daily loss protection
+---
 
 ## 🔄 **Autonomous Trading Pipeline**
 
-### 1. **Bootstrap Phase** (Initialization)
-- **Historical Data Loading**: 10+ days of multi-timeframe data from NinjaTrader
-- **AI Subsystem Calibration**: DNA, temporal, immune, and microstructure initialization
-- **Meta-Learning State Restoration**: Load previous learning progress if available
-- **Account Size Adaptation**: Automatically adjust risk parameters for account balance
+### 1. **Bootstrap Phase**
+- **Historical Data Loading**: 10+ days from NinjaTrader
+- **AI Subsystem Calibration**: DNA, temporal, immune, microstructure
+- **Reward Engine Initialization**: Load previous learning state
+- **Account Adaptation**: Adjust parameters for current balance
 
-### 2. **Real-Time Decision Loop** (Live Trading)
-- **Multi-Timeframe Data Processing**: 1m, 5m, 15m market data streams
-- **Four-Subsystem Intelligence Analysis**: Genetic, temporal, immune, microstructure signals
-- **Confidence-Based Decision Making**: Hold vs trade decisions based on signal strength
-- **Economic Risk Assessment**: Position limits, Kelly sizing, violation tracking
-- **NinjaTrader Execution**: Smart position reversals and emergency exit capability
+### 2. **Real-Time Decision Loop**
+- **Multi-Timeframe Processing**: 1m, 5m, 15m data streams
+- **Intelligence Analysis**: Four-subsystem signal generation
+- **Reward-Based Decisions**: Unified reward engine guidance
+- **Economic Risk Assessment**: Position limits and Kelly sizing
+- **NinjaTrader Execution**: Smart position management
 
-### 3. **Continuous Learning Loop** (Adaptation)
-- **Trade Outcome Analysis**: P&L, hold time, exit reason, market conditions
-- **Economic Penalty Learning**: Position limit violations with escalating costs
-- **Context-Dependent Holding**: Reward patience vs penalize missed opportunities
-- **Meta-Parameter Evolution**: All trading parameters self-adjust based on performance
-- **Risk Adaptation**: Kelly criterion and position sizing optimization
+### 3. **Continuous Learning**
+- **Trade Outcome Analysis**: P&L, timing, market conditions
+- **Reward Engine Updates**: All components learn from outcomes
+- **Economic Penalty Integration**: Violation costs teach boundaries
+- **Meta-Parameter Evolution**: All settings self-optimize
 
-### 4. **Learning Features**
-- **No Hardcoded Rules**: System learns optimal behavior through economic incentives
-- **Position Boundary Discovery**: AI tests limits and learns from expensive violations
-- **Frequency Optimization**: Learns optimal trading frequency vs holding patterns
-- **Market Regime Adaptation**: Parameters adjust automatically for different conditions
+### 4. **Dopamine Feedback**
+- **Real-Time P&L Signals**: Immediate reward/punishment
+- **Momentum Amplification**: Streak-based signal scaling
+- **Expectation Adjustment**: Prediction accuracy feedback
+- **Emotional State Integration**: Personality system updates
 
-## 🧪 Testing
+---
 
-### Run Integration Tests
+## 📊 **Monitoring & Analytics**
+
+### Real-Time Metrics
+- **Reward Engine Statistics**: Component performance tracking
+- **Dopamine Signal Analysis**: P&L momentum and expectation tracking
+- **Position Violation Tracking**: Economic penalty effectiveness
+- **AI Subsystem Performance**: Individual signal contribution
+
+### Performance Analytics
+- **Unified Reward Trends**: Overall learning progress
+- **Strategy Performance**: By adaptation method and market regime
+- **Risk-Adjusted Returns**: Sharpe ratio and maximum drawdown
+- **Learning Efficiency**: Parameter adaptation success rate
+
+---
+
+## 🧪 **Testing**
+
+### Reward Engine Tests
 ```bash
+# Test unified reward engine
+python -c "from src.agent.reward_engine import UnifiedRewardEngine; engine = UnifiedRewardEngine(); print('Reward engine loaded successfully')"
+
+# Run personality system tests
+python tests/test_personality_system.py
+
+# Integration tests
 python run_tests.py
 ```
 
 ### Test Coverage
-- Domain service integration
-- AI subsystem functionality
-- Risk management validation
-- Configuration system testing
-- TCP connection handling
+- **Reward Engine Components**: Core, dopamine, rejection engines
+- **AI Subsystem Integration**: Intelligence coordination
+- **Risk Management Validation**: Economic penalty systems
+- **TCP Communication**: NinjaTrader interface testing
 
-## 📈 Monitoring
+---
 
-### System Status Logging
-- Trade execution summary
-- AI signal analysis
-- Risk metrics tracking
-- Portfolio performance
+## 🎭 **Personality System**
 
-### Performance Analytics
-- Win rate and profit factor
-- Sharpe ratio calculation
-- Maximum drawdown tracking
-- Kelly fraction optimization
+### AI Trading Persona
+The Dopamine system includes an advanced AI personality that provides:
+- **Emotional State Tracking**: Confidence, fear, excitement based on performance
+- **Real-Time Commentary**: Natural language trade explanations
+- **Voice Synthesis**: Optional audio feedback during trading
+- **Memory Integration**: Learns from past emotional states and outcomes
 
-## 🔒 Safety Features
+### LLM Integration
+- **GPT-4 Compatible**: Works with OpenAI API or local models
+- **Context-Aware**: Uses subsystem signals and market data for commentary
+- **Emotional Intelligence**: Adapts tone based on market conditions
+- **Memory Persistence**: Maintains trading personality across sessions
 
-### Emergency Stops
-- Maximum margin usage limits (95%)
-- Maximum drawdown protection (20%)
-- Daily loss limits (configurable)
-- Position size constraints
+---
 
-### Graceful Shutdown
-- Position closure options
-- Final statistics reporting
-- TCP connection cleanup
-- Data persistence
+## 🔧 **Development**
 
-## 🛠️ Development
-
-### Domain-Driven Design Principles
-- **Bounded Contexts**: Each domain (`intelligence/`, `agent/`, `trading/`, `risk/`) is self-contained
-- **Domain Services**: Complex business logic encapsulation in service layers
-- **Factory Patterns**: Clean object creation with `create_*` functions
-- **Dependency Injection**: Loose coupling between domains via interfaces
-
-### Clean Architecture Benefits
-- **Separated Concerns**: Intelligence, trading, risk, and market domains are independent
-- **Consolidated Subsystems**: Single-file subsystems for easier maintenance
-- **Absolute Imports**: All internal imports use `src.` prefix for clarity
-- **Modular Design**: Easy to test, extend, and modify individual components
+### Architecture Principles
+- **Domain-Driven Design**: Clear separation of concerns
+- **Unified Reward System**: Centralized learning feedback
+- **Economic Incentives**: All learning through profit/loss
+- **Neuromorphic Design**: Brain-inspired reward pathways
 
 ### Code Quality
-- Clean Architecture patterns with proper domain separation
-- Comprehensive error handling with graceful degradation
-- Extensive logging and monitoring across all domains
-- Type hints and comprehensive documentation
-- Consolidated file structure eliminates redundancy
+- **Type Hints**: Comprehensive type annotations
+- **Error Handling**: Graceful degradation and recovery
+- **Extensive Logging**: Debug output for all learning decisions
+- **Clean Architecture**: Modular, testable, maintainable code
 
-## 🔧 **Recent Critical Fixes**
+### Extending the System
+```python
+# Add new reward component
+class CustomRewardComponent:
+    def compute_reward(self, data):
+        return custom_calculation(data)
 
-### **Position Synchronization Issues** ✅
-- **Problem**: NinjaTrader position data wasn't reaching Python risk manager
-- **Solution**: Added `total_position_size` field to MarketData class with proper TCP streaming
-- **Impact**: Position limits now work correctly, learning feedback restored
-
-### **Market Time vs Real Time** ✅  
-- **Problem**: Cooldowns used real-time timestamps, broke at 10x replay speed
-- **Solution**: Changed ResearchStrategy.cs to use `Time[0]` (market time) consistently
-- **Impact**: System works correctly at 1x-10x replay speeds
-
-### **Economic Learning Failure** ✅
-- **Problem**: Position violations (-0.5 penalty) vs profitable trades (+$3-6)
-- **Solution**: Increased violation penalties to -$15+ with escalating multipliers
-- **Impact**: AI now learns position limits are economically painful
-
-### **Net Liquidation vs Balance** ✅
-- **Problem**: System used account balance instead of net liquidation for position sizing
-- **Solution**: TCP bridge now prioritizes net liquidation (includes unrealized P&L)
-- **Impact**: More accurate position sizing and risk assessment
-
-### **Overtrading vs Holding Balance** ✅
-- **Problem**: No reward for holding, AI always tried to trade
-- **Solution**: Context-dependent holding rewards based on confidence levels
-- **Impact**: AI learns when to be patient vs when to act
-
-## 📝 Learnable Parameters
-
-The system uses meta-learning for **ALL** trading parameters - nothing is hardcoded:
-
-### **Position Management**
-- Maximum position sizes (learned through economic penalties)
-- Position sizing factors (Kelly criterion optimization)
-- Exposure scaling thresholds (risk concentration learning)
-
-### **Trading Behavior**  
-- Trading frequency vs holding patterns (confidence-dependent rewards)
-- Confidence thresholds for action vs patience
-- Stop loss and profit target preferences
-
-### **Risk Management**
-- Daily loss tolerance factors (account-aware scaling)
-- Margin utilization limits (dynamic based on performance)
-- Consecutive loss tolerance (learned resilience)
-
-### **Market Adaptation**
-- Subsystem weighting (DNA, temporal, immune, microstructure)
-- Exploration vs exploitation balance
-- Architecture evolution (neural network sizing)
-
-**Only operational settings are hardcoded**: TCP ports, file paths, emergency safety limits.
-
-## 🔄 Continuous Evolution
-
-### AI Adaptation
-- Genetic algorithm evolution
-- Neural network weight updates
-- Pattern recognition improvement
-- Market regime adaptation
-
-### Risk Optimization
-- Kelly criterion refinement
-- Volatility model updates
-- Correlation analysis enhancement
-- Drawdown recovery strategies
-
-## 📞 Support
-
-For system configuration, AI parameter tuning, or integration assistance, refer to the codebase documentation and configuration examples.
+# Integrate with unified engine
+engine = UnifiedRewardEngine()
+engine.add_component('custom', CustomRewardComponent())
+```
 
 ---
 
-## 🚨 **Important Notes**
+## 📈 **Performance Characteristics**
 
-### **Autonomous System Characteristics**
-- **Fully Autonomous**: System makes all trading decisions without human intervention
-- **Self-Evolving**: Parameters continuously adapt based on market feedback  
-- **Black-Box Learning**: AI discovers optimal strategies through experience, not rules
-- **Position Limit Learning**: AI will test boundaries and learn from expensive violations
-- **Emergency Exits**: System can always reverse positions for risk management
+### Learning Capabilities
+- **No Hardcoded Rules**: Discovers optimal strategies through experience
+- **Economic Boundary Testing**: Learns position limits through violations
+- **Context-Dependent Decisions**: Holding vs trading based on confidence
+- **Market Regime Adaptation**: Parameters adjust for different conditions
 
-### **Development & Testing**
-- **Market Replay Testing**: Designed to work at 1x-10x speeds for backtesting
-- **Learning Persistence**: System saves/loads learning progress between sessions
-- **Comprehensive Logging**: Detailed debug output for all learning decisions
-- **Architecture Validation**: All import paths and dependencies verified
-
-### **File Changes Summary**
-See `LEARNING_FIXES.md` for detailed technical documentation of all recent improvements.
+### Expected Behavior
+- **Initial Learning Phase**: High exploration, some violations as boundaries discovered
+- **Convergence Phase**: Stabilized behavior as optimal parameters learned
+- **Adaptation Phase**: Continuous refinement based on changing markets
+- **Mature Phase**: Consistent performance with minimal violations
 
 ---
 
-**⚠️ Risk Disclaimer**: This is a fully autonomous, self-evolving algorithmic trading system that learns through economic incentives. The AI will test position limits and market boundaries as part of its learning process. Use appropriate risk management, only trade with funds you can afford to lose, and monitor the system during its learning phase. Past performance does not guarantee future results. The system's autonomous nature means it will make independent trading decisions based on its learned experience.
+## 🚨 **Safety & Disclaimers**
+
+### Emergency Features
+- **Maximum Drawdown Protection**: 20% account protection
+- **Daily Loss Limits**: Configurable stop-loss
+- **Position Size Constraints**: Account-relative limits
+- **Emergency Exit Capability**: Always allows position closure
+
+### Important Warnings
+⚠️ **Autonomous System**: Makes independent decisions based on learned experience
+⚠️ **Learning Phase**: Will test boundaries and incur violations during discovery
+⚠️ **Economic Incentives**: Uses real P&L for learning - trade with appropriate risk
+⚠️ **Market Risk**: Past performance does not guarantee future results
+
+### Risk Disclaimer
+This is a fully autonomous, self-evolving algorithmic trading system that learns through economic incentives. The AI will test position limits and market boundaries as part of its learning process. Use appropriate risk management, only trade with funds you can afford to lose, and monitor the system during its learning phase.
+
+---
+
+## 📞 **Support & Resources**
+
+### Documentation
+- **Architecture Guide**: System design and component interaction
+- **Configuration Reference**: All configurable parameters
+- **API Documentation**: Programming interfaces and extensions
+- **Learning Mechanics**: How the reward system teaches optimal behavior
+
+### Community
+- **Issue Tracking**: GitHub issues for bugs and feature requests
+- **Discussions**: Community forum for trading strategies and optimization
+- **Contributing**: Guidelines for system improvements and extensions
+
+---
+
+**🧠 Dopamine Trading System** - *Where Neuroscience Meets Algorithmic Trading*
+
+*Built with ❤️ for autonomous AI trading and neuromorphic learning systems*

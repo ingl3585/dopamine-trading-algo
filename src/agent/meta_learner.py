@@ -8,6 +8,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Dict, Any, Tuple, List
 from src.neural.uncertainty_estimator import UncertaintyEstimator
+from src.agent.reward_engine import UnifiedRewardEngine
 import logging
 
 logger = logging.getLogger(__name__)
@@ -89,100 +90,7 @@ class ExplorationStrategy(nn.Module):
         self.recent_outcomes.append((was_exploration, outcome))
 
 
-class RewardEngine:
-    def __init__(self):
-        self.components = {
-            'pnl_weight': MetaParameter(1.0, (0.1, 3.0)),
-            'drawdown_penalty': MetaParameter(0.5, (0.0, 2.0)),
-            'hold_time_factor': MetaParameter(0.1, (0.0, 0.5)),
-            'win_rate_bonus': MetaParameter(0.3, (0.0, 1.0)),
-            'subsystem_consistency': MetaParameter(0.2, (0.0, 1.0)),
-            'account_preservation': MetaParameter(0.4, (0.0, 1.0))  # New component
-        }
-        
-        self.outcome_history = deque(maxlen=200)
-    
-    def compute_reward(self, trade_data: Dict[str, Any]) -> float:
-        pnl = trade_data.get('pnl', 0.0)
-        account_balance = trade_data.get('account_balance', 25000)
-        hold_time = trade_data.get('hold_time', 1.0)
-        was_winner = pnl > 0
-        subsystem_agreement = trade_data.get('subsystem_agreement', 0.5)
-        
-        # Check if this was a holding decision vs trading decision
-        decision_action = trade_data.get('action', 'trade')  # 'hold' or 'trade'
-        decision_confidence = trade_data.get('decision_confidence', 0.5)
-        
-        # Account-normalized PnL component
-        pnl_norm = np.tanh(pnl / (account_balance * 0.01))  # Normalize by 1% of account
-        
-        # Hold time penalty for overly long trades
-        hold_penalty = max(0, (hold_time - 3600) / 3600) * 0.1
-        
-        # Win rate context
-        recent_wins = sum(1 for outcome in list(self.outcome_history)[-10:] if outcome > 0)
-        win_rate_bonus = (recent_wins / 10.0 - 0.5) * 0.2
-        
-        # Subsystem consistency bonus
-        consistency_bonus = (subsystem_agreement - 0.5) * 0.1
-        
-        # Account preservation bonus (reward smaller risks on smaller accounts)
-        risk_pct = abs(pnl) / account_balance
-        preservation_bonus = max(0, 0.02 - risk_pct) * 5.0  # Bonus for risks < 2%
-        
-        # Context-dependent holding rewards
-        holding_bonus = 0.0
-        if decision_action == 'hold':
-            # Reward holding when confidence is low (uncertain conditions)
-            if decision_confidence < 0.3:
-                holding_bonus = 0.05 * (0.3 - decision_confidence)  # Up to +0.015 for very uncertain
-            # Small penalty for holding during high-confidence signals (missed opportunities)
-            elif decision_confidence > 0.7:
-                holding_bonus = -0.02 * (decision_confidence - 0.7)  # Up to -0.006 for high confidence
-        elif decision_action == 'trade' and decision_confidence < 0.2:
-            # Small penalty for trading when very uncertain
-            holding_bonus = -0.01
-        
-        # Debug logging for reward calculation
-        pnl_component = self.components['pnl_weight'].value * pnl_norm
-        hold_component = self.components['hold_time_factor'].value * (-hold_penalty)
-        win_component = self.components['win_rate_bonus'].value * win_rate_bonus
-        consistency_component = self.components['subsystem_consistency'].value * consistency_bonus
-        preservation_component = self.components['account_preservation'].value * preservation_bonus
-        # Note: holding_bonus is not weighted, it's a direct behavioral incentive
-        
-        reward = (
-            pnl_component +
-            hold_component +
-            win_component +
-            consistency_component +
-            preservation_component +
-            holding_bonus
-        )
-        
-        # Log reward breakdown for debugging
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"REWARD BREAKDOWN - PnL=${pnl:.2f}, Action={decision_action}, Conf={decision_confidence:.2f} -> Total={reward:.6f}")
-        logger.info(f"  PnL: {pnl_norm:.3f} * {self.components['pnl_weight'].value:.3f} = {pnl_component:.6f}")
-        logger.info(f"  Hold: {-hold_penalty:.3f} * {self.components['hold_time_factor'].value:.3f} = {hold_component:.6f}")
-        logger.info(f"  Win: {win_rate_bonus:.3f} * {self.components['win_rate_bonus'].value:.3f} = {win_component:.6f}")
-        logger.info(f"  Consistency: {consistency_bonus:.3f} * {self.components['subsystem_consistency'].value:.3f} = {consistency_component:.6f}")
-        logger.info(f"  Preservation: {preservation_bonus:.3f} * {self.components['account_preservation'].value:.3f} = {preservation_component:.6f}")
-        logger.info(f"  Holding: {holding_bonus:.6f} (direct incentive)")
-        
-        self.outcome_history.append(reward)
-        
-        # Update component parameters
-        for component in self.components.values():
-            component.add_outcome(reward)
-        
-        return reward
-    
-    def adapt_components(self):
-        for component in self.components.values():
-            gradient = component.get_gradient()
-            component.update(gradient)
+# RewardEngine moved to src.agent.reward_engine
 
 class ArchitectureEvolver:
     def __init__(self, base_sizes: List[int] = [64, 32]):
@@ -256,10 +164,10 @@ class MetaLearner:
             'exposure_scaling_threshold': MetaParameter(0.6, (0.4, 0.8))   # When to start scaling down
         }
         
-        # Adaptive components
-        self.subsystem_weights = AdaptiveWeights(4)  # DNA, Micro, Temporal, Immune
+        # Adaptive components  
+        self.subsystem_weights = AdaptiveWeights(6)  # DNA, Temporal, Immune, Microstructure, Dopamine, Regime
         self.exploration_strategy = ExplorationStrategy(state_dim)
-        self.reward_engine = RewardEngine()
+        self.reward_engine = UnifiedRewardEngine()
         self.architecture_evolver = ArchitectureEvolver()
         
         # Learning tracking
@@ -314,19 +222,11 @@ class MetaLearner:
         )
     
     def compute_reward(self, trade_data: Dict[str, Any]) -> float:
-        return self.reward_engine.compute_reward(trade_data)
+        return self.reward_engine.compute_trade_reward(trade_data)
     
     def compute_holding_reward(self, decision_confidence: float, market_conditions: Dict[str, Any]) -> float:
         """Compute reward for holding decisions based on context"""
-        holding_data = {
-            'pnl': 0.0,  # No immediate PnL from holding
-            'action': 'hold',
-            'decision_confidence': decision_confidence,
-            'account_balance': market_conditions.get('account_balance', 25000),
-            'hold_time': 0.0,  # No hold time for instant decision
-            'subsystem_agreement': market_conditions.get('subsystem_agreement', 0.5)
-        }
-        return self.reward_engine.compute_reward(holding_data)
+        return self.reward_engine.compute_holding_reward(decision_confidence, market_conditions)
     
     def should_evolve_architecture(self) -> bool:
         return self.architecture_evolver.should_evolve()
@@ -368,7 +268,7 @@ class MetaLearner:
         self.architecture_evolver.record_performance(normalized_outcome)
         
         # Adapt reward components
-        self.reward_engine.adapt_components()
+        self.reward_engine.adapt_parameters()
         
         # Count successful adaptations
         adaptations = sum(1 for name, param in self.parameters.items() 
@@ -405,7 +305,12 @@ class MetaLearner:
     
     def load_state(self, filepath: str):
         try:
-            checkpoint = torch.load(filepath)
+            # Handle PyTorch 2.6+ security requirements
+            try:
+                checkpoint = torch.load(filepath, weights_only=False)
+            except Exception as weights_error:
+                # Fallback for older PyTorch versions or if weights_only fails
+                checkpoint = torch.load(filepath)
             
             # Restore parameters
             for name, (value, bounds) in checkpoint['parameters'].items():

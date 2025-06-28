@@ -7,6 +7,27 @@ import signal
 import sys
 from pathlib import Path
 
+# Fix PyTorch 2.6+ weights loading issues
+try:
+    import torch
+    import numpy
+    # Add numpy globals to PyTorch safe globals list
+    # Handle numpy namespace changes (newer versions use _core)
+    try:
+        torch.serialization.add_safe_globals([
+            numpy._core.multiarray.scalar,
+            numpy.dtype
+        ])
+    except AttributeError:
+        # Fallback for older numpy versions
+        torch.serialization.add_safe_globals([
+            numpy.core.multiarray.scalar,
+            numpy.dtype
+        ])
+except (ImportError, AttributeError):
+    # Ignore if torch is not available or older version
+    pass
+
 from src.core.trading_system import TradingSystem
 
 def setup_logging():

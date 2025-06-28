@@ -57,6 +57,9 @@ class PersonalityConfig:
     llm_model: str = "gpt-4"
     llm_temperature: float = 0.7
     llm_max_tokens: int = 300
+    llm_base_url: str = "http://localhost:11434"
+    llm_api_key: str = ""
+    mock_llm: bool = False
 
 class TradingPersonality:
     """
@@ -80,7 +83,10 @@ class TradingPersonality:
             'model_name': self.config.llm_model,
             'temperature': self.config.llm_temperature,
             'max_tokens': self.config.llm_max_tokens,
-            'personality_name': self.config.personality_name
+            'personality_name': self.config.personality_name,
+            'base_url': getattr(self.config, 'llm_base_url', 'http://localhost:11434'),
+            'api_key': getattr(self.config, 'llm_api_key', ''),
+            'mock_mode': getattr(self.config, 'mock_llm', False)
         })
         
         self.memory = PersonalityMemory(memory_file=memory_file)
@@ -180,7 +186,7 @@ class TradingPersonality:
             if self.config.voice_enabled and self.voice_synthesizer:
                 await self._synthesize_voice(commentary_response)
             
-            logger.info(f"Generated commentary for {event.value}: {commentary_response.text[:50]}...")
+            # Commentary will be logged by the trading system
             
             return commentary_response
             
