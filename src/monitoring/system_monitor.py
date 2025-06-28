@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Dict, Any
 
 class SystemMonitor:
-    def __init__(self, update_interval: int = 30):
+    def __init__(self, update_interval: int = 300):
         self.update_interval = update_interval
         self.last_update = 0
         
