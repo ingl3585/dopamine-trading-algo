@@ -23,6 +23,19 @@ class PortfolioManager:
         self.performance_history = deque(maxlen=500)
         self.daily_returns = deque(maxlen=252)  # One year of daily returns
         
+        # Session tracking
+        self.session_start_balance = 0.0
+        self.current_balance = 0.0
+        self.session_high_balance = 0.0
+        self.session_low_balance = 0.0
+        self.session_start_time = time.time()
+        
+        # Trade statistics
+        self.completed_trades = []
+        self.winning_trades = 0
+        self.losing_trades = 0
+        self.total_realized_pnl = 0.0
+        
     def track_positions(self, positions_data: Dict) -> Dict:
         """Track and analyze current positions"""
         try:
@@ -500,46 +513,70 @@ class PortfolioManager:
     def get_summary(self) -> Dict:
         """Get portfolio summary compatible with existing system interface"""
         try:
-            # Get comprehensive analytics
-            analytics = self.get_performance_analytics()
+            # Calculate metrics from actual trade history
+            total_trades = len(self.completed_trades)
+            winning_trades = self.winning_trades
+            losing_trades = self.losing_trades
+            win_rate = (winning_trades / total_trades * 100) if total_trades > 0 else 0.0
             
-            # Extract key metrics for backward compatibility
-            returns_metrics = analytics.get('returns', {})
-            position_analytics = analytics.get('positions', {})
+            # Calculate average PnL per trade
+            avg_pnl_per_trade = (self.total_realized_pnl / total_trades) if total_trades > 0 else 0.0
+            
+            # Calculate consecutive losses from recent trade history
+            consecutive_losses = self._calculate_consecutive_losses()
+            
+            # Calculate session return percentage
+            session_return_pct = 0.0
+            if self.session_start_balance > 0:
+                session_return_pct = ((self.current_balance - self.session_start_balance) / self.session_start_balance) * 100
+            
+            # Calculate max drawdown percentage
+            max_drawdown_pct = 0.0
+            if self.session_start_balance > 0 and self.session_low_balance < self.session_start_balance:
+                max_drawdown_pct = ((self.session_start_balance - self.session_low_balance) / self.session_start_balance) * 100
+            
+            # Calculate profit factor
+            profit_factor = self._calculate_profit_factor()
+            
+            # Get pending orders count
+            pending_orders = len(getattr(self, 'pending_orders', {}))
             
             summary = {
-                'total_trades': returns_metrics.get('total_return', 0),  # Placeholder
-                'winning_trades': 0,  # Would need trade history
-                'losing_trades': 0,   # Would need trade history  
-                'win_rate': returns_metrics.get('win_rate', 0.0),
-                'total_pnl': returns_metrics.get('total_return', 0.0),
-                'daily_pnl': 0.0,  # Would need daily tracking
-                'avg_pnl_per_trade': returns_metrics.get('avg_return', 0.0),
-                'consecutive_losses': 0,  # Would need trade sequence tracking
-                'pending_orders': position_analytics.get('open_positions', 0),
-                # Additional metrics from performance analytics
-                'current_balance': 0.0,  # Would need account tracking
-                'session_return_pct': 0.0,
-                'max_drawdown_pct': analytics.get('risk', {}).get('max_drawdown', 0.0) * 100,
-                'profit_factor': returns_metrics.get('profit_factor', 1.0),
-                'performance_score': analytics.get('performance_score', 50.0)
+                'total_trades': total_trades,
+                'winning_trades': winning_trades,
+                'losing_trades': losing_trades,
+                'win_rate': win_rate,
+                'total_pnl': self.total_realized_pnl,
+                'daily_pnl': self.total_realized_pnl,  # Session PnL for now
+                'avg_pnl_per_trade': avg_pnl_per_trade,
+                'consecutive_losses': consecutive_losses,
+                'pending_orders': pending_orders,
+                'current_balance': self.current_balance,
+                'session_return_pct': session_return_pct,
+                'max_drawdown_pct': max_drawdown_pct,
+                'profit_factor': profit_factor,
+                'performance_score': min(100.0, max(0.0, 50.0 + session_return_pct))
             }
             
             return summary
             
         except Exception as e:
             logger.error(f"Error getting portfolio summary: {e}")
-            # Return minimal valid summary
+            # Return summary with current tracked values
             return {
-                'total_trades': 0,
-                'winning_trades': 0,
-                'losing_trades': 0,
+                'total_trades': len(self.completed_trades),
+                'winning_trades': self.winning_trades,
+                'losing_trades': self.losing_trades,
                 'win_rate': 0.0,
-                'total_pnl': 0.0,
-                'daily_pnl': 0.0,
+                'total_pnl': self.total_realized_pnl,
+                'daily_pnl': self.total_realized_pnl,
                 'avg_pnl_per_trade': 0.0,
                 'consecutive_losses': 0,
-                'pending_orders': 0,
+                'pending_orders': len(getattr(self, 'pending_orders', {})),
+                'current_balance': self.current_balance,
+                'session_return_pct': 0.0,
+                'max_drawdown_pct': 0.0,
+                'profit_factor': 1.0,
                 'performance_score': 50.0
             }
     
@@ -609,17 +646,21 @@ class PortfolioManager:
             latest_order_id = max(self.pending_orders.keys(), key=lambda x: self.pending_orders[x]['timestamp'])
             order_info = self.pending_orders.pop(latest_order_id)
             
+            # Get trade PnL and account balance
+            trade_pnl = completion_data.get('pnl', 0.0)
+            account_balance = completion_data.get('account_balance', 0.0)
+            
             # Create a simple trade completion object
             trade = type('Trade', (), {
                 'action': order_info['action'],
                 'size': order_info['size'],
-                'pnl': completion_data.get('pnl', 0.0),
+                'pnl': trade_pnl,
                 'exit_reason': completion_data.get('exit_reason', 'completed'),
                 'entry_time': order_info['timestamp'],
                 'exit_time': time.time(),
                 'entry_price': order_info['price'],
                 'exit_price': completion_data.get('exit_price', order_info['price']),
-                'exit_account_balance': completion_data.get('account_balance', 0.0),
+                'exit_account_balance': account_balance,
                 'account_risk_pct': completion_data.get('risk_pct', 0.0),
                 # Restore intelligence data
                 'features': order_info.get('features'),
@@ -629,8 +670,12 @@ class PortfolioManager:
                 'state_features': order_info.get('decision_data', {}).get('state_features')
             })()
             
+            # Update session tracking
+            self._update_session_metrics(trade_pnl, account_balance)
+            
             # Add to trade history for tracking
             self.trade_history.append(trade)
+            self.completed_trades.append(trade)
             
             logger.info(f"Trade completed: {trade.action} {trade.size}, P&L: {trade.pnl:.2f}")
             return trade
@@ -690,17 +735,32 @@ class PortfolioManager:
     def get_account_performance(self) -> Dict:
         """Get account performance metrics"""
         try:
-            # Return simplified account performance metrics
-            # In a full implementation, this would track account balance history
+            # Calculate session return percentage
+            session_return_pct = 0.0
+            if self.session_start_balance > 0:
+                session_return_pct = ((self.current_balance - self.session_start_balance) / self.session_start_balance) * 100
+            
+            # Calculate max drawdown percentage
+            max_drawdown_pct = 0.0
+            if self.session_start_balance > 0 and self.session_low_balance < self.session_start_balance:
+                max_drawdown_pct = ((self.session_start_balance - self.session_low_balance) / self.session_start_balance) * 100
+            
+            # Calculate profit factor
+            profit_factor = self._calculate_profit_factor()
+            
+            # Calculate gross profit and loss
+            gross_profit = sum(trade.pnl for trade in self.completed_trades if trade.pnl > 0)
+            gross_loss = abs(sum(trade.pnl for trade in self.completed_trades if trade.pnl < 0))
+            
             return {
-                'current_balance': 0.0,
-                'session_start_balance': 0.0,
-                'session_return_pct': 0.0,
-                'max_drawdown_pct': 0.0,
-                'avg_risk_per_trade_pct': 0.0,
-                'profit_factor': 1.0,
-                'gross_profit': 0.0,
-                'gross_loss': 0.0
+                'current_balance': self.current_balance,
+                'session_start_balance': self.session_start_balance,
+                'session_return_pct': session_return_pct,
+                'max_drawdown_pct': max_drawdown_pct,
+                'avg_risk_per_trade_pct': 0.0,  # Would need position sizing data
+                'profit_factor': profit_factor,
+                'gross_profit': gross_profit,
+                'gross_loss': gross_loss
             }
             
         except Exception as e:
@@ -738,3 +798,60 @@ class PortfolioManager:
         # This should return the net position size
         # For simplicity, return 0 as the actual position is tracked by NinjaTrader
         return 0
+    
+    def _update_session_metrics(self, trade_pnl: float, account_balance: float):
+        """Update session tracking metrics"""
+        # Update realized PnL
+        self.total_realized_pnl += trade_pnl
+        
+        # Update current balance
+        if account_balance > 0:
+            self.current_balance = account_balance
+            
+            # Set session start balance if not set
+            if self.session_start_balance == 0:
+                self.session_start_balance = account_balance - trade_pnl  # Estimate starting balance
+        
+            # Update high/low water marks
+            self.session_high_balance = max(self.session_high_balance, account_balance)
+            self.session_low_balance = min(self.session_low_balance, account_balance) if self.session_low_balance > 0 else account_balance
+        
+        # Update trade statistics
+        if trade_pnl > 0:
+            self.winning_trades += 1
+        elif trade_pnl < 0:
+            self.losing_trades += 1
+    
+    def _calculate_consecutive_losses(self) -> int:
+        """Calculate consecutive losses from recent trades"""
+        if not self.completed_trades:
+            return 0
+        
+        consecutive = 0
+        for trade in reversed(self.completed_trades):
+            if trade.pnl < 0:
+                consecutive += 1
+            else:
+                break
+        return consecutive
+    
+    def _calculate_profit_factor(self) -> float:
+        """Calculate profit factor (gross profit / gross loss)"""
+        if not self.completed_trades:
+            return 1.0
+            
+        gross_profit = sum(trade.pnl for trade in self.completed_trades if trade.pnl > 0)
+        gross_loss = abs(sum(trade.pnl for trade in self.completed_trades if trade.pnl < 0))
+        
+        if gross_loss == 0:
+            return gross_profit if gross_profit > 0 else 1.0
+        
+        return gross_profit / gross_loss
+    
+    def set_session_start_balance(self, balance: float):
+        """Set the session start balance (called when system starts)"""
+        if self.session_start_balance == 0:  # Only set once per session
+            self.session_start_balance = balance
+            self.current_balance = balance
+            self.session_high_balance = balance
+            self.session_low_balance = balance

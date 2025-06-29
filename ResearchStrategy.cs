@@ -365,7 +365,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        double currentVolatility = CalculateVolatility();
 		        double drawdownPct = dailyPnL < 0 ? Math.Abs(dailyPnL / currentBalance) * 100.0 : 0.0;
 		        double portfolioHeat = (marginUsed / netLiquidation) * 100.0;
-		        int totalPositionSize = Math.Abs(Position.Quantity);
+		        int totalPositionSize = Position.Quantity;
 	
 		        sb.Append($"\"account_balance\":{currentBalance.ToString(CultureInfo.InvariantCulture)},");
 		        sb.Append($"\"buying_power\":{currentBuyingPower.ToString(CultureInfo.InvariantCulture)},");

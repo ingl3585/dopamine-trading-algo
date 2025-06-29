@@ -66,36 +66,44 @@ class DNASubsystem:
             return ""
 
     def _determine_base(self, price_change: float, vol_ratio: float, volatility: float, momentum: float) -> str:
-        if abs(momentum) > 0.03:
+        # More realistic thresholds for actual market conditions
+        
+        # Strong momentum detection (reduced from 3% to 1.5%)
+        if abs(momentum) > 0.015:
             return 'L' if momentum > 0 else 'M'
         
-        if volatility > 0.05:
+        # Volatility spike detection (reduced from 5% to 3%)
+        if volatility > 0.03:
             return 'N'
-        elif volatility < 0.002 and abs(price_change) < 0.0001 and vol_ratio < 1.1:
+        # Volatility crush detection (more realistic thresholds)
+        elif volatility < 0.005 and abs(price_change) < 0.001 and vol_ratio < 1.2:
             return 'O'
         
-        if abs(price_change) < 0.0001:
-            if vol_ratio > 2.0:
+        # Flat price movement (increased from 0.01% to 0.05%)
+        if abs(price_change) < 0.0005:
+            if vol_ratio > 1.8:  # Reduced from 2.0
                 return 'I'
-            elif vol_ratio > 1.2:
+            elif vol_ratio > 1.1:  # Reduced from 1.2
                 return 'J'
             else:
                 return 'K'
         elif price_change > 0:
-            if vol_ratio > 2.0:
+            # Price up with varying volume
+            if vol_ratio > 1.8:  # Reduced from 2.0
                 return 'A'
-            elif vol_ratio > 1.2:
+            elif vol_ratio > 1.1:  # Reduced from 1.2
                 return 'B'
-            elif vol_ratio > 0.8:
+            elif vol_ratio > 0.7:  # Reduced from 0.8
                 return 'C'
             else:
                 return 'D'
         else:
-            if vol_ratio > 2.0:
+            # Price down with varying volume
+            if vol_ratio > 1.8:  # Reduced from 2.0
                 return 'E'
-            elif vol_ratio > 1.2:
+            elif vol_ratio > 1.1:  # Reduced from 1.2
                 return 'F'
-            elif vol_ratio > 0.8:
+            elif vol_ratio > 0.7:  # Reduced from 0.8
                 return 'G'
             else:
                 return 'H'
@@ -117,7 +125,9 @@ class DNASubsystem:
             for stored_seq, data in self.sequences.items():
                 try:
                     similarity = self._advanced_sequence_similarity(sequence, stored_seq)
-                    if similarity > 0.7:
+                    # Adaptive threshold: higher for larger databases, lower for smaller ones
+                    adaptive_threshold = max(0.4, min(0.6, 0.4 + (len(self.sequences) / 10000) * 0.2))
+                    if similarity > adaptive_threshold:
                         matches_found += 1
                         age_factor = self.age_decay_factor ** data['age']
                         adjusted_performance = data['performance'] * age_factor
@@ -135,8 +145,35 @@ class DNASubsystem:
                     continue
             
             if matches_found == 0 and len(self.sequences) > 0:
-                logger.debug("No DNA matches found, using baseline signal")
-                best_score = 0.05
+                # Try partial matching for signals below threshold
+                best_partial_score = 0.0
+                best_partial_similarity = 0.0
+                
+                for stored_seq, data in self.sequences.items():
+                    try:
+                        similarity = self._advanced_sequence_similarity(sequence, stored_seq)
+                        if similarity > 0.2:  # Lower threshold for partial matches
+                            age_factor = self.age_decay_factor ** data['age']
+                            adjusted_performance = data['performance'] * age_factor
+                            # Scale down partial matches
+                            partial_score = adjusted_performance * similarity * 0.6
+                            
+                            if abs(partial_score) > abs(best_partial_score):
+                                best_partial_score = partial_score
+                                best_partial_similarity = similarity
+                    except Exception as e:
+                        continue
+                
+                if best_partial_similarity > 0.2:
+                    logger.debug(f"Using partial DNA match: score={best_partial_score:.4f}, similarity={best_partial_similarity:.4f}")
+                    best_score = best_partial_score
+                else:
+                    # Dynamic baseline based on sequence database quality and market conditions
+                    avg_performance = np.mean([data['performance'] for data in self.sequences.values()]) if self.sequences else 0.0
+                    database_quality = min(1.0, len(self.sequences) / 1000)  # Quality increases with more patterns
+                    dynamic_baseline = max(0.02, min(0.15, avg_performance * 0.3 + database_quality * 0.05))
+                    logger.debug(f"No DNA matches found, using dynamic baseline: {dynamic_baseline:.3f}")
+                    best_score = dynamic_baseline
             
             if len(best_matches) >= 2 and len(self.sequences) % self.breeding_frequency == 0:
                 try:
@@ -418,6 +455,10 @@ class DNASubsystem:
         
         if len(self.sequences) % 100 == 0:
             self._cleanup_sequences()
+        
+        # Perform pattern interpolation every 200 learning events
+        if self.total_learning_events % 200 == 0 and len(self.sequences) > 10:
+            self._interpolate_patterns()
 
     def _cleanup_sequences(self):
         if len(self.sequences) > 2000:
@@ -433,6 +474,143 @@ class DNASubsystem:
             
             self.sequences = {seq: data for seq, data in self.sequences.items() 
                             if seq in sequences_to_keep}
+
+    def _interpolate_patterns(self):
+        """Create intermediate patterns between similar successful sequences"""
+        if len(self.sequences) < 20:
+            return
+            
+        # Find pairs of similar high-performing sequences
+        successful_sequences = {seq: data for seq, data in self.sequences.items() 
+                              if data['performance'] > 0.2}
+        
+        if len(successful_sequences) < 2:
+            return
+        
+        interpolated_count = 0
+        max_interpolations = 10  # Limit to prevent explosion
+        
+        sequences_list = list(successful_sequences.items())
+        for i in range(min(len(sequences_list), 20)):  # Limit comparisons
+            for j in range(i + 1, min(len(sequences_list), 20)):
+                if interpolated_count >= max_interpolations:
+                    break
+                    
+                seq1, data1 = sequences_list[i]
+                seq2, data2 = sequences_list[j]
+                
+                # Check if sequences are similar enough to interpolate
+                similarity = self._advanced_sequence_similarity(seq1, seq2)
+                if 0.3 <= similarity <= 0.7:  # Sweet spot for interpolation
+                    interpolated_seq = self._create_interpolated_sequence(seq1, seq2)
+                    
+                    if (interpolated_seq and 
+                        interpolated_seq not in self.sequences and 
+                        len(interpolated_seq) >= 5):
+                        
+                        # Performance is average of parents, scaled down slightly
+                        avg_performance = (data1['performance'] + data2['performance']) / 2 * 0.9
+                        
+                        self.sequences[interpolated_seq] = {
+                            'performance': avg_performance,
+                            'age': 0,
+                            'generation': max(data1.get('generation', 0), data2.get('generation', 0)) + 1,
+                            'parents': (seq1, seq2),
+                            'interpolated': True
+                        }
+                        interpolated_count += 1
+                        logger.debug(f"Created interpolated DNA pattern: {interpolated_seq[:10]}...")
+            
+            if interpolated_count >= max_interpolations:
+                break
+        
+        if interpolated_count > 0:
+            logger.debug(f"DNA interpolation created {interpolated_count} new patterns")
+
+    def _create_interpolated_sequence(self, seq1: str, seq2: str) -> str:
+        """Create an interpolated sequence between two similar sequences"""
+        if not seq1 or not seq2:
+            return ""
+        
+        min_len = min(len(seq1), len(seq2))
+        if min_len < 5:
+            return ""
+        
+        interpolated = ""
+        
+        for i in range(min_len):
+            base1 = seq1[i]
+            base2 = seq2[i]
+            
+            if base1 == base2:
+                # Same base - use it
+                interpolated += base1
+            else:
+                # Different bases - choose intelligently
+                type1 = self._get_base_type(base1)
+                type2 = self._get_base_type(base2)
+                
+                if type1 == type2:
+                    # Same type, different intensity - choose middle ground
+                    interpolated += self._get_intermediate_base(base1, base2, type1)
+                else:
+                    # Different types - use weighted random selection based on frequency
+                    weight1 = self._get_base_frequency(base1)
+                    weight2 = self._get_base_frequency(base2)
+                    total_weight = weight1 + weight2
+                    
+                    if total_weight > 0:
+                        if random.random() < weight1 / total_weight:
+                            interpolated += base1
+                        else:
+                            interpolated += base2
+                    else:
+                        interpolated += base1  # Fallback
+        
+        return interpolated
+
+    def _get_intermediate_base(self, base1: str, base2: str, base_type: str) -> str:
+        """Get intermediate base for same-type bases"""
+        if base_type == 'UP':
+            up_bases = ['A', 'B', 'C', 'D', 'L']
+            try:
+                idx1 = up_bases.index(base1)
+                idx2 = up_bases.index(base2)
+                mid_idx = (idx1 + idx2) // 2
+                return up_bases[mid_idx]
+            except ValueError:
+                return random.choice([base1, base2])
+        elif base_type == 'DOWN':
+            down_bases = ['E', 'F', 'G', 'H', 'M']
+            try:
+                idx1 = down_bases.index(base1)
+                idx2 = down_bases.index(base2)
+                mid_idx = (idx1 + idx2) // 2
+                return down_bases[mid_idx]
+            except ValueError:
+                return random.choice([base1, base2])
+        elif base_type == 'FLAT':
+            flat_bases = ['I', 'J', 'K']
+            try:
+                idx1 = flat_bases.index(base1)
+                idx2 = flat_bases.index(base2)
+                mid_idx = (idx1 + idx2) // 2
+                return flat_bases[mid_idx]
+            except ValueError:
+                return random.choice([base1, base2])
+        else:
+            return random.choice([base1, base2])
+
+    def _get_base_frequency(self, base: str) -> float:
+        """Get frequency weight for a base (more common bases get higher weight)"""
+        frequency_map = {
+            'A': 0.1, 'B': 0.15, 'C': 0.2, 'D': 0.15,  # Up movements
+            'E': 0.1, 'F': 0.15, 'G': 0.2, 'H': 0.15,  # Down movements
+            'I': 0.05, 'J': 0.1, 'K': 0.15,            # Flat movements
+            'L': 0.05, 'M': 0.05,                       # Strong momentum
+            'N': 0.03, 'O': 0.02, 'P': 0.02            # Special conditions
+        }
+        return frequency_map.get(base, 0.1)
 
     def get_evolution_stats(self) -> Dict:
         if not self.sequences:

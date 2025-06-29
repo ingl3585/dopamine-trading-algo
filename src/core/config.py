@@ -59,6 +59,7 @@ class Config:
             
             # Position sizing
             'max_position_size': 0.1,  # 10% of account
+            'max_contracts_limit': 3,  # Maximum number of contracts (easily adjustable)
             'min_position_size': 1.0,  # Minimum 1 contract
             'position_increment': 1.0,  # Round to whole contracts
             'max_daily_loss': 0.02,  # 2% daily loss limit
@@ -117,6 +118,7 @@ class Config:
             'TRADING_TCP_HOST': 'tcp_host',
             'TRADING_LOG_LEVEL': 'log_level',
             'TRADING_MAX_POSITION_SIZE': 'max_position_size',
+            'TRADING_MAX_CONTRACTS': 'max_contracts_limit',
             'TRADING_MAX_DAILY_LOSS': 'max_daily_loss',
             'TRADING_LEVERAGE': 'leverage',
             'TRADING_INTERVAL_SECONDS': 'trading_interval_seconds',
@@ -128,7 +130,7 @@ class Config:
                 try:
                     value = os.environ[env_var]
                     # Try to convert to appropriate type
-                    if config_key in ['tcp_data_port', 'tcp_signal_port', 'trading_interval_seconds']:
+                    if config_key in ['tcp_data_port', 'tcp_signal_port', 'trading_interval_seconds', 'max_contracts_limit']:
                         value = int(value)
                     elif config_key in ['max_position_size', 'max_daily_loss', 'leverage']:
                         value = float(value)
@@ -147,6 +149,7 @@ class Config:
             ('tcp_data_port', lambda x: 1024 <= x <= 65535, "TCP data port must be 1024-65535"),
             ('tcp_signal_port', lambda x: 1024 <= x <= 65535, "TCP signal port must be 1024-65535"),
             ('max_position_size', lambda x: 0 < x <= 1, "Max position size must be 0-1"),
+            ('max_contracts_limit', lambda x: x >= 1, "Max contracts limit must be >= 1"),
             ('max_daily_loss', lambda x: 0 < x <= 1, "Max daily loss must be 0-1"),
             ('leverage', lambda x: x > 0, "Leverage must be positive"),
             ('trading_interval_seconds', lambda x: x >= 1, "Trading interval must be >= 1 second"),
@@ -169,7 +172,7 @@ class Config:
         """Get a summary of current configuration"""
         summary_keys = [
             'environment', 'tcp_data_port', 'tcp_signal_port', 
-            'max_position_size', 'max_daily_loss', 'leverage'
+            'max_position_size', 'max_contracts_limit', 'max_daily_loss', 'leverage'
         ]
         summary = {k: self.settings.get(k) for k in summary_keys}
         return str(summary)

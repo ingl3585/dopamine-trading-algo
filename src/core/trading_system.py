@@ -31,7 +31,7 @@ class TradingSystem:
         self.portfolio = PortfolioManager(self.config)
         self.data_processor = DataProcessor()
         self.intelligence = IntelligenceEngine(self.config)
-        self.agent = TradingAgent(self.intelligence, self.portfolio)
+        self.agent = TradingAgent(self.intelligence, self.portfolio, self.config)
         self.risk_manager = RiskManager(self.portfolio, self.agent.meta_learner, self.agent)
         
         self.tcp_server = TCPServer()
@@ -137,10 +137,6 @@ class TradingSystem:
         self.data_updates_received += 1
             
         try:
-            # Enhanced logging for debugging
-            if self.data_updates_received % 20 == 0:  # Log every 20 data updates
-                logger.info(f"Processing market data update #{self.data_updates_received}")
-            
             market_data = self.data_processor.process(raw_data)
             
             if not market_data:
@@ -150,35 +146,28 @@ class TradingSystem:
             # Store for portfolio state context
             self.last_market_data = market_data
             
-            # Log market data quality every 10 updates
-            if self.data_updates_received % 10 == 0:
-                logger.info(f"Market data: Price={market_data.price:.2f}, "
-                           f"1m_bars={len(market_data.prices_1m)}, "
-                           f"5m_bars={len(market_data.prices_5m)}, "
-                           f"15m_bars={len(market_data.prices_15m)}")
+            # Log market data quality less frequently
+            if self.data_updates_received % 50 == 0:
+                logger.info(f"Market data: Price={market_data.price:.2f}, Bars: 1m={len(market_data.prices_1m)}, 5m={len(market_data.prices_5m)}, 15m={len(market_data.prices_15m)}")
             
             # Check for significant account changes and adapt
             self._check_account_adaptation(market_data)
                 
             features = self.intelligence.extract_features(market_data)
             
-            # Log intelligence analysis every 5 updates
-            if self.data_updates_received % 5 == 0:
-                logger.info(f"Intelligence: DNA={features.dna_signal:.3f}, "
-                           f"Temporal={features.temporal_signal:.3f}, "
-                           f"Immune={features.immune_signal:.3f}, "
-                           f"Micro={features.microstructure_signal:.3f}, "
-                           f"Dopamine={features.dopamine_signal:.3f}, "
-                           f"Overall={features.overall_signal:.3f}, "
-                           f"Confidence={features.confidence:.3f}")
+            # Log intelligence analysis less frequently and only significant signals
+            if self.data_updates_received % 20 == 0 and abs(features.overall_signal) > 0.5:
+                logger.info(f"Strong signal: {features.overall_signal:.3f} (DNA={features.dna_signal:.3f}, Temporal={features.temporal_signal:.3f}, Micro={features.microstructure_signal:.3f})")
             
             decision = self.agent.decide(features, market_data)
             self.total_decisions += 1
             
-            # Always log decision details
-            logger.info(f"Decision #{self.total_decisions}: {decision.action.upper()} "
-                       f"(Size: {decision.size:.1f}, Conf: {decision.confidence:.3f}, "
-                       f"Tool: {decision.primary_tool}, Exploration: {decision.exploration})")
+            # Log every decision concisely with price context
+            if decision.action != 'hold':
+                logger.info(f"Decision #{self.total_decisions}: {decision.action.upper()} @ {market_data.price:.2f} "
+                           f"(Size: {decision.size:.1f}, Conf: {decision.confidence:.3f}, Tool: {decision.primary_tool})")
+            else:
+                logger.info(f"Decision #{self.total_decisions}: HOLD @ {market_data.price:.2f} (Conf: {decision.confidence:.3f})")
             
             if decision.action == 'hold':
                 return
@@ -334,6 +323,7 @@ class TradingSystem:
             logger.info(f"Initial account balance: ${current_balance:.2f}")
             return
         
+        
         # Check for significant balance changes
         balance_change = abs(current_balance - self.last_account_balance) / self.last_account_balance
         
@@ -458,6 +448,7 @@ class TradingSystem:
                     self.total_decisions = system_state.get('total_decisions', 0)
                     self.data_updates_received = system_state.get('data_updates_received', 0)
                     # Don't restore ready_for_trading - always wait for fresh historical data
+                    logger.info(f"Loaded system state: last_balance=${self.last_account_balance:.2f}, decisions={self.total_decisions}")
             except FileNotFoundError:
                 pass
             
@@ -469,6 +460,11 @@ class TradingSystem:
             logger.info("Starting with fresh state")
 
     def shutdown(self):
+        # Prevent duplicate shutdown calls
+        if hasattr(self, '_shutdown_initiated') and self._shutdown_initiated:
+            return
+        self._shutdown_initiated = True
+        
         logger.info("Shutting down trading system")
         self.running = False
         
@@ -505,7 +501,12 @@ class TradingSystem:
             return
             
         try:
-            # Build comprehensive context for personality
+            # Build comprehensive enhanced context for personality
+            portfolio_summary = self.portfolio.get_summary()
+            agent_stats = self.agent.get_stats()
+            intelligence_stats = self.intelligence.get_stats()
+            risk_summary = self.risk_manager.get_risk_summary()
+            
             context = {
                 'subsystem_signals': {
                     'dna': float(features.dna_signal),
@@ -513,22 +514,93 @@ class TradingSystem:
                     'immune': float(features.immune_signal),
                     'microstructure': float(getattr(features, 'microstructure_signal', 0.0)),
                     'dopamine': float(getattr(features, 'dopamine_signal', 0.0)),
-                    'regime': float(getattr(features, 'regime_signal', 0.0))
+                    'regime': float(getattr(features, 'regime_signal', 0.0)),
+                    'overall': float(features.overall_signal),
+                    'weights': agent_stats.get('subsystem_weights', []),
+                    'agreement': getattr(features, 'subsystem_agreement', 0.5)
                 },
                 'market_data': {
-                    'price': float(market_data.price),
-                    'volatility': float(getattr(market_data, 'volatility', 0.02)),
-                    'trend_strength': float(getattr(features, 'trend_strength', 0.0)),
-                    'volume_regime': float(getattr(features, 'volume_regime', 0.5)),
-                    'regime': getattr(market_data, 'regime', 'normal')
+                    'current_price': float(market_data.price),
+                    'volatility': float(getattr(features, 'volatility', 0.02)),
+                    'trend_strength': float(getattr(features, 'price_momentum', 0.0)),
+                    'price_position': float(getattr(features, 'price_position', 0.5)),
+                    'volume_momentum': float(getattr(features, 'volume_momentum', 0.0)),
+                    'liquidity_depth': float(getattr(features, 'liquidity_depth', 0.5)),
+                    'smart_money_flow': float(getattr(features, 'smart_money_flow', 0.0)),
+                    'regime_confidence': float(getattr(features, 'regime_confidence', 0.5)),
+                    'pattern_score': float(getattr(features, 'pattern_score', 0.0)),
+                    'bars_1m': len(getattr(market_data, 'prices_1m', [])),
+                    'bars_5m': len(getattr(market_data, 'prices_5m', [])),
+                    'bars_15m': len(getattr(market_data, 'prices_15m', []))
                 },
-                'portfolio_state': self._get_portfolio_state(),
+                'account_state': {
+                    'balance': float(market_data.account_balance),
+                    'daily_pnl': float(getattr(market_data, 'daily_pnl', 0.0)),
+                    'unrealized_pnl': float(getattr(market_data, 'unrealized_pnl', 0.0)),
+                    'total_position_size': int(getattr(market_data, 'total_position_size', 0)),
+                    'margin_utilization': float(getattr(market_data, 'margin_utilization', 0.0)),
+                    'buying_power_ratio': float(getattr(market_data, 'buying_power_ratio', 1.0)),
+                    'session_return_pct': float(portfolio_summary.get('session_return_pct', 0.0)),
+                    'max_drawdown_pct': float(portfolio_summary.get('max_drawdown_pct', 0.0))
+                },
+                'portfolio_performance': {
+                    'total_trades': int(portfolio_summary.get('total_trades', 0)),
+                    'win_rate': float(portfolio_summary.get('win_rate', 0.0)),
+                    'profit_factor': float(portfolio_summary.get('profit_factor', 0.0)),
+                    'consecutive_losses': int(portfolio_summary.get('consecutive_losses', 0)),
+                    'consecutive_wins': int(portfolio_summary.get('consecutive_wins', 0)),
+                    'avg_trade_pnl': float(portfolio_summary.get('avg_trade_pnl', 0.0)),
+                    'best_trade': float(portfolio_summary.get('best_trade', 0.0)),
+                    'worst_trade': float(portfolio_summary.get('worst_trade', 0.0))
+                },
+                'agent_intelligence': {
+                    'total_decisions': int(agent_stats.get('total_decisions', 0)),
+                    'successful_trades': int(agent_stats.get('successful_trades', 0)),
+                    'success_rate': float(agent_stats.get('success_rate', 0.0)),
+                    'learning_efficiency': float(agent_stats.get('learning_efficiency', 0.0)),
+                    'current_strategy': str(agent_stats.get('current_strategy', 'unknown')),
+                    'exploration_rate': float(agent_stats.get('exploration_rate', 0.0)),
+                    'architecture_generation': int(agent_stats.get('architecture_generation', 0)),
+                    'meta_learner_updates': int(agent_stats.get('meta_learner_updates', 0)),
+                    'successful_adaptations': int(agent_stats.get('successful_adaptations', 0))
+                },
+                'pattern_intelligence': {
+                    'dna_patterns': int(intelligence_stats.get('dna_patterns', 0)),
+                    'temporal_patterns': int(intelligence_stats.get('temporal_patterns', 0)),
+                    'immune_patterns': int(intelligence_stats.get('immune_patterns', 0)),
+                    'micro_patterns': int(intelligence_stats.get('micro_patterns', 0)),
+                    'dopamine_signals': int(intelligence_stats.get('dopamine_signals', 0)),
+                    'historical_processed': bool(intelligence_stats.get('historical_processed', False)),
+                    'bootstrap_bars': int(intelligence_stats.get('bootstrap_stats', {}).get('total_bars_processed', 0))
+                },
+                'risk_metrics': {
+                    'current_regime': str(risk_summary.get('current_regime', 'normal')),
+                    'volatility_regime': str(risk_summary.get('volatility_regime', 'normal')),
+                    'position_risk_pct': float(risk_summary.get('position_risk_pct', 0.0)),
+                    'portfolio_heat': float(risk_summary.get('portfolio_heat', 0.0)),
+                    'max_position_size': float(risk_summary.get('max_position_size', 0.0)),
+                    'risk_adjusted_size': float(risk_summary.get('risk_adjusted_size', 0.0))
+                },
                 'decision_context': {
                     'decision_type': event.value if hasattr(event, 'value') else str(event),
                     'confidence': float(features.confidence),
                     'overall_signal': float(features.overall_signal),
                     'primary_tool': getattr(decision, 'primary_tool', 'unknown') if decision else 'unknown',
-                    'exploration': getattr(decision, 'exploration', False) if decision else False
+                    'exploration': getattr(decision, 'exploration', False) if decision else False,
+                    'adaptation_strategy': getattr(decision, 'adaptation_strategy', 'unknown') if decision else 'unknown',
+                    'uncertainty_estimate': float(getattr(decision, 'uncertainty_estimate', 0.5)) if decision else 0.5,
+                    'size': float(getattr(decision, 'size', 0.0)) if decision else 0.0,
+                    'stop_price': float(getattr(decision, 'stop_price', 0.0)) if decision else 0.0,
+                    'target_price': float(getattr(decision, 'target_price', 0.0)) if decision else 0.0
+                },
+                'system_context': {
+                    'data_updates_received': int(self.data_updates_received),
+                    'ready_for_trading': bool(self.ready_for_trading),
+                    'last_trade_time': float(getattr(self.agent, 'last_trade_time', 0.0)),
+                    'time_since_last_trade': float(market_data.timestamp - getattr(self.agent, 'last_trade_time', 0.0)) if hasattr(self.agent, 'last_trade_time') else 0.0,
+                    'session_start_balance': float(self.last_account_balance),
+                    'current_time': float(market_data.timestamp),
+                    'time_of_day': float(getattr(features, 'time_of_day', 0.0))
                 }
             }
             

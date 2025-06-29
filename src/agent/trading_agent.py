@@ -41,14 +41,15 @@ class Decision:
 
 
 class TradingAgent:
-    def __init__(self, intelligence, portfolio):
+    def __init__(self, intelligence, portfolio, config=None):
         self.intelligence = intelligence
         self.portfolio = portfolio
+        self.config = config
         
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         # Enhanced meta-learning system
-        self.meta_learner = MetaLearner(state_dim=64)  # Increased state dimension
+        self.meta_learner = MetaLearner(state_dim=64, config=config)  # Pass config for parameter initialization
         
         # Enhanced neural architecture with self-evolution
         initial_sizes = self.meta_learner.architecture_evolver.current_sizes
@@ -241,7 +242,9 @@ class TradingAgent:
         
         # Enhanced trading constraints with regime awareness
         if not self._should_consider_trading(market_data, meta_context, features):
-            return Decision('hold', 0, 0, regime_awareness=adaptation_context)
+            # Use intelligence features confidence instead of 0 for hold decisions
+            hold_confidence = max(0.1, features.confidence * 0.8)  # Scaled down but not zero
+            return Decision('hold', hold_confidence, 0, regime_awareness=adaptation_context)
         
         # Enhanced neural network decision with ensemble
         ensemble_outputs = []
@@ -267,6 +270,7 @@ class TradingAgent:
             
             # CRITICAL FIX: Validate and bound confidence to prevent network initialization issues
             raw_confidence = float(combined_outputs['confidence'].detach().cpu().numpy()[0])
+            
             
             # Detect and fix abnormally low confidence from network initialization problems
             if raw_confidence < 0.05:
@@ -468,18 +472,21 @@ class TradingAgent:
         return self._filter_action_by_position(raw_action, current_position, max_contracts)
     
     def _apply_position_filtering(self, action_probs: np.ndarray, current_position: int, max_contracts: int) -> np.ndarray:
-        """Apply position-aware filtering to action probabilities"""
+        """Apply position-aware filtering to action probabilities - LEARNING MODE: reduce but don't block"""
         filtered_probs = action_probs.copy()
         
-        # If at maximum long position, prevent BUY actions (index 1)
-        if current_position >= max_contracts:
-            filtered_probs[1] = 0.0  # Zero out BUY probability
-            logger.info(f"Position filtering: Blocked BUY - at max long position ({current_position}/{max_contracts})")
+        # Instead of hard blocking, reduce probabilities to encourage learning
+        # The risk manager will still block and provide learning feedback
         
-        # If at maximum short position, prevent SELL actions (index 2) 
+        # If at maximum long position, reduce BUY probability but don't eliminate
+        if current_position >= max_contracts:
+            filtered_probs[1] *= 0.1  # Reduce BUY probability by 90% 
+            logger.debug(f"Position learning: Reduced BUY probability at max long position ({current_position}/{max_contracts})")
+        
+        # If at maximum short position, reduce SELL probability but don't eliminate
         elif current_position <= -max_contracts:
-            filtered_probs[2] = 0.0  # Zero out SELL probability
-            logger.info(f"Position filtering: Blocked SELL - at max short position ({current_position}/{max_contracts})")
+            filtered_probs[2] *= 0.1  # Reduce SELL probability by 90%
+            logger.debug(f"Position learning: Reduced SELL probability at max short position ({current_position}/{max_contracts})")
         
         # Renormalize probabilities after filtering
         prob_sum = np.sum(filtered_probs)
@@ -493,30 +500,29 @@ class TradingAgent:
         return filtered_probs
     
     def _filter_action_by_position(self, action_idx: int, current_position: int, max_contracts: int) -> int:
-        """Filter individual action based on current position to prevent limit violations"""
+        """Filter individual action based on current position - LEARNING MODE: allow but log for risk manager"""
         
         # Action mapping: 0=HOLD, 1=BUY, 2=SELL
         
+        # DON'T block the action - let it go to risk manager for learning feedback
+        # Just log what would be problematic for risk manager to handle
+        
         # If at maximum long position and trying to BUY more
         if current_position >= max_contracts and action_idx == 1:
-            logger.info(f"Position filter: Changed BUY to HOLD - at max long ({current_position}/{max_contracts})")
-            return 0  # Change to HOLD
+            logger.debug(f"Position learning: BUY at max long ({current_position}/{max_contracts}) - sending to risk manager for learning")
         
         # If at maximum short position and trying to SELL more
         elif current_position <= -max_contracts and action_idx == 2:
-            logger.info(f"Position filter: Changed SELL to HOLD - at max short ({current_position}/{max_contracts})")
-            return 0  # Change to HOLD
+            logger.debug(f"Position learning: SELL at max short ({current_position}/{max_contracts}) - sending to risk manager for learning")
         
-        # For positions near the limit, prefer opposite direction to reduce exposure
+        # For positions near the limit, still allow but prefer opposite direction
         elif abs(current_position) >= max_contracts * 0.8:  # 80% of limit
             if current_position > 0 and action_idx == 1:  # Long position, wants to buy more
-                logger.info(f"Position filter: Changed BUY to SELL - reducing long exposure ({current_position}/{max_contracts})")
-                return 2  # Change to SELL to reduce position
+                logger.debug(f"Position learning: BUY near limit ({current_position}/{max_contracts}) - may be rejected for learning")
             elif current_position < 0 and action_idx == 2:  # Short position, wants to sell more
-                logger.info(f"Position filter: Changed SELL to BUY - reducing short exposure ({current_position}/{max_contracts})")
-                return 1  # Change to BUY to reduce position
+                logger.debug(f"Position learning: SELL near limit ({current_position}/{max_contracts}) - may be rejected for learning")
         
-        # Action is safe - return as-is
+        # Always return the original action - let risk manager decide and provide feedback
         return action_idx
     
     def _calculate_enhanced_levels(self, action: str, market_data: MarketData,
@@ -886,9 +892,29 @@ class TradingAgent:
         if meta_context['consecutive_losses'] >= consecutive_limit:
             return False
         
+        # SMART FREQUENCY LIMIT: Only limit new entries, not exits or risk management
         frequency_limit = self.meta_learner.get_parameter('trade_frequency_base')
         time_since_last = market_data.timestamp - self.last_trade_time
-        if time_since_last < (300 / frequency_limit):
+        min_time_gap = 300 / frequency_limit
+        
+        # Fix negative time calculation - reset if timestamps are incompatible
+        if time_since_last < 0:
+            self.last_trade_time = 0.0
+            time_since_last = market_data.timestamp - self.last_trade_time
+        
+        # Allow trading if we have open positions (risk management/exits always allowed)
+        current_position = getattr(market_data, 'total_position_size', 0)
+        has_open_position = abs(current_position) > 0
+        
+        # Allow trading in emergency situations (high volatility, large unrealized loss)
+        unrealized_pnl = getattr(market_data, 'unrealized_pnl', 0.0)
+        is_emergency = (features.volatility > 0.05 or 
+                       abs(unrealized_pnl) > market_data.account_balance * 0.02)  # 2% account risk
+        
+        # Only apply frequency limit to new entries when no position exists and no emergency
+        if (time_since_last < min_time_gap and 
+            not has_open_position and 
+            not is_emergency):
             return False
         
         # Enhanced regime-based constraints
@@ -1520,7 +1546,7 @@ class TradingAgent:
             'current_strategy': self.current_strategy,
             'exploration_rate': self.exploration_rate,
             'meta_learner_updates': getattr(self.meta_learner, 'total_updates', 0),
-            'successful_adaptations': self.successful_adaptations
+            'successful_adaptations': getattr(self.meta_learner, 'successful_adaptations', 0)
         }
         
         # Strategy performance stats

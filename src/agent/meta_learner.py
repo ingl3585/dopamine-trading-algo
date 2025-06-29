@@ -32,29 +32,38 @@ class MetaParameter:
         self.outcomes.append(outcome)
     
     def get_gradient(self) -> float:
-        if len(self.outcomes) < 5:
+        if len(self.outcomes) < 2:
             return 0.0
         
         recent = list(self.outcomes)[-10:]
         
         # FIXED: Use actual gradient calculation instead of just mean
         # Calculate trend-based gradient to drive directional optimization
-        if len(recent) >= 5:
+        if len(recent) >= 3:
             # Simple linear regression slope as gradient
             x = np.arange(len(recent))
             y = np.array(recent)
             
             # Calculate slope (gradient) - this drives parameter optimization direction
             n = len(recent)
-            slope = (n * np.sum(x * y) - np.sum(x) * np.sum(y)) / (n * np.sum(x**2) - np.sum(x)**2)
+            denominator = n * np.sum(x**2) - np.sum(x)**2
             
-            # Scale gradient to be more aggressive for faster learning
-            scaled_gradient = slope * 5.0  # Increased scaling for meaningful parameter changes
-            
-            return scaled_gradient
+            if abs(denominator) > 1e-10:  # Avoid division by zero
+                slope = (n * np.sum(x * y) - np.sum(x) * np.sum(y)) / denominator
+                
+                # Scale gradient to be more aggressive for faster learning
+                scaled_gradient = slope * 10.0  # Further increased scaling for meaningful parameter changes
+                
+                return scaled_gradient
+            else:
+                # Fallback if linear regression fails
+                return (recent[-1] - recent[0]) * 2.0
         else:
-            # Fallback to mean for insufficient data, but scaled up
-            return np.mean(recent) * 2.0
+            # Fallback for very limited data - use simple difference
+            if len(recent) >= 2:
+                return (recent[-1] - recent[0]) * 5.0
+            else:
+                return np.mean(recent) * 2.0
 
 
 class AdaptiveWeights(nn.Module):
@@ -147,8 +156,12 @@ class ArchitectureEvolver:
         self.performance_window.append(performance)
 
 class MetaLearner:
-    def __init__(self, state_dim: int = 20):
+    def __init__(self, state_dim: int = 20, config=None):
         self.state_dim = state_dim
+        self.config = config
+        
+        # Get max contracts from config if available
+        config_max_contracts = config.get('max_contracts_limit', 3) if config else 3
         
         # Account-aware parameters with dynamic bounds and enhanced learning rates
         self.parameters = {
@@ -177,7 +190,7 @@ class MetaLearner:
             'margin_utilization_limit': MetaParameter(0.7, (0.3, 0.9)),   # Max margin usage
             
             # Enhanced position management
-            'max_contracts_limit': MetaParameter(3.0, (1.0, 5.0)),        # Learned max position limit
+            'max_contracts_limit': MetaParameter(float(config_max_contracts), (1.0, 10.0)),        # From config, learnable within bounds
             'position_concentration_factor': MetaParameter(0.8, (0.5, 1.0)), # How concentrated positions can be
             'exposure_scaling_threshold': MetaParameter(0.6, (0.4, 0.8))   # When to start scaling down
         }
@@ -289,18 +302,30 @@ class MetaLearner:
         self.reward_engine.adapt_parameters()
         
         # Count successful adaptations - FIXED: Much more realistic threshold
-        # Old threshold of 2% was impossible to achieve with normal learning rates
-        # New threshold: 0.1% OR absolute change > 0.001 (whichever is smaller)
+        # Lowered threshold further: 0.01% OR absolute change > 0.0001 (whichever is smaller)
+        threshold_pct = 0.0001  # 0.01%
+        threshold_abs = 0.0001  # Absolute minimum change
+        
+        # Log all parameter changes for debugging
+        all_changes = {name: abs(param.value - old_values[name]) 
+                      for name, param in self.parameters.items()}
+        logger.debug(f"Parameter changes: {all_changes}")
+        
+        # Count changes above threshold
         adaptations = sum(1 for name, param in self.parameters.items() 
-                         if abs(param.value - old_values[name]) > min(old_values[name] * 0.001, 0.001))
+                         if abs(param.value - old_values[name]) > min(old_values[name] * threshold_pct, threshold_abs))
         self.successful_adaptations += adaptations
         
         # Enhanced logging for learning diagnostics
         if adaptations > 0:
             changes = {name: abs(param.value - old_values[name]) 
                       for name, param in self.parameters.items() 
-                      if abs(param.value - old_values[name]) > min(old_values[name] * 0.001, 0.001)}
+                      if abs(param.value - old_values[name]) > min(old_values[name] * threshold_pct, threshold_abs)}
             logger.info(f"Successful adaptations: {adaptations} parameters changed: {changes}")
+        else:
+            # Log when no adaptations occur to help debug
+            max_change = max(all_changes.values()) if all_changes else 0
+            logger.debug(f"No adaptations: largest change was {max_change:.6f}, threshold was {threshold_abs:.6f}")
     
     def adapt_parameters(self):
         for param in self.parameters.values():

@@ -134,6 +134,15 @@ class TCPServer:
             
             # Log position synchronization for debugging
             total_position = enhanced.get('total_position_size', 0)
+            
+            # TEMPORARY FIX: Correct position sign based on unrealized P&L until NinjaTrader restart
+            unrealized_pnl = enhanced.get('unrealized_pnl', 0.0)
+            if total_position > 0 and unrealized_pnl < -5.0:
+                # Positive position with significant loss suggests short position
+                total_position = -total_position
+                enhanced['total_position_size'] = total_position
+                logger.info(f"Position sign corrected: {-total_position} -> {total_position} (P&L: {unrealized_pnl:.2f})")
+            
             if total_position != 0:
                 logger.info(f"Position sync: NinjaTrader reports {total_position} contracts")
             

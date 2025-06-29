@@ -228,12 +228,12 @@ class RiskManager:
                 logger.info(f"Allowing position reduction: {current_position_size} -> {new_position_size} (within limits)")
         
         # Calculate remaining capacity for new positions only
-        remaining_capacity = max_contracts - abs(current_position_size)
-        if remaining_capacity <= 0 and abs(new_position_size) > abs(current_position_size):
-            # Only block if this would increase position size
-            logger.warning(f"POSITION LIMIT HIT: {current_position_size}/{max_contracts} contracts - BLOCKING TRADE")
-            self._learn_from_position_limit_rejection(decision, market_data, current_position_size, max_contracts)
+        remaining = max_contracts - abs(current_position_size)
+        if remaining <= 0:
+            self._learn_from_position_limit_rejection(decision, market_data,
+                                                    current_position_size, max_contracts)
             return 0
+        base_size = min(base_size, remaining)
         
         # Intelligent exposure-based scaling
         exposure_ratio = abs(current_position_size) / max_contracts
@@ -259,7 +259,7 @@ class RiskManager:
                 final_size = min(final_size, max_reduction + 1)  # Allow at least some reduction
             else:
                 # For position increases, limit by remaining capacity
-                final_size = min(final_size, max(0, remaining_capacity))
+                final_size = min(final_size, max(0, remaining))
         
         # Record this sizing decision for learning
         self.risk_learning.record_risk_event(
