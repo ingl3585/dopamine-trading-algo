@@ -358,7 +358,7 @@ class RejectionRewardEngine:
         
         if rejection_type == 'position_limit':
             # Escalating penalty for repeated position limit violations
-            penalty_multiplier = 1.0 + (self.recent_position_rejections * 0.5)
+            penalty_multiplier = 0.05 + (self.recent_position_rejections * 0.05)
             rejection_reward = base_reward * penalty_multiplier
             
             # Track rejection for learning
@@ -379,10 +379,10 @@ class RejectionRewardEngine:
             return rejection_reward
             
         elif rejection_type == 'insufficient_margin':
-            return base_reward * 0.8  # Moderate penalty
+            return base_reward * 0.5  # Moderate penalty
             
         elif rejection_type == 'invalid_order':
-            return base_reward * 0.3  # Light penalty
+            return base_reward * 0.05  # Light penalty
             
         else:
             return base_reward  # Default penalty
