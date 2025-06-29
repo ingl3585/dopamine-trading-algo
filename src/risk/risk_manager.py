@@ -184,14 +184,17 @@ class RiskManager:
         # 1. Learned optimal size (primary)
         sizes.append(learned_optimal_size)
         
-        # 2. Account-based sizing
+        # 2. Account-based sizing (adjusted for smaller account)
         if account_balance > 0:
-            account_size = max(1, int(account_balance * position_factor / 2000))
+            # Scale sizing for smaller account - use more conservative divisor
+            account_size = max(1, int(account_balance * position_factor / 500))  # Adjusted for $1000 account
+            account_size = min(account_size, max_contracts)  # Cap at max contracts
             sizes.append(account_size)
         
-        # 3. Confidence-based sizing
+        # 3. Confidence-based sizing (reduced for smaller account)
         confidence_multiplier = decision.confidence ** 2
-        confidence_size = max(1, int(3 * confidence_multiplier))
+        confidence_size = max(1, int(2 * confidence_multiplier))  # Reduced from 3 to 2
+        confidence_size = min(confidence_size, max_contracts)  # Cap at max contracts
         sizes.append(confidence_size)
         
         # 4. Agent's suggested size
@@ -308,17 +311,25 @@ class RiskManager:
             elif decision.action == 'sell' and decision.stop_price > market_data.price:
                 stop_price = decision.stop_price
         elif should_use_stop:
-            # Calculate intelligent stop based on learned parameters
+            # Calculate intelligent stop based on learned parameters with bounds
             stop_distance_factor = self.meta_learner.get_parameter('stop_distance_factor')
             
-            # Volatility adjustment
-            vol_adjustment = 1.0 + (market_conditions['volatility'] * 10)
+            # Volatility adjustment (reduced for safety)
+            vol_adjustment = 1.0 + (market_conditions['volatility'] * 5)
             adjusted_distance = stop_distance_factor * vol_adjustment
             
+            # CRITICAL: Enforce stop loss bounds for risk management
+            MAX_STOP_PCT = 0.005  # 0.5% maximum
+            MIN_STOP_PCT = 0.001  # 0.1% minimum
+            bounded_distance = max(MIN_STOP_PCT, min(MAX_STOP_PCT, adjusted_distance))
+            
+            if bounded_distance != adjusted_distance:
+                logger.info(f"Risk manager bounded stop: {adjusted_distance:.4f} -> {bounded_distance:.4f}")
+            
             if decision.action == 'buy':
-                stop_price = market_data.price * (1 - adjusted_distance)
+                stop_price = market_data.price * (1 - bounded_distance)
             else:
-                stop_price = market_data.price * (1 + adjusted_distance)
+                stop_price = market_data.price * (1 + bounded_distance)
         
         # Apply intelligent target logic
         if should_use_target and decision.target_price > 0:
@@ -328,17 +339,30 @@ class RiskManager:
             elif decision.action == 'sell' and decision.target_price < market_data.price:
                 target_price = decision.target_price
         elif should_use_target:
-            # Calculate intelligent target based on learned parameters
+            # Calculate intelligent target based on learned parameters with bounds
             target_distance_factor = self.meta_learner.get_parameter('target_distance_factor')
             
-            # Trend strength adjustment
-            trend_adjustment = 1.0 + market_conditions['trend_strength'] * 2
+            # Trend strength adjustment (reduced for safety)
+            trend_adjustment = 1.0 + market_conditions['trend_strength'] * 1.5
             adjusted_distance = target_distance_factor * trend_adjustment
             
+            # CRITICAL: Enforce profit target bounds for risk management
+            MAX_TARGET_PCT = 0.02   # 2.0% maximum
+            MIN_TARGET_PCT = 0.003  # 0.3% minimum
+            bounded_distance = max(MIN_TARGET_PCT, min(MAX_TARGET_PCT, adjusted_distance))
+            
+            # Ensure minimum risk-reward ratio (target > 2x stop)
+            stop_distance = max(0.001, min(0.005, self.meta_learner.get_parameter('stop_distance_factor')))
+            min_target_distance = stop_distance * 2.0  # 2:1 minimum R:R
+            bounded_distance = max(bounded_distance, min_target_distance)
+            
+            if bounded_distance != adjusted_distance:
+                logger.info(f"Risk manager bounded target: {adjusted_distance:.4f} -> {bounded_distance:.4f}")
+            
             if decision.action == 'buy':
-                target_price = market_data.price * (1 + adjusted_distance)
+                target_price = market_data.price * (1 + bounded_distance)
             else:
-                target_price = market_data.price * (1 - adjusted_distance)
+                target_price = market_data.price * (1 - bounded_distance)
         
         # Log the decision for learning
         logger.info(f"Risk learning decisions: Stop={should_use_stop} (${stop_price:.2f}), "

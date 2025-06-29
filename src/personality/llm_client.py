@@ -271,7 +271,7 @@ Respond as if you're thinking out loud about the trading situation. Be genuine, 
             lines.append(f"Position: {direction} {abs(current_position_size)} contracts")
             
             # Add position status relative to limits
-            max_contracts = 10  # Known from config
+            max_contracts = 3   # Known from config
             utilization = abs(current_position_size) / max_contracts
             if utilization >= 1.0:
                 lines.append(f"Position Status: MAXED OUT ({abs(current_position_size)}/{max_contracts} contracts)")

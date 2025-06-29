@@ -147,6 +147,9 @@ class TradingSystem:
                 logger.warning("Market data processing returned None")
                 return
             
+            # Store for portfolio state context
+            self.last_market_data = market_data
+            
             # Log market data quality every 10 updates
             if self.data_updates_received % 10 == 0:
                 logger.info(f"Market data: Price={market_data.price:.2f}, "

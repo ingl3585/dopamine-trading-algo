@@ -613,59 +613,160 @@ class TradingAgent:
     
     def _calculate_intelligent_stop(self, action: str, market_data: MarketData,
                                   features: Features, base_distance: float) -> float:
-        """Calculate intelligent stop placement"""
+        """Calculate intelligent stop placement with learning and strict bounds"""
         
-        # Base distance from meta-learner
+        # RISK MANAGEMENT: Enforce maximum stop loss bounds
+        MAX_STOP_LOSS_PCT = 0.005  # 0.5% maximum stop loss
+        MIN_STOP_LOSS_PCT = 0.001  # 0.1% minimum stop loss
+        
+        # Base distance from meta-learner (learned optimal)
         base_stop_distance = self.meta_learner.get_parameter('stop_distance_factor')
         
-        # Volatility-based adjustment
-        vol_adjustment = 1.0 + (features.volatility * 10)  # Scale with volatility
+        # Volatility-based adjustment (learned)
+        vol_adjustment = 1.0 + (features.volatility * 5)  # Reduced multiplier for safety
         
-        # Regime-based adjustment
+        # Regime-based adjustment (learned)
         regime_adjustment = 1.0
         if features.regime_confidence < 0.4:
-            regime_adjustment = 0.7  # Tighter stops in uncertain regimes
+            regime_adjustment = 0.8  # Slightly tighter stops in uncertain regimes
         elif features.volatility > 0.04:
-            regime_adjustment = 1.5  # Wider stops in high volatility
+            regime_adjustment = 1.3  # Moderately wider stops in high volatility
         
-        # Time-based adjustment (wider stops during volatile hours)
+        # Time-based adjustment (learned)
         time_adjustment = 1.0
         if 0.35 < features.time_of_day < 0.65:  # Market open hours
-            time_adjustment = 1.2
+            time_adjustment = 1.1  # Slightly wider during active hours
         
-        # Combined adjustment
-        final_distance = base_stop_distance * (1 + base_distance) * vol_adjustment * regime_adjustment * time_adjustment
-        final_distance = min(0.05, max(0.005, final_distance))  # Reasonable bounds
+        # Performance-based learning adjustment
+        stop_effectiveness = self._evaluate_stop_effectiveness()
+        effectiveness_adjustment = 0.8 + (stop_effectiveness * 0.4)  # 0.8 to 1.2 range
         
+        # Combined learned distance
+        learned_distance = (base_stop_distance * (1 + base_distance * 0.5) * 
+                           vol_adjustment * regime_adjustment * time_adjustment * effectiveness_adjustment)
+        
+        # CRITICAL: Enforce strict risk management bounds
+        final_distance = max(MIN_STOP_LOSS_PCT, min(MAX_STOP_LOSS_PCT, learned_distance))
+        
+        # Log if bounds were enforced for learning
+        if learned_distance != final_distance:
+            bound_type = "maximum" if learned_distance > MAX_STOP_LOSS_PCT else "minimum"
+            logger.info(f"Stop loss bounded: {learned_distance:.4f} -> {final_distance:.4f} ({bound_type} risk limit)")
+        
+        # Calculate final stop price
         if action == 'buy':
-            return market_data.price * (1 - final_distance)
+            stop_price = market_data.price * (1 - final_distance)
         else:
-            return market_data.price * (1 + final_distance)
+            stop_price = market_data.price * (1 + final_distance)
+        
+        # Store learning data for optimization
+        self._record_stop_learning_data(final_distance, features, market_data)
+        
+        return stop_price
     
     def _calculate_intelligent_target(self, action: str, market_data: MarketData,
                                     features: Features, base_distance: float) -> float:
-        """Calculate intelligent target placement"""
+        """Calculate intelligent target placement with learning and strict bounds"""
         
-        # Base distance from meta-learner
+        # RISK MANAGEMENT: Enforce profit target bounds
+        MAX_TARGET_PCT = 0.02    # 2.0% maximum profit target
+        MIN_TARGET_PCT = 0.003   # 0.3% minimum profit target
+        
+        # Base distance from meta-learner (learned optimal)
         base_target_distance = self.meta_learner.get_parameter('target_distance_factor')
         
-        # Trend strength adjustment
-        trend_adjustment = 1.0 + abs(features.price_momentum) * 5  # Wider targets in strong trends
+        # Trend strength adjustment (learned)
+        trend_adjustment = 1.0 + abs(features.price_momentum) * 3  # Reduced for safety
         
-        # Confidence adjustment
-        confidence_adjustment = 0.5 + features.confidence  # Wider targets with higher confidence
+        # Confidence adjustment (learned)
+        confidence_adjustment = 0.7 + features.confidence * 0.6  # 0.7 to 1.3 range
         
-        # Pattern strength adjustment
-        pattern_adjustment = 1.0 + features.pattern_score * 0.5
+        # Pattern strength adjustment (learned)
+        pattern_adjustment = 1.0 + features.pattern_score * 0.3  # Reduced for safety
         
-        # Combined adjustment
-        final_distance = base_target_distance * (1 + base_distance) * trend_adjustment * confidence_adjustment * pattern_adjustment
-        final_distance = min(0.15, max(0.01, final_distance))  # Reasonable bounds
+        # Volatility adjustment (targets should be wider in volatile markets)
+        vol_adjustment = 1.0 + (features.volatility * 2)
         
+        # Performance-based learning adjustment
+        target_effectiveness = self._evaluate_target_effectiveness()
+        effectiveness_adjustment = 0.8 + (target_effectiveness * 0.4)  # 0.8 to 1.2 range
+        
+        # Risk-reward ratio learning (targets should be larger than stops for good R:R)
+        stop_distance = max(0.001, min(0.005, self.meta_learner.get_parameter('stop_distance_factor')))
+        risk_reward_adjustment = max(1.5, min(4.0, 2.0 + target_effectiveness))  # 1.5:1 to 4:1 R:R
+        
+        # Combined learned distance
+        learned_distance = (base_target_distance * (1 + base_distance * 0.3) * 
+                           trend_adjustment * confidence_adjustment * pattern_adjustment * 
+                           vol_adjustment * effectiveness_adjustment)
+        
+        # Ensure minimum risk-reward ratio
+        min_target_for_rr = stop_distance * risk_reward_adjustment
+        learned_distance = max(learned_distance, min_target_for_rr)
+        
+        # CRITICAL: Enforce strict profit target bounds
+        final_distance = max(MIN_TARGET_PCT, min(MAX_TARGET_PCT, learned_distance))
+        
+        # Log if bounds were enforced for learning
+        if learned_distance != final_distance:
+            bound_type = "maximum" if learned_distance > MAX_TARGET_PCT else "minimum"
+            logger.info(f"Profit target bounded: {learned_distance:.4f} -> {final_distance:.4f} ({bound_type} limit)")
+        
+        # Calculate final target price
         if action == 'buy':
-            return market_data.price * (1 + final_distance)
+            target_price = market_data.price * (1 + final_distance)
         else:
-            return market_data.price * (1 - final_distance)
+            target_price = market_data.price * (1 - final_distance)
+        
+        # Store learning data for optimization
+        self._record_target_learning_data(final_distance, features, market_data, risk_reward_adjustment)
+        
+        return target_price
+    
+    def _record_stop_learning_data(self, stop_distance: float, features: Features, market_data: MarketData):
+        """Record stop loss data for learning optimization"""
+        try:
+            learning_data = {
+                'stop_distance': stop_distance,
+                'volatility': features.volatility,
+                'regime_confidence': features.regime_confidence,
+                'time_of_day': features.time_of_day,
+                'price_momentum': features.price_momentum,
+                'pattern_score': features.pattern_score,
+                'timestamp': market_data.timestamp,
+                'price': market_data.price
+            }
+            
+            # Store in meta-learner for future optimization
+            if hasattr(self.meta_learner, 'record_stop_data'):
+                self.meta_learner.record_stop_data(learning_data)
+            
+        except Exception as e:
+            logger.warning(f"Error recording stop learning data: {e}")
+    
+    def _record_target_learning_data(self, target_distance: float, features: Features, 
+                                   market_data: MarketData, risk_reward_ratio: float):
+        """Record profit target data for learning optimization"""
+        try:
+            learning_data = {
+                'target_distance': target_distance,
+                'risk_reward_ratio': risk_reward_ratio,
+                'volatility': features.volatility,
+                'regime_confidence': features.regime_confidence,
+                'time_of_day': features.time_of_day,
+                'price_momentum': features.price_momentum,
+                'pattern_score': features.pattern_score,
+                'confidence': features.confidence,
+                'timestamp': market_data.timestamp,
+                'price': market_data.price
+            }
+            
+            # Store in meta-learner for future optimization
+            if hasattr(self.meta_learner, 'record_target_data'):
+                self.meta_learner.record_target_data(learning_data)
+            
+        except Exception as e:
+            logger.warning(f"Error recording target learning data: {e}")
     
     def _calculate_ensemble_uncertainty(self, ensemble_outputs: List[Dict]) -> float:
         """Calculate uncertainty from ensemble predictions"""
@@ -710,7 +811,7 @@ class TradingAgent:
             float(market_data.buying_power_ratio),
             
             # CRITICAL: Position limit awareness - current position context
-            float(getattr(market_data, 'total_position_size', 0) / 10.0),  # Normalized position
+            float(getattr(market_data, 'total_position_size', 0) / 3.0),   # Normalized position
             float(abs(getattr(market_data, 'total_position_size', 0)) / int(self.meta_learner.get_parameter('max_contracts_limit'))),  # Position ratio
             float(min(1.0, self.recent_position_rejections / 10.0)),  # Recent rejection ratio
             

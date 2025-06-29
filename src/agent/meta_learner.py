@@ -177,7 +177,7 @@ class MetaLearner:
             'margin_utilization_limit': MetaParameter(0.7, (0.3, 0.9)),   # Max margin usage
             
             # Enhanced position management
-            'max_contracts_limit': MetaParameter(10.0, (5.0, 15.0)),      # Learned max position limit
+            'max_contracts_limit': MetaParameter(3.0, (1.0, 5.0)),        # Learned max position limit
             'position_concentration_factor': MetaParameter(0.8, (0.5, 1.0)), # How concentrated positions can be
             'exposure_scaling_threshold': MetaParameter(0.6, (0.4, 0.8))   # When to start scaling down
         }
@@ -193,7 +193,7 @@ class MetaLearner:
         self.successful_adaptations = 0
         
         # Account adaptation tracking
-        self.last_account_balance = 25000
+        self.last_account_balance = 1000
         self.account_adaptation_count = 0
         
     def adapt_to_account_size(self, account_balance: float):
@@ -256,7 +256,7 @@ class MetaLearner:
         self.total_updates += 1
         
         # Adapt to account size changes
-        account_balance = trade_data.get('account_balance', 25000)
+        account_balance = trade_data.get('account_balance', 1000)
         self.adapt_to_account_size(account_balance)
         
         outcome = trade_data.get('pnl', 0.0)
@@ -379,7 +379,7 @@ class MetaLearner:
             
             self.total_updates = checkpoint.get('total_updates', 0)
             self.successful_adaptations = checkpoint.get('successful_adaptations', 0)
-            self.last_account_balance = checkpoint.get('last_account_balance', 25000)
+            self.last_account_balance = checkpoint.get('last_account_balance', 1000)
             self.account_adaptation_count = checkpoint.get('account_adaptation_count', 0)
             
         except FileNotFoundError:

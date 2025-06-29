@@ -47,7 +47,7 @@ class VoiceSynthesizer:
         
         # Voice configuration
         self.voice_settings = VoiceSettings(
-            voice_id=self.config.get('voice_id', 'alex_trader'),
+            voice_id=self.config.get('voice_id', 'rex_trader'),
             speed=self.config.get('speed', 1.0),
             pitch=self.config.get('pitch', 1.0),
             volume=self.config.get('volume', 0.8)

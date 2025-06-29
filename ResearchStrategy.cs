@@ -65,7 +65,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 				    BarsRequiredToTrade = 1;
 				    
 				    // CRITICAL: Allow multiple entries in same direction for scaling
-				    EntriesPerDirection = 10;  // Allow up to 10 entries per direction
+				    EntriesPerDirection = 3;  // Allow up to 10 entries per direction
 				    EntryHandling = EntryHandling.AllEntries;  // Process all entries until limit reached
 				    break;
 				
@@ -357,7 +357,7 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        double marginUsed         = Account.Get(AccountItem.InitialMargin,         Currency.UsDollar);
 		        double availableMargin    = currentBuyingPower;
 	
-		        if (currentBalance     <= 0) currentBalance     = 25000;
+		        if (currentBalance     <= 0) currentBalance     = 1000;
 		        if (currentBuyingPower <= 0) currentBuyingPower = currentBalance;
 		        if (netLiquidation     <= 0) netLiquidation     = currentBalance;
 	
@@ -493,7 +493,7 @@ namespace NinjaTrader.NinjaScript.Strategies
                 
                 // Check position size limits - but allow position reversals
                 int currentPosition = Math.Abs(Position.Quantity);
-                if (currentPosition >= 10)
+                if (currentPosition >= 3)
                 {
                     // Only block if we're trying to ADD to the same direction
                     if ((action == 1 && Position.MarketPosition == MarketPosition.Long) ||

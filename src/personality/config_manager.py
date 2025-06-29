@@ -293,7 +293,7 @@ class PersonalityConfigManager:
         # Extract personality configuration
         personality_data = config_data.get('personality', {})
         personality_config = PersonalityConfig(
-            personality_name=personality_data.get('personality_name', 'Alex'),
+            personality_name=personality_data.get('personality_name', 'Rex'),
             base_confidence=personality_data.get('base_confidence', 0.6),
             emotional_sensitivity=personality_data.get('emotional_sensitivity', 0.8),
             memory_weight=personality_data.get('memory_weight', 0.3),
@@ -313,7 +313,7 @@ class PersonalityConfigManager:
         integration_data = config_data.get('integration', {})
         integration_config = PersonalityIntegrationConfig(
             enabled=personality_data.get('enabled', True),
-            personality_name=personality_data.get('personality_name', 'Alex'),
+            personality_name=personality_data.get('personality_name', 'Rex'),
             voice_enabled=config_data.get('voice', {}).get('enabled', False),
             auto_commentary=personality_data.get('auto_commentary', True),
             commentary_interval=personality_data.get('commentary_interval', 120.0),
@@ -357,7 +357,7 @@ class PersonalityConfigManager:
                 'enabled': False,
                 'service': 'elevenlabs',
                 'api_key': '',
-                'voice_id': 'alex_trader',
+                'voice_id': 'rex_trader',
                 'speed': 1.0,
                 'pitch': 1.0,
                 'volume': 0.8
@@ -387,8 +387,8 @@ class PersonalityConfigManager:
                 'test_mode': False
             },
             personality_presets={
-                'alex': {
-                    'name': 'Alex',
+                'rex': {
+                    'name': 'Rex',
                     'traits': ['analytical', 'honest', 'adaptive', 'risk-aware'],
                     'base_confidence': 0.6,
                     'risk_tolerance': 0.5,

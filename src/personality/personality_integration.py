@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class PersonalityIntegrationConfig:
     enabled: bool = True
-    personality_name: str = "Alex"
+    personality_name: str = "Rex"
     voice_enabled: bool = False
     auto_commentary: bool = True
     commentary_interval: float = 120.0  # seconds

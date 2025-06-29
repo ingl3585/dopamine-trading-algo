@@ -42,7 +42,7 @@ class TriggerEvent(Enum):
 
 @dataclass
 class PersonalityConfig:
-    personality_name: str = "Alex"
+    personality_name: str = "Rex"
     base_confidence: float = 0.6
     emotional_sensitivity: float = 0.8
     memory_weight: float = 0.3

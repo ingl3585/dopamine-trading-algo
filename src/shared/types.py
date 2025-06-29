@@ -29,8 +29,8 @@ class TradeOutcome:
     
 @dataclass
 class AccountInfo:
-    cash: float = 25000.0
-    buying_power: float = 25000.0
+    cash: float = 1000.0
+    buying_power: float = 1000.0
     position_size: float = 0.0
     unrealized_pnl: float = 0.0
     realized_pnl: float = 0.0
