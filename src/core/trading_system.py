@@ -167,6 +167,8 @@ class TradingSystem:
                 logger.info(f"Intelligence: DNA={features.dna_signal:.3f}, "
                            f"Temporal={features.temporal_signal:.3f}, "
                            f"Immune={features.immune_signal:.3f}, "
+                           f"Micro={features.microstructure_signal:.3f}, "
+                           f"Dopamine={features.dopamine_signal:.3f}, "
                            f"Overall={features.overall_signal:.3f}, "
                            f"Confidence={features.confidence:.3f}")
             
@@ -307,7 +309,8 @@ class TradingSystem:
             logger.info(f"Intelligence: DNA={intelligence_stats['dna_patterns']}, "
                        f"Micro={intelligence_stats['micro_patterns']}, "
                        f"Temporal={intelligence_stats['temporal_patterns']}, "
-                       f"Immune={intelligence_stats['immune_patterns']}")
+                       f"Immune={intelligence_stats['immune_patterns']}, "
+                       f"Dopamine={intelligence_stats['dopamine_signals']}")
             
             # Connection status
             logger.info(f"TCP: {self.tcp_server.data_received} data messages, "
@@ -374,7 +377,8 @@ class TradingSystem:
             logger.info(f"Intelligence Patterns: DNA={intelligence_stats['dna_patterns']}, "
                        f"Micro={intelligence_stats['micro_patterns']}, "
                        f"Temporal={intelligence_stats['temporal_patterns']}, "
-                       f"Immune={intelligence_stats['immune_patterns']}")
+                       f"Immune={intelligence_stats['immune_patterns']}, "
+                       f"Dopamine={intelligence_stats['dopamine_signals']}")
             
             # Advanced risk metrics
             logger.info(f"Risk Regime: {risk_summary.get('current_regime', 'unknown')}")

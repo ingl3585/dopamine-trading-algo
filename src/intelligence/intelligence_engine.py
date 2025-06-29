@@ -1046,6 +1046,10 @@ class IntelligenceEngine:
         if isinstance(microstructure_features, dict):
             micro_patterns_count = microstructure_features.get('pattern_count', 0)
         
+        # Get dopamine subsystem stats
+        dopamine_signal_count = len(self.dopamine_subsystem.signal_history) if hasattr(self.dopamine_subsystem, 'signal_history') else 0
+        current_dopamine = getattr(self.dopamine_subsystem, 'current_dopamine_signal', 0.0)
+        
         return {
             'total_patterns': len(self.patterns),
             'recent_performance': np.mean(self.recent_outcomes) if self.recent_outcomes else 0,
@@ -1058,6 +1062,8 @@ class IntelligenceEngine:
             'micro_patterns': micro_patterns_count,
             'temporal_patterns': temporal_cycles,
             'immune_patterns': immune_stats.get('total_antibodies', 0),
+            'dopamine_signals': dopamine_signal_count,
+            'current_dopamine': current_dopamine,
             # Detailed subsystem stats
             'orchestrator': orchestrator_stats,
             'adaptation': adaptation_stats,
