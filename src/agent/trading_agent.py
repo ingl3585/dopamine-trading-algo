@@ -1333,7 +1333,7 @@ class TradingAgent:
                 }
                 
                 # Compute and apply the heavy penalty immediately using the rejection engine
-                violation_reward = self.meta_learner.reward_engine.compute_rejection_reward('position_limit', violation_data)
+                violation_reward = self.meta_learner.reward_engine.compute_rejection_reward('position_limit', violation_trade_data)
                 logger.warning(f"Position limit violation: Applied reward penalty: {violation_reward}")
                 
                 # Add to meta-learner outcome history for learning

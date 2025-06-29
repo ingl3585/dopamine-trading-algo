@@ -123,7 +123,7 @@ class RiskManager:
             }
             
             # Use the new reward engine for consistent rejection rewards
-            negative_reward = -15.0 * violation_data['violation_severity']
+            negative_reward = -0.05 * violation_data['violation_severity']
             # The reward engine will handle escalation internally
             
             # Update meta-learner with negative feedback
@@ -143,7 +143,6 @@ class RiskManager:
                 self.risk_learning.learn_from_violation('position_limit', violation_data, negative_reward)
             
             logger.info(f"Learning from position limit violation: reward={negative_reward:.3f} "
-                       f"(base={base_penalty:.1f} * {escalation_multiplier:.1f}x), "
                        f"recent_violations={self.recent_violations}, "
                        f"tool={violation_data['primary_tool']}, exploration={violation_data['exploration_mode']}")
             
