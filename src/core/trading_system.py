@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 try:
     from src.personality.config_manager import PersonalityConfigManager
     from src.personality.trading_personality import TradingPersonality, TriggerEvent
+    from src.personality.personality_integration import PersonalityIntegration, PersonalityIntegrationConfig
     PERSONALITY_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"Personality system not available: {e}")
@@ -53,20 +54,32 @@ class TradingSystem:
         self.last_account_balance = 0.0
         self.account_change_threshold = 0.05
         
-        # AI Trading Personality Integration
+        # AI Trading Personality Integration with Enhanced Context
         self.personality = None
+        self.personality_integration = None
         if PERSONALITY_AVAILABLE:
             try:
                 personality_config_manager = PersonalityConfigManager()
-                personality_config = personality_config_manager.get_personality_config()
-                if personality_config_manager.get_integration_config().enabled:
-                    self.personality = TradingPersonality(personality_config)
-                    logger.info(f"AI Trading Personality '{personality_config.personality_name}' initialized")
+                integration_config = personality_config_manager.get_integration_config()
+                if integration_config.enabled:
+                    # Use enhanced PersonalityIntegration for better context
+                    integration_config_obj = PersonalityIntegrationConfig(
+                        enabled=True,
+                        personality_name=integration_config.personality_name,
+                        auto_commentary=integration_config.auto_commentary,
+                        llm_model=integration_config.llm_model,
+                        llm_api_key=integration_config.llm_api_key
+                    )
+                    self.personality_integration = PersonalityIntegration(integration_config_obj)
+                    # Keep backward compatibility
+                    self.personality = self.personality_integration.personality
+                    logger.info(f"Enhanced AI Trading Personality '{integration_config.personality_name}' initialized")
                 else:
                     logger.info("AI Trading Personality disabled in configuration")
             except Exception as e:
                 logger.error(f"Failed to initialize AI Trading Personality: {e}")
                 self.personality = None
+                self.personality_integration = None
         
         # Load previous state if available
         self._load_state()
@@ -170,10 +183,66 @@ class TradingSystem:
             decision = self.agent.decide(features, market_data)
             self.total_decisions += 1
             
-            # Always log decision details
+            # Enhanced decision logging with confidence monitoring
+            confidence_status = "CRITICAL" if decision.confidence < 0.2 else "LOW" if decision.confidence < 0.4 else "NORMAL"
+            confidence_change = ""
+            
+            # Track confidence changes
+            if hasattr(self.agent, '_last_logged_confidence'):
+                change = decision.confidence - self.agent._last_logged_confidence
+                confidence_change = f" ({change:+.3f})"
+            self.agent._last_logged_confidence = decision.confidence
+            
+            # Log detailed confidence information
             logger.info(f"Decision #{self.total_decisions}: {decision.action.upper()} "
-                       f"(Size: {decision.size:.1f}, Conf: {decision.confidence:.3f}, "
+                       f"(Size: {decision.size:.1f}, Conf: {decision.confidence:.3f}{confidence_change} [{confidence_status}], "
                        f"Tool: {decision.primary_tool}, Exploration: {decision.exploration})")
+            
+            # Additional confidence monitoring for problematic values
+            if decision.confidence < 0.3:
+                recent_rejections = getattr(self.agent, 'recent_position_rejections', 0)
+                recovery_factor = getattr(self.agent, 'confidence_recovery_factor', 1.0)
+                logger.warning(f"LOW CONFIDENCE DETECTED: {decision.confidence:.3f} "
+                              f"(Recent rejections: {recent_rejections}, Recovery factor: {recovery_factor:.2f})")
+                
+                # Log confidence recovery status
+                if hasattr(self.agent, 'last_position_rejection_time') and self.agent.last_position_rejection_time > 0:
+                    time_since_rejection = time.time() - self.agent.last_position_rejection_time
+                    logger.info(f"Time since last rejection: {time_since_rejection/60:.1f} minutes")
+            
+            # ENHANCED: Generate personality commentary with full agent context
+            if self.personality_integration and self.personality_integration.is_enabled():
+                try:
+                    import asyncio
+                    import threading
+                    
+                    # Run async commentary in a separate thread to avoid blocking
+                    def run_commentary():
+                        try:
+                            # Create new event loop for this thread
+                            loop = asyncio.new_event_loop()
+                            asyncio.set_event_loop(loop)
+                            
+                            # Run the commentary generation
+                            commentary = loop.run_until_complete(
+                                self.personality_integration.process_trading_decision(
+                                    decision, features, market_data, self.agent
+                                )
+                            )
+                            
+                            if commentary:
+                                logger.info(f"[COMMENTARY] {commentary}")
+                            
+                            loop.close()
+                        except Exception as e:
+                            logger.warning(f"Personality commentary thread failed: {e}")
+                    
+                    # Start commentary in background thread
+                    commentary_thread = threading.Thread(target=run_commentary, daemon=True)
+                    commentary_thread.start()
+                    
+                except Exception as e:
+                    logger.warning(f"Personality commentary failed: {e}")
             
             if decision.action == 'hold':
                 return
@@ -293,11 +362,25 @@ class TradingSystem:
                        f"Win rate: {portfolio_summary['win_rate']:.1%}, "
                        f"Daily P&L: ${portfolio_summary['daily_pnl']:.2f}")
             
-            # Agent status
+            # Agent status with enhanced confidence monitoring
             agent_stats = self.agent.get_stats()
+            recent_rejections = getattr(self.agent, 'recent_position_rejections', 0)
+            confidence_factor = getattr(self.agent, 'confidence_recovery_factor', 1.0)
+            last_confidence = getattr(self.agent, '_last_logged_confidence', 0.5)
+            
             logger.info(f"Agent: {agent_stats['total_decisions']} decisions, "
                        f"Success rate: {agent_stats['success_rate']:.1%}, "
                        f"Learning efficiency: {agent_stats['learning_efficiency']:.1%}")
+            logger.info(f"Confidence: Last={last_confidence:.3f}, Recovery factor={confidence_factor:.2f}, "
+                       f"Recent rejections={recent_rejections}")
+            
+            # Confidence health check
+            if last_confidence < 0.3:
+                logger.warning(f"CONFIDENCE HEALTH: POOR - System may have reduced trading activity")
+            elif last_confidence < 0.5:
+                logger.info(f"CONFIDENCE HEALTH: MODERATE - Monitoring recovery progress")
+            else:
+                logger.info(f"CONFIDENCE HEALTH: GOOD - System operating normally")
             
             # Intelligence status
             intelligence_stats = self.intelligence.get_stats()
@@ -625,34 +708,10 @@ class TradingSystem:
                 }
             }
             
-            # Trigger async commentary (don't wait for it)
-            import asyncio
-            try:
-                # Try to run in existing event loop
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # Schedule as task in running loop
-                    loop.create_task(self._async_personality_system_commentary(context))
-                else:
-                    # Create new event loop
-                    asyncio.run(self._async_personality_system_commentary(context))
-            except RuntimeError:
-                # No event loop, create new one
-                asyncio.run(self._async_personality_system_commentary(context))
+            # Old periodic commentary system removed - using enhanced real-time system instead
+            pass
                 
         except Exception as e:
             logger.error(f"Error triggering personality system update: {e}")
 
-    async def _async_personality_system_commentary(self, context):
-        """Async handler for periodic personality commentary"""
-        try:
-            commentary = await self.personality.process_trading_event(TriggerEvent.PERIODIC_UPDATE, context)
-            if commentary:
-                # Log the commentary prominently 
-                logger.info(f"AI {self.personality.config.personality_name}: {commentary.text}")
-                
-                # Also print to console for immediate visibility
-                print(f"\n[{self.personality.config.personality_name}]: {commentary.text}\n")
-                
-        except Exception as e:
-            logger.error(f"Error in async personality system commentary: {e}")
+    # Removed old periodic commentary system - now using enhanced real-time system

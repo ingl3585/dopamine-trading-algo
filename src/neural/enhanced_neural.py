@@ -9,6 +9,33 @@ from collections import deque
 import math
 
 
+class BoundedSigmoid(nn.Module):
+    """Sigmoid activation with configurable bounds to prevent extreme values"""
+    def __init__(self, min_value: float = 0.1, max_value: float = 1.0):
+        super().__init__()
+        self.min_value = min_value
+        self.max_value = max_value
+        self.range = max_value - min_value
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Standard sigmoid scaled to [min_value, max_value] range
+        result = torch.sigmoid(x) * self.range + self.min_value
+        
+        # DEBUG: Log if output is below minimum (should never happen)
+        if torch.any(result < self.min_value - 1e-6):
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"BoundedSigmoid error: output {result.min().item():.6f} below min {self.min_value}")
+            logger.error(f"Input tensor: {x}")
+            logger.error(f"Sigmoid output: {torch.sigmoid(x)}")
+            logger.error(f"Range: {self.range}, Min: {self.min_value}")
+        
+        # CRITICAL FIX: Ensure result never goes below minimum
+        result = torch.clamp(result, min=self.min_value, max=self.max_value)
+        
+        return result
+
+
 class MultiHeadAttention(nn.Module):
     def __init__(self, d_model: int, num_heads: int = 4, dropout: float = 0.1):
         super().__init__()
@@ -236,7 +263,7 @@ class SelfEvolvingNetwork(nn.Module):
             nn.Linear(prev_size, prev_size // 2),
             nn.ReLU(),
             nn.Linear(prev_size // 2, 1),
-            nn.Sigmoid()
+            BoundedSigmoid(min_value=0.1, max_value=1.0)
         )
         
         self.position_head = nn.Sequential(

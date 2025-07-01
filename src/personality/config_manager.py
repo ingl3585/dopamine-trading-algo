@@ -26,7 +26,6 @@ class PersonalitySystemConfig:
     
     # Component configurations
     llm_config: Dict[str, Any]
-    voice_config: Dict[str, Any]
     emotional_config: Dict[str, Any]
     memory_config: Dict[str, Any]
     commentary_config: Dict[str, Any]
@@ -80,35 +79,6 @@ class PersonalityConfigManager:
             self.default_config_loaded = True
             return False
     
-    def save_config(self) -> bool:
-        """
-        Save current configuration to file
-        
-        Returns:
-            bool: Success status
-        """
-        
-        if not self.config:
-            logger.error("No configuration to save")
-            return False
-        
-        try:
-            # Convert config to serializable format
-            config_data = self._config_to_dict(self.config)
-            
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
-            
-            # Save to file
-            with open(self.config_file, 'w') as f:
-                json.dump(config_data, f, indent=2)
-            
-            logger.info(f"Saved personality configuration to {self.config_file}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error saving personality configuration: {e}")
-            return False
     
     def get_personality_config(self, personality_name: str = None) -> PersonalityConfig:
         """
@@ -134,7 +104,6 @@ class PersonalityConfigManager:
                 emotional_sensitivity=self.config.emotional_config.get('fear_sensitivity', 0.8),
                 memory_weight=preset.get('memory_weight', 0.3),
                 consistency_preference=preset.get('consistency_preference', 0.8),
-                voice_enabled=self.config.voice_config.get('enabled', False),
                 max_commentary_length=self.config.commentary_config.get('max_length', 200),
                 min_commentary_interval=self.config.commentary_config.get('min_interval', 30.0),
                 llm_model=self.config.llm_config.get('model_name', 'gpt-4'),
@@ -152,9 +121,6 @@ class PersonalityConfigManager:
         """Get LLM configuration"""
         return self.config.llm_config if self.config else {}
     
-    def get_voice_config(self) -> Dict[str, Any]:
-        """Get voice synthesis configuration"""
-        return self.config.voice_config if self.config else {}
     
     def get_emotional_config(self) -> Dict[str, Any]:
         """Get emotional engine configuration"""
@@ -186,62 +152,8 @@ class PersonalityConfigManager:
         
         return personalities
     
-    def update_personality_config(self, **kwargs) -> bool:
-        """
-        Update personality configuration
-        
-        Args:
-            **kwargs: Configuration parameters to update
-            
-        Returns:
-            bool: Success status
-        """
-        
-        if not self.config:
-            return False
-        
-        try:
-            # Update personality config
-            for key, value in kwargs.items():
-                if hasattr(self.config.personality, key):
-                    setattr(self.config.personality, key, value)
-            
-            logger.info("Updated personality configuration")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error updating personality configuration: {e}")
-            return False
     
-    def update_llm_config(self, **kwargs) -> bool:
-        """Update LLM configuration"""
-        
-        if not self.config:
-            return False
-        
-        try:
-            self.config.llm_config.update(kwargs)
-            logger.info("Updated LLM configuration")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error updating LLM configuration: {e}")
-            return False
     
-    def update_voice_config(self, **kwargs) -> bool:
-        """Update voice configuration"""
-        
-        if not self.config:
-            return False
-        
-        try:
-            self.config.voice_config.update(kwargs)
-            logger.info("Updated voice configuration")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error updating voice configuration: {e}")
-            return False
     
     def validate_config(self) -> tuple[bool, list[str]]:
         """
@@ -270,10 +182,6 @@ class PersonalityConfigManager:
         if self.config.llm_config.get('temperature', 0.7) < 0 or self.config.llm_config.get('temperature', 0.7) > 2:
             errors.append("LLM temperature must be between 0 and 2")
         
-        # Validate voice config
-        if self.config.voice_config.get('enabled', False):
-            if not self.config.voice_config.get('service'):
-                errors.append("Voice service is required when voice is enabled")
         
         # Validate memory config
         memory_file = self.config.memory_config.get('memory_file')
@@ -298,7 +206,6 @@ class PersonalityConfigManager:
             emotional_sensitivity=personality_data.get('emotional_sensitivity', 0.8),
             memory_weight=personality_data.get('memory_weight', 0.3),
             consistency_preference=personality_data.get('consistency_preference', 0.8),
-            voice_enabled=config_data.get('voice', {}).get('enabled', False),
             max_commentary_length=config_data.get('commentary', {}).get('max_length', 200),
             min_commentary_interval=config_data.get('commentary', {}).get('min_interval', 30.0),
             llm_model=config_data.get('llm', {}).get('model_name', 'gpt-4'),
@@ -314,22 +221,18 @@ class PersonalityConfigManager:
         integration_config = PersonalityIntegrationConfig(
             enabled=personality_data.get('enabled', True),
             personality_name=personality_data.get('personality_name', 'Alex'),
-            voice_enabled=config_data.get('voice', {}).get('enabled', False),
             auto_commentary=personality_data.get('auto_commentary', True),
             commentary_interval=personality_data.get('commentary_interval', 120.0),
             log_commentary=personality_data.get('log_commentary', True),
             save_commentary_history=personality_data.get('save_commentary_history', True),
             llm_model=config_data.get('llm', {}).get('model_name', 'gpt-4'),
-            llm_api_key=config_data.get('llm', {}).get('api_key', ''),
-            voice_service=config_data.get('voice', {}).get('service', 'elevenlabs'),
-            voice_api_key=config_data.get('voice', {}).get('api_key', '')
+            llm_api_key=config_data.get('llm', {}).get('api_key', '')
         )
         
         return PersonalitySystemConfig(
             personality=personality_config,
             integration=integration_config,
             llm_config=config_data.get('llm', {}),
-            voice_config=config_data.get('voice', {}),
             emotional_config=config_data.get('emotional_engine', {}),
             memory_config=config_data.get('memory', {}),
             commentary_config=config_data.get('commentary', {}),
@@ -353,15 +256,6 @@ class PersonalityConfigManager:
                 'api_key': '',
                 'base_url': ''
             },
-            voice_config={
-                'enabled': False,
-                'service': 'elevenlabs',
-                'api_key': '',
-                'voice_id': 'alex_trader',
-                'speed': 1.0,
-                'pitch': 1.0,
-                'volume': 0.8
-            },
             emotional_config={
                 'base_confidence': 0.6,
                 'fear_sensitivity': 0.8,
@@ -382,7 +276,6 @@ class PersonalityConfigManager:
             },
             development_config={
                 'mock_llm': True,
-                'mock_voice': True,
                 'debug_logging': True,
                 'test_mode': False
             },
@@ -414,7 +307,6 @@ class PersonalityConfigManager:
                 'save_commentary_history': config.integration.save_commentary_history
             },
             'llm': config.llm_config,
-            'voice': config.voice_config,
             'emotional_engine': config.emotional_config,
             'memory': config.memory_config,
             'commentary': config.commentary_config,
@@ -434,7 +326,6 @@ class PersonalityConfigManager:
             'status': 'valid' if is_valid else 'invalid',
             'errors': errors,
             'personality_name': self.config.personality.personality_name,
-            'voice_enabled': self.config.voice_config.get('enabled', False),
             'llm_model': self.config.llm_config.get('model_name', 'unknown'),
             'available_personalities': list(self.config.personality_presets.keys()),
             'development_mode': self.config.development_config.get('test_mode', False),

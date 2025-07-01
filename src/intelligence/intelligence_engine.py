@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 from src.market_analysis.data_processor import MarketData
 from src.intelligence.subsystem_evolution import EnhancedIntelligenceOrchestrator
 from src.market_analysis.microstructure_analyzer import MarketMicrostructureEngine
-from src.agent.reward_engine import DopamineRewardComponent
+from src.intelligence.subsystems.enhanced_dopamine_subsystem import EnhancedDopamineSubsystem
 from src.shared.types import Features
 
 logger = logging.getLogger(__name__)
@@ -28,8 +28,8 @@ class IntelligenceEngine:
         # Microstructure analysis (4th subsystem)
         self.microstructure_engine = MarketMicrostructureEngine()
         
-        # Dopamine subsystem (5th subsystem) - P&L-based reward system
-        self.dopamine_subsystem = DopamineRewardComponent(config)
+        # Enhanced Dopamine subsystem (5th subsystem) - Complete trading psychology system
+        self.dopamine_subsystem = EnhancedDopamineSubsystem(config)
         
         # Real-time adaptation (lazy import to avoid circular dependency)
         self.adaptation_engine = None
@@ -1163,7 +1163,7 @@ class IntelligenceEngine:
                 'open_positions': getattr(data, 'open_positions', 0.0),
                 'current_price': data.prices_1m[-1] if data.prices_1m else 0.0
             }
-            dopamine_signal = self.dopamine_subsystem.process_pnl_update(dopamine_market_data)
+            dopamine_signal = self.dopamine_subsystem.get_simple_signal(dopamine_market_data)
 
         except Exception as e:
             logger.error(f"Error during subsystem processing in extract_features: {e}")
@@ -1173,7 +1173,7 @@ class IntelligenceEngine:
         subsystem_signals = [dna_signal, temporal_signal, immune_signal, microstructure_signal, dopamine_signal]
         consensus_strength = self._calculate_enhanced_consensus(subsystem_signals)
         
-        weights = [0.25, 0.2, 0.15, 0.2, 0.2]  # DNA, Temporal, Immune, Microstructure, Dopamine
+        weights = [0.2, 0.15, 0.1, 0.15, 0.4]  # DNA, Temporal, Immune, Microstructure, Enhanced Dopamine (STAR!)
         overall_signal = sum(signal * weight for signal, weight in zip(subsystem_signals, weights))
         
         signal_strength = sum(abs(s) for s in subsystem_signals)

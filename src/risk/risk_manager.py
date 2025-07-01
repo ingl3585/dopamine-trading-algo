@@ -40,6 +40,7 @@ class RiskManager:
         # Track violation history for escalating penalties
         self.violation_history = deque(maxlen=50)
         self.recent_violations = 0  # Count of violations in recent time window
+        self.last_violation_time = 0.0  # Prevent duplicate violation processing
         
     def validate_order(self, decision: Decision, market_data: MarketData) -> Optional[Order]:
         if decision.action == 'hold':
@@ -104,14 +105,20 @@ class RiskManager:
     def _learn_from_position_limit_rejection(self, decision, market_data, current_position, max_contracts):
         """Provide learning feedback when orders are rejected due to position limits"""
         try:
-            # Record this violation for escalating penalty tracking
+            # Prevent duplicate processing of the same violation
             current_time = time.time()
+            if current_time - self.last_violation_time < 1.0:  # Within 1 second = duplicate
+                logger.debug("Skipping duplicate position limit violation processing")
+                return
+            
+            # Record this violation for escalating penalty tracking
             self.violation_history.append(current_time)
+            self.last_violation_time = current_time
             
             # Count recent violations (last 10 minutes)
             self.recent_violations = sum(1 for t in self.violation_history if current_time - t < 600)
             
-            # Create negative reward for position limit violations
+            # Create violation data for tracking (NO PENALTY HERE - handled by trading agent)
             violation_data = {
                 'decision_confidence': decision.confidence,
                 'current_position': current_position,
@@ -119,30 +126,19 @@ class RiskManager:
                 'violation_severity': abs(current_position) / max_contracts,
                 'primary_tool': getattr(decision, 'primary_tool', 'unknown'),
                 'exploration_mode': getattr(decision, 'exploration', False),
-                'recent_violations': self.recent_violations
+                'recent_violations': self.recent_violations,
+                'account_balance': getattr(market_data, 'account_balance', 10000)
             }
             
-            # Use the new reward engine for consistent rejection rewards
-            negative_reward = -0.05 * violation_data['violation_severity']
-            # The reward engine will handle escalation internally
-            
-            # Update meta-learner with negative feedback
-            if hasattr(self.meta_learner, 'update_position_limit_awareness'):
-                self.meta_learner.update_position_limit_awareness(violation_data, negative_reward)
-            
-            # CRITICAL: Send immediate feedback to the trading agent
+            # SINGLE PENALTY POINT: Only send to trading agent (consolidates all penalty logic)
             if self.agent and hasattr(self.agent, 'learn_from_rejection'):
-                self.agent.learn_from_rejection('position_limit', violation_data, negative_reward)
+                self.agent.learn_from_rejection('position_limit', violation_data, 0.0)  # No reward here
             
-            # Also send feedback to the main agent for learning (legacy)
-            if hasattr(self.meta_learner, 'learn_from_rejection'):
-                self.meta_learner.learn_from_rejection('position_limit', violation_data, negative_reward)
+            # Track violation for risk learning (tracking only, no penalty)
+            if hasattr(self.risk_learning, 'track_violation'):
+                self.risk_learning.track_violation('position_limit', violation_data)
             
-            # Update risk learning engine
-            if hasattr(self.risk_learning, 'learn_from_violation'):
-                self.risk_learning.learn_from_violation('position_limit', violation_data, negative_reward)
-            
-            logger.info(f"Learning from position limit violation: reward={negative_reward:.3f} "
+            logger.info(f"Learning from position limit violation: "
                        f"recent_violations={self.recent_violations}, "
                        f"tool={violation_data['primary_tool']}, exploration={violation_data['exploration_mode']}")
             

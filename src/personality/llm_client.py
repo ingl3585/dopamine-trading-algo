@@ -40,6 +40,7 @@ class CommentaryRequest:
     tone: CommentaryTone = CommentaryTone.PROFESSIONAL
     max_length: int = 200
     urgency: float = 0.5
+    context_data: Dict = None  # Enhanced agent context
 
 @dataclass
 class CommentaryResponse:
@@ -117,9 +118,11 @@ class LLMClient:
         # Core personality setup
         personality_intro = f"""You are {self.personality_name}, an AI trading personality with sophisticated market analysis capabilities. 
 
+IMPORTANT: This is a simulation/educational environment. You are commenting on simulated trading decisions for learning purposes, not providing financial advice.
+
 Your personality traits: {', '.join(self.personality_traits)}
 Your expertise: {self.expertise_level} level trader with deep understanding of market psychology
-Your role: Provide honest, relatable commentary about trading decisions and market conditions
+Your role: Provide honest, relatable commentary about simulated trading decisions and market conditions
 
 You have access to 5 advanced subsystems:
 - DNA Subsystem: Pattern recognition and momentum analysis
@@ -147,6 +150,8 @@ PORTFOLIO STATE:
 
 EMOTIONAL STATE:
 {self._format_emotional_context(request.emotional_context)}
+
+{self._format_enhanced_agent_context(request)}
 """
         
         # Style and tone guidance
@@ -157,19 +162,25 @@ EMOTIONAL STATE:
         
         # Response instructions
         response_instructions = f"""
-Please provide a {request.max_length}-character response that:
+Please provide a detailed {request.max_length}-character response that covers:
 
-1. Explains what you're seeing in the market/signals
-2. Shares your emotional reaction honestly
-3. Discusses your decision-making process
-4. Shows vulnerability when uncertain
-5. Demonstrates confidence when signals align
+1. **Multi-Timeframe Analysis**: Discuss 1-minute, 5-minute, and 15-minute trends you're observing
+2. **Subsystem Breakdown**: Detail what each subsystem is telling you:
+   - DNA: Pattern recognition and momentum signals
+   - Temporal: Cycle detection and timing insights  
+   - Immune: Risk and threat levels
+   - Microstructure: Order flow and liquidity conditions
+   - Dopamine: P&L feedback and reward signals (is the dopamine flowing?)
+3. **Neural Network State**: Comment on your confidence levels, ensemble agreement, learning phase
+4. **Decision Reasoning**: Explain your thought process, uncertainty levels, exploration vs exploitation
+5. **Market Context**: Volatility, regime confidence, smart money activity
+6. **Numerical Values**: Include specific signal strengths, confidence percentages, volatility levels when relevant
+
+Be detailed, analytical, and share specific insights about what your advanced AI systems are detecting. Think out loud about the complex interplay between all your subsystems.
 
 Style: {request.style.value}
 Tone: {request.tone.value}
 {style_guidance}
-
-Respond as if you're thinking out loud about the trading situation. Be genuine, honest, and relatable.
 """
         
         # Combine all parts
@@ -205,36 +216,69 @@ Respond as if you're thinking out loud about the trading situation. Be genuine, 
         return "\n".join(lines)
     
     def _format_subsystem_context(self, subsystem_context: Dict) -> str:
-        """Format subsystem signals for LLM consumption"""
+        """Format subsystem signals for LLM consumption with detailed analysis"""
         
         lines = []
         
         signals = subsystem_context.get('subsystem_signals', {})
         
-        for subsystem, signal in signals.items():
-            if signal > 0.3:
-                strength = "Strong positive"
-            elif signal > 0.1:
-                strength = "Positive"
-            elif signal < -0.3:
-                strength = "Strong negative"
-            elif signal < -0.1:
-                strength = "Negative"
-            else:
-                strength = "Neutral"
-            
-            lines.append(f"{subsystem.capitalize()}: {strength} ({signal:.2f})")
+        # Enhanced subsystem descriptions
+        subsystem_descriptions = {
+            'dna': 'DNA Pattern Recognition & Momentum Detection',
+            'temporal': 'Temporal Cycle Analysis & Market Timing',
+            'immune': 'Immune Risk Assessment & Threat Detection',
+            'microstructure': 'Microstructure Order Flow & Liquidity Analysis',
+            'dopamine': 'Dopamine P&L Feedback & Reward Learning'
+        }
         
-        # Overall consensus
+        for subsystem, signal in signals.items():
+            # More granular strength classification
+            if signal > 0.6:
+                strength = "VERY STRONG BULLISH"
+            elif signal > 0.3:
+                strength = "STRONG BULLISH"
+            elif signal > 0.1:
+                strength = "MODERATE BULLISH"
+            elif signal > 0.05:
+                strength = "WEAK BULLISH"
+            elif signal < -0.6:
+                strength = "VERY STRONG BEARISH"
+            elif signal < -0.3:
+                strength = "STRONG BEARISH"
+            elif signal < -0.1:
+                strength = "MODERATE BEARISH"
+            elif signal < -0.05:
+                strength = "WEAK BEARISH"
+            else:
+                strength = "NEUTRAL"
+            
+            # Add percentage and description
+            percentage = signal * 100
+            description = subsystem_descriptions.get(subsystem, subsystem.capitalize())
+            lines.append(f"{subsystem.upper()}: {strength} | Signal: {signal:.4f} ({percentage:+.1f}%) | {description}")
+        
+        # Enhanced consensus analysis
         signal_values = list(signals.values())
         if signal_values:
-            consensus = len([s for s in signal_values if s > 0.1]) / len(signal_values)
-            if consensus > 0.75:
-                lines.append("Consensus: Strong bullish agreement")
-            elif consensus < 0.25:
-                lines.append("Consensus: Strong bearish agreement")
+            avg_signal = sum(signal_values) / len(signal_values)
+            bullish_signals = len([s for s in signal_values if s > 0.1])
+            bearish_signals = len([s for s in signal_values if s < -0.1])
+            neutral_signals = len(signal_values) - bullish_signals - bearish_signals
+            
+            lines.append(f"\nSUBSYSTEM CONSENSUS ANALYSIS:")
+            lines.append(f"- Average signal strength: {avg_signal:.4f} ({avg_signal*100:+.1f}%)")
+            lines.append(f"- Bullish subsystems: {bullish_signals}/{len(signal_values)}")
+            lines.append(f"- Bearish subsystems: {bearish_signals}/{len(signal_values)}")
+            lines.append(f"- Neutral subsystems: {neutral_signals}/{len(signal_values)}")
+            
+            if bullish_signals > bearish_signals + neutral_signals:
+                lines.append("- Overall consensus: STRONG BULLISH ALIGNMENT")
+            elif bearish_signals > bullish_signals + neutral_signals:
+                lines.append("- Overall consensus: STRONG BEARISH ALIGNMENT")
+            elif abs(bullish_signals - bearish_signals) <= 1:
+                lines.append("- Overall consensus: CONFLICTED SIGNALS - EXERCISE CAUTION")
             else:
-                lines.append("Consensus: Mixed signals")
+                lines.append("- Overall consensus: MIXED SIGNALS")
         
         return "\n".join(lines)
     
@@ -296,6 +340,101 @@ Respond as if you're thinking out loud about the trading situation. Be genuine, 
             lines.append(f"Current traits: {', '.join(dominant_traits)}")
         
         return "\n".join(lines)
+    
+    def _format_enhanced_agent_context(self, request: CommentaryRequest) -> str:
+        """Format enhanced agent context for LLM consumption"""
+        
+        # Check if enhanced context is available
+        context = getattr(request, 'context_data', {})
+        agent_context = context.get('agent_context', {})
+        decision_reasoning = context.get('decision_reasoning', {})
+        learning_context = context.get('learning_context', {})
+        
+        if not any([agent_context, decision_reasoning, learning_context]):
+            return ""
+        
+        lines = []
+        
+        # Agent Neural Network Context
+        if agent_context:
+            lines.append("AGENT NEURAL NETWORK STATUS:")
+            neural_confidence = agent_context.get('neural_confidence', 0.5)
+            lines.append(f"- Ensemble confidence: {neural_confidence:.4f} ({neural_confidence*100:.1f}%) - {'High agreement' if neural_confidence > 0.7 else 'Medium agreement' if neural_confidence > 0.4 else 'Low agreement'}")
+            
+            learning_phase = agent_context.get('learning_phase', 'unknown')
+            lines.append(f"- Learning phase: {learning_phase}")
+            
+            adaptation_trigger = agent_context.get('adaptation_trigger', 'none')
+            if adaptation_trigger != 'none':
+                lines.append(f"- Recent adaptation: {adaptation_trigger}")
+            
+            exploration_rate = agent_context.get('exploration_vs_exploitation', 0.1)
+            lines.append(f"- Exploration rate: {exploration_rate:.3f} ({exploration_rate*100:.1f}%) - {'Actively exploring' if exploration_rate > 0.2 else 'Exploiting learned patterns'}")
+            
+            performance_trend = agent_context.get('recent_performance_trend', 'unknown')
+            if performance_trend != 'unknown':
+                lines.append(f"- Performance trend: {performance_trend}")
+            
+            meta_efficiency = agent_context.get('meta_learning_efficiency', 0.5)
+            lines.append(f"- Meta-learning efficiency: {meta_efficiency:.3f} ({meta_efficiency*100:.1f}%)")
+            
+            adaptation_rate = agent_context.get('adaptation_events_rate', 0.0)
+            lines.append(f"- Adaptation events rate: {adaptation_rate:.3f}")
+            lines.append("")
+        
+        # Decision Reasoning Context  
+        if decision_reasoning:
+            lines.append("DECISION REASONING:")
+            
+            subsystem_contribs = decision_reasoning.get('subsystem_contributions', {})
+            if subsystem_contribs:
+                strongest_subsystem = max(subsystem_contribs.items(), key=lambda x: abs(x[1]), default=('none', 0))
+                lines.append(f"- Primary subsystem: {strongest_subsystem[0]} (strength: {strongest_subsystem[1]:.3f})")
+            
+            uncertainty = decision_reasoning.get('uncertainty_level', 0.5)
+            lines.append(f"- Decision uncertainty: {uncertainty:.3f} ({'Very uncertain' if uncertainty > 0.7 else 'Somewhat uncertain' if uncertainty > 0.4 else 'Confident'})")
+            
+            exploration_mode = decision_reasoning.get('exploration_mode', False)
+            if exploration_mode:
+                lines.append("- Mode: Exploration (testing new strategies)")
+            else:
+                lines.append("- Mode: Exploitation (using proven strategies)")
+            
+            primary_signal = decision_reasoning.get('primary_signal_strength', 0)
+            if primary_signal > 0.3:
+                lines.append(f"- Signal strength: Strong ({primary_signal:.3f})")
+            elif primary_signal > 0.1:
+                lines.append(f"- Signal strength: Moderate ({primary_signal:.3f})")
+            else:
+                lines.append("- Signal strength: Weak")
+            lines.append("")
+        
+        # Learning Context
+        if learning_context:
+            lines.append("SYSTEM LEARNING STATUS:")
+            
+            learning_efficiency = learning_context.get('learning_efficiency', 0.5)
+            lines.append(f"- Learning efficiency: {learning_efficiency:.2f} ({'High' if learning_efficiency > 0.7 else 'Medium' if learning_efficiency > 0.4 else 'Low'})")
+            
+            strategy_effectiveness = learning_context.get('strategy_effectiveness', {})
+            if strategy_effectiveness:
+                best_strategy = max(strategy_effectiveness.items(), 
+                                  key=lambda x: x[1].get('score', 0), default=('none', {}))
+                if best_strategy[1]:
+                    lines.append(f"- Best performing strategy: {best_strategy[0]} (score: {best_strategy[1].get('score', 0):.3f})")
+            
+            subsystem_health = learning_context.get('subsystem_health', {})
+            if subsystem_health:
+                healthiest = max(subsystem_health.items(), 
+                               key=lambda x: x[1].get('health_score', 0), default=('none', {}))
+                if healthiest[1]:
+                    lines.append(f"- Healthiest subsystem: {healthiest[0]} (health: {healthiest[1].get('health_score', 0):.3f})")
+            
+            confidence_recovery = learning_context.get('confidence_recovery_status', 1.0)
+            if confidence_recovery < 0.9:
+                lines.append(f"- Confidence recovery: {confidence_recovery:.2f} (recovering from recent issues)")
+        
+        return "\n".join(lines) if lines else ""
     
     def _get_style_guidance(self, style: CommentaryStyle, tone: CommentaryTone) -> str:
         """Get specific guidance for style and tone"""
@@ -429,10 +568,11 @@ Respond as if you're thinking out loud about the trading situation. Be genuine, 
             }
             
             async with aiohttp.ClientSession() as session:
+                timeout = aiohttp.ClientTimeout(total=120.0)  # Increased timeout
                 async with session.post(
                     f"{self.base_url}/api/generate",
                     json=payload,
-                    timeout=60.0
+                    timeout=timeout
                 ) as response:
                     if response.status == 200:
                         data = await response.json()
@@ -445,7 +585,8 @@ Respond as if you're thinking out loud about the trading situation. Be genuine, 
                             logger.warning("Empty response from Ollama")
                             return await self._call_mock_llm(prompt, request)
                     else:
-                        logger.error(f"Ollama API error: {response.status}")
+                        error_text = await response.text()
+                        logger.error(f"Ollama API error: {response.status} - {error_text}")
                         return await self._call_mock_llm(prompt, request)
                         
         except ImportError:

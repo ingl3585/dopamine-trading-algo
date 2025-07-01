@@ -403,23 +403,6 @@ class RegimeDetector:
         
         return np.mean(list(regime_scores.values()))
     
-    def update_regime_thresholds(self, recent_performance: List[float]):
-        # Adaptive thresholds based on performance
-        if len(recent_performance) < 10:
-            return
-        
-        avg_performance = np.mean(recent_performance)
-        
-        # If performance is poor, adjust thresholds to be more conservative
-        if avg_performance < -0.1:
-            self.vol_thresholds['low'] *= 0.9
-            self.vol_thresholds['medium'] *= 0.95
-            self.trend_thresholds['ranging'] *= 1.1
-        elif avg_performance > 0.1:
-            # Good performance, can be slightly more aggressive
-            self.vol_thresholds['low'] *= 1.05
-            self.vol_thresholds['medium'] *= 1.02
-            self.trend_thresholds['ranging'] *= 0.95
 
 
 class MarketMicrostructureEngine:
