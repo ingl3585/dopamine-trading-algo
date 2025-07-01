@@ -261,7 +261,7 @@ class ConfidenceManager:
                 base_adjustment *= tolerance_factor
                 reason += f" [DOPAMINE: Tolerance factor x{tolerance_factor:.2f}]"
             
-            if self.debug_mode and base_adjustment != original_adjustment:
+            if self.config['debug_mode'] and base_adjustment != original_adjustment:
                 logger.debug(f"CONFIDENCE: Dopamine modified adjustment from {original_adjustment:.4f} to {base_adjustment:.4f}")
         
         # Apply confidence adjustment if there is one
