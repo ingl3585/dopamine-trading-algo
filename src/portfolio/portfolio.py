@@ -83,6 +83,21 @@ class Portfolio:
         # Find matching pending order
         matching_order = self._find_matching_order(completion_data)
         if not matching_order:
+            # If no matching order found, create a minimal trade record from completion_data
+            logger.warning("No matching order found for trade completion - creating minimal trade record")
+            trade_dict = {
+                'entry_time': completion_data.get('entry_time', time.time()),
+                'exit_time': completion_data.get('exit_time', time.time()),
+                'action': 'unknown',
+                'entry_price': completion_data.get('entry_price', 0.0),
+                'exit_price': exit_price,
+                'size': completion_data.get('size', 1),
+                'pnl': pnl,
+                'exit_reason': exit_reason,
+                'account_risk_pct': 0.0
+            }
+            self._update_stats(trade_dict)
+            self.completed_trades.append(trade_dict)
             return None
         
         # Enhanced trade creation with account data
@@ -135,17 +150,27 @@ class Portfolio:
         
         return order
     
-    def _update_stats(self, trade: Trade):
-        self.total_pnl += trade.pnl
-        self.daily_pnl += trade.pnl
+    def _update_stats(self, trade):
+        # Handle both Trade objects and dictionaries
+        if isinstance(trade, dict):
+            pnl = trade.get('pnl', 0.0)
+            exit_time = trade.get('exit_time', time.time())
+            exit_account_balance = trade.get('exit_account_balance', 0.0)
+        else:
+            pnl = getattr(trade, 'pnl', 0.0)
+            exit_time = getattr(trade, 'exit_time', time.time())
+            exit_account_balance = getattr(trade, 'exit_account_balance', 0.0)
+        
+        self.total_pnl += pnl
+        self.daily_pnl += pnl
         
         # Update account balance tracking - use NinjaTrader data when available
-        exit_balance = self._completion_data.get('account_balance', trade.exit_account_balance) if hasattr(self, '_completion_data') else trade.exit_account_balance
+        exit_balance = self._completion_data.get('account_balance', exit_account_balance) if hasattr(self, '_completion_data') else exit_account_balance
         if exit_balance > 0:
             self.account_balance_history.append({
-                'timestamp': trade.exit_time,
+                'timestamp': exit_time,
                 'balance': exit_balance,
-                'pnl': trade.pnl
+                'pnl': pnl
             })
             
             # Update peak and drawdown
@@ -156,7 +181,7 @@ class Portfolio:
             if current_drawdown > self.max_drawdown:
                 self.max_drawdown = current_drawdown
         
-        if trade.pnl > 0:
+        if pnl > 0:
             self.winning_trades += 1
             self.consecutive_losses = 0
         else:
@@ -224,8 +249,17 @@ class Portfolio:
     
     def get_recent_trade_count(self, minutes: int) -> int:
         cutoff_time = time.time() - (minutes * 60)
-        return sum(1 for trade in self.completed_trades 
-                  if trade.entry_time > cutoff_time)
+        count = 0
+        for trade in self.completed_trades:
+            # Handle both Trade objects and dictionaries
+            if isinstance(trade, dict):
+                entry_time = trade.get('entry_time', 0.0)
+            else:
+                entry_time = getattr(trade, 'entry_time', 0.0)
+            
+            if entry_time > cutoff_time:
+                count += 1
+        return count
     
     def get_account_performance(self) -> Dict:
         """Get account-specific performance metrics"""
@@ -242,12 +276,31 @@ class Portfolio:
         # Risk-adjusted metrics
         avg_risk_per_trade = 0.0
         if self.completed_trades:
-            total_risk = sum(trade.account_risk_pct for trade in self.completed_trades)
+            total_risk = 0.0
+            for trade in self.completed_trades:
+                # Handle both Trade objects and dictionary objects for backward compatibility
+                if isinstance(trade, dict):
+                    risk_pct = trade.get('account_risk_pct', 0.0)
+                else:
+                    risk_pct = getattr(trade, 'account_risk_pct', 0.0)
+                total_risk += risk_pct
             avg_risk_per_trade = total_risk / len(self.completed_trades)
         
-        # Profit factor
-        gross_profit = sum(trade.pnl for trade in self.completed_trades if trade.pnl > 0)
-        gross_loss = abs(sum(trade.pnl for trade in self.completed_trades if trade.pnl < 0))
+        # Profit factor - handle both Trade objects and dictionaries
+        gross_profit = 0.0
+        gross_loss = 0.0
+        
+        for trade in self.completed_trades:
+            # Handle both Trade objects and dictionary objects for backward compatibility
+            if isinstance(trade, dict):
+                pnl = trade.get('pnl', 0.0)
+            else:
+                pnl = getattr(trade, 'pnl', 0.0)
+            
+            if pnl > 0:
+                gross_profit += pnl
+            elif pnl < 0:
+                gross_loss += abs(pnl)
         profit_factor = gross_profit / max(gross_loss, 1.0)
         
         return {

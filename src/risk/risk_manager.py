@@ -251,14 +251,31 @@ class RiskManager:
         # 1. Learned optimal size (primary)
         sizes.append(learned_optimal_size)
         
-        # 2. Account-based sizing
+        # 2. Enhanced account-based sizing for growth scaling
         if account_balance > 0:
-            account_size = max(1, int(account_balance * position_factor / 2000))
+            # Progressive scaling: more aggressive as account grows
+            if account_balance > 10000:
+                scaling_factor = 1500  # More aggressive for larger accounts
+            elif account_balance > 5000:
+                scaling_factor = 1750  # Moderate scaling  
+            else:
+                scaling_factor = 2000  # Conservative for smaller accounts
+                
+            account_size = max(1, int(account_balance * position_factor / scaling_factor))
             sizes.append(account_size)
         
-        # 3. Confidence-based sizing
-        confidence_multiplier = decision.confidence ** 2
-        confidence_size = max(1, int(3 * confidence_multiplier))
+        # 3. Enhanced confidence-based sizing for larger positions
+        if decision.confidence > 0.7:
+            # Exponential scaling for high confidence
+            confidence_multiplier = (decision.confidence ** 1.5) * 2.0
+        elif decision.confidence > 0.6:
+            # Moderate scaling for good confidence  
+            confidence_multiplier = (decision.confidence ** 1.2) * 1.5
+        else:
+            # Conservative scaling for lower confidence
+            confidence_multiplier = decision.confidence ** 2
+        
+        confidence_size = max(1, int(5 * confidence_multiplier))  # Increased base multiplier
         sizes.append(confidence_size)
         
         # 4. Agent's suggested size

@@ -95,12 +95,12 @@ class ConfidenceManager:
             'max_confidence': 1.00,
             'debug_mode': debug_mode,
             
-            # Improved Recovery parameters (10/10 balance)
-            'base_recovery_rate': 0.005,  # Reduced from 0.02 - more realistic
-            'max_recovery_time': 45.0,    # Increased from 15.0 - slower recovery
-            'success_boost': 0.04,        # Reduced from 0.08 - less overconfidence  
-            'rejection_penalty': 0.05,    # Unchanged - already reasonable
-            'failed_trade_penalty': 0.05, # Increased from 0.015 - balanced learning
+            # Enhanced Recovery parameters for faster scaling
+            'base_recovery_rate': 0.015,  # Increased for faster recovery
+            'max_recovery_time': 30.0,    # Faster recovery cycles
+            'success_boost': 0.06,        # Increased for better confidence building
+            'rejection_penalty': 0.03,    # Reduced to be less punitive
+            'failed_trade_penalty': 0.03, # Reduced to allow faster recovery
             
             # Market Reality parameters (NEW)
             'drawdown_sensitivity': 0.3,   # Impact of unrealized losses
@@ -397,24 +397,27 @@ class ConfidenceManager:
         # Get recent performance metrics
         recent_trades = list(self.state.trade_history)[-self.config['performance_window']:]
         
+        # Always define base_rate first
+        base_rate = self.config['base_recovery_rate']
+        
         if len(recent_trades) >= 5:  # Enough data for intelligent recovery
             win_rate = sum(1 for trade in recent_trades if trade.get('pnl', 0) > 0) / len(recent_trades)
             avg_profit_factor = self._calculate_profit_factor(recent_trades)
             
-            # Adaptive recovery rate based on performance
-            base_rate = self.config['base_recovery_rate']
-            
             if win_rate > 0.7 and avg_profit_factor > 1.5:
-                recovery_multiplier = 2.0  # Fast recovery when crushing it
+                recovery_multiplier = 3.0  # Much faster recovery when crushing it
                 performance_desc = "excellent"
+            elif win_rate > 0.6:
+                recovery_multiplier = 2.0  # Fast recovery for good performance
+                performance_desc = "very good"
             elif win_rate > 0.5:
-                recovery_multiplier = 1.2  # Normal recovery
+                recovery_multiplier = 1.5  # Enhanced normal recovery
                 performance_desc = "good"
             elif win_rate < 0.3:
-                recovery_multiplier = 0.4  # Slow recovery when struggling
+                recovery_multiplier = 0.6  # Less punitive for poor performance
                 performance_desc = "poor"
             else:
-                recovery_multiplier = 0.8
+                recovery_multiplier = 1.0  # Neutral recovery
                 performance_desc = "average"
         else:
             # Fall back to original time-based recovery with reduced rate
@@ -426,11 +429,11 @@ class ConfidenceManager:
             time_since_rejection = current_time - self.state.last_rejection_time
             recovery_minutes = time_since_rejection / 60.0
             
-            # Apply intelligent recovery rate
+            # Apply intelligent recovery rate with higher limits
             max_recovery = base_rate * recovery_minutes * recovery_multiplier
-            recovery_boost = min(0.2, max_recovery) * self.state.recovery_factor  # Reduced max from 0.3
+            recovery_boost = min(0.4, max_recovery) * self.state.recovery_factor  # Increased max for faster scaling
             
-            if recovery_boost > 0.002:  # Only apply meaningful boosts
+            if recovery_boost > 0.001:  # Lower threshold for more frequent boosts
                 adjusted = min(self.config['max_confidence'], adjusted + recovery_boost)
                 reasons.append(f"Smart recovery: +{recovery_boost:.3f} ({performance_desc} performance, {recovery_minutes:.1f}min)")
         
@@ -445,9 +448,10 @@ class ConfidenceManager:
         
         strategy_stats = self.state.strategy_performance[self.state.current_strategy]
         
-        if strategy_stats.get('trades', 0) > 10:  # Enough data
+        if strategy_stats.get('trades', 0) > 5:  # Reduced requirement for faster scaling
             strategy_win_rate = strategy_stats.get('win_rate', 0.5)
-            strategy_confidence_multiplier = 0.7 + (strategy_win_rate * 0.6)  # 0.7 to 1.3 range
+            # Enhanced scaling: 0.6 to 1.6 range for better rewards
+            strategy_confidence_multiplier = 0.6 + (strategy_win_rate * 1.0)
             
             old_confidence = confidence
             confidence *= strategy_confidence_multiplier
