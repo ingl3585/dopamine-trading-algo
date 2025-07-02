@@ -205,17 +205,41 @@ class EvolvingImmuneSystem:
 
         self.total_learning_events += 1
 
-        learning_threshold = -0.15 if is_bootstrap else self.threat_severity_threshold
+        # Adaptive learning threshold based on recent threat patterns
+        if not hasattr(self, '_threat_severity_history'):
+            self._threat_severity_history = deque(maxlen=50)
+        self._threat_severity_history.append(threat_level)
+        
+        # Calculate adaptive threshold based on threat environment
+        if len(self._threat_severity_history) >= 10:
+            recent_threats = list(self._threat_severity_history)[-20:]
+            threat_mean = np.mean(recent_threats)
+            threat_std = np.std(recent_threats)
+            # Adaptive threshold - more sensitive in calm markets, less in volatile
+            adaptive_threshold = threat_mean - threat_std
+            learning_threshold = max(-0.5, min(-0.05, adaptive_threshold)) if not is_bootstrap else -0.15
+        else:
+            learning_threshold = -0.15 if is_bootstrap else self.threat_severity_threshold
 
         antibody_created = False
         if threat_level < learning_threshold:
             if pattern in self.antibodies:
                 data = self.antibodies[pattern]
-                strength_update = self.adaptive_response_rate * (1.0 + data['memory_count'] * 0.1)
+                
+                # Adaptive response rate based on threat severity and antibody maturity
+                threat_severity_factor = min(2.0, abs(threat_level) / 0.1)
+                maturity_factor = min(2.0, 1.0 + data['memory_count'] * 0.05)
+                adaptive_response_rate = self.adaptive_response_rate * threat_severity_factor / maturity_factor
+                
+                strength_update = adaptive_response_rate * (1.0 + data['memory_count'] * 0.1)
                 data['strength'] = min(1.0, data['strength'] + strength_update)
                 data['memory_count'] += 1
+                
+                # Enhanced specificity improvement based on consistent threat detection
                 if data['memory_count'] >= self.memory_consolidation_threshold:
-                    data['specificity'] = min(1.0, data['specificity'] + 0.1)
+                    # Calculate specificity improvement based on pattern consistency
+                    specificity_improvement = 0.05 + (0.1 / (1.0 + abs(threat_level)))
+                    data['specificity'] = min(1.0, data['specificity'] + specificity_improvement)
             else:
                 self.antibodies[pattern] = {
                     'strength': 0.5,

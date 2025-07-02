@@ -1,10 +1,13 @@
 # data_processor.py
 
 import time
+import logging
 
 from collections import deque
 from dataclasses import dataclass
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class MarketData:
@@ -41,6 +44,10 @@ class DataProcessor:
         self.volumes_1m = deque(maxlen=max_history)
         self.volumes_5m = deque(maxlen=200)
         self.volumes_15m = deque(maxlen=100)
+        
+        # Track 15-minute bar changes for commentary triggering
+        self.last_15m_bar_count = 0
+        self.new_15m_bar_available = False
 
     def process(self, raw_data: Dict) -> Optional[MarketData]:
         if not self._is_valid_data(raw_data):
@@ -60,7 +67,12 @@ class DataProcessor:
             self.volumes_5m.extend(raw_data['volume_5m'])
             
         if 'price_15m' in raw_data and raw_data['price_15m']:
+            previous_count = len(self.prices_15m)
             self.prices_15m.extend(raw_data['price_15m'])
+            # Detect new 15-minute bar
+            if len(self.prices_15m) > previous_count:
+                self.new_15m_bar_available = True
+                logger.info(f"New 15-minute bar detected: {self.prices_15m[-1]:.2f}")
             
         if 'volume_15m' in raw_data and raw_data['volume_15m']:
             self.volumes_15m.extend(raw_data['volume_15m'])
@@ -93,6 +105,13 @@ class DataProcessor:
             buying_power_ratio=raw_data.get('buying_power_ratio', 1.0),
             daily_pnl_pct=raw_data.get('daily_pnl_pct', 0.0)
         )
+    
+    def check_and_reset_15m_bar_flag(self) -> bool:
+        """Check if a new 15-minute bar is available and reset the flag"""
+        if self.new_15m_bar_available:
+            self.new_15m_bar_available = False
+            return True
+        return False
 
     def _is_valid_data(self, data: Dict) -> bool:
         return (isinstance(data, dict) and 

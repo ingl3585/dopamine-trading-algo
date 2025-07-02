@@ -68,8 +68,8 @@ class ConfidenceManager:
     
     def __init__(self, 
                  initial_confidence: float = 0.6,
-                 min_confidence: float = 0.15,
-                 max_confidence: float = 0.95,
+                 min_confidence: float = 0.01,
+                 max_confidence: float = 1.00,
                  debug_mode: bool = True):
         """
         Initialize confidence manager
@@ -81,8 +81,8 @@ class ConfidenceManager:
             debug_mode: Enable detailed logging
         """
         self.config = {
-            'min_confidence': min_confidence,
-            'max_confidence': max_confidence,
+            'min_confidence': 0.01,
+            'max_confidence': 1.00,
             'debug_mode': debug_mode,
             
             # Recovery parameters
@@ -266,27 +266,30 @@ class ConfidenceManager:
         
         # Apply confidence adjustment if there is one
         if base_adjustment != 0.0:
+            old_confidence = self.state.current_confidence
+            new_confidence = self._apply_bounds(old_confidence + base_adjustment)
+            
             adjustment = ConfidenceAdjustment(
                 timestamp=current_time,
-                previous_confidence=self.state.current_confidence,
-                adjustment=base_adjustment,
-                reason=reason,
-                context=trade_context or {}
+                event_type=event_type,
+                raw_confidence=old_confidence,
+                adjusted_confidence=new_confidence,
+                adjustment_reason=reason,
+                metadata=trade_context or {}
             )
             
-            self.state.current_confidence = self._apply_bounds(
-                self.state.current_confidence + base_adjustment
-            )
+            self.state.current_confidence = new_confidence
             self.state.adjustment_history.append(adjustment)
         
         # Record the event (only if we haven't already recorded an adjustment)
         if base_adjustment == 0.0:
             adjustment = ConfidenceAdjustment(
                 timestamp=current_time,
-                previous_confidence=self.state.current_confidence,
-                adjustment=0.0,
-                reason=reason,
-                context={'pnl': pnl, **(trade_context or {})}
+                event_type=event_type,
+                raw_confidence=self.state.current_confidence,
+                adjusted_confidence=self.state.current_confidence,
+                adjustment_reason=reason,
+                metadata={'pnl': pnl, **(trade_context or {})}
             )
             self.state.adjustment_history.append(adjustment)
         

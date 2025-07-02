@@ -87,18 +87,18 @@ class EnhancedDopamineSubsystem:
             risk_tolerance_modifier=1.0, urgency_factor=0.5
         )
         
-        # Core parameters (enhanced)
-        self.base_sensitivity = config.get('dopamine_sensitivity', 0.15)
+        # Simplified adaptive parameters for neuromorphic learning
+        self.base_sensitivity = config.get('dopamine_sensitivity', 0.01)  # Much lower for adaptive discovery
         self.current_sensitivity = self.base_sensitivity
-        self.momentum_factor = config.get('momentum_factor', 0.25)
-        self.max_signal = config.get('max_dopamine_signal', 2.0)
+        self.momentum_factor = config.get('momentum_factor', 0.01)  # Adaptive momentum discovery
+        self.max_signal = config.get('max_dopamine_signal', 10.0)  # Higher ceiling for discovery
         
-        # Advanced psychological parameters
-        self.tolerance_buildup_rate = config.get('tolerance_buildup_rate', 0.02)
-        self.tolerance_decay_rate = config.get('tolerance_decay_rate', 0.01)
-        self.addiction_threshold = config.get('addiction_threshold', 1.5)
-        self.withdrawal_severity = config.get('withdrawal_severity', 0.3)
-        self.anticipation_multiplier = config.get('anticipation_multiplier', 1.2)
+        # Simplified psychological parameters - let AI discover psychology
+        self.tolerance_buildup_rate = config.get('tolerance_buildup_rate', 0.001)
+        self.tolerance_decay_rate = config.get('tolerance_decay_rate', 0.001) 
+        self.addiction_threshold = config.get('addiction_threshold', 10.0)  # Higher threshold
+        self.withdrawal_severity = config.get('withdrawal_severity', 0.01)  # Lower severity
+        self.anticipation_multiplier = config.get('anticipation_multiplier', 1.01)  # Minimal initial
         
         # Tracking variables
         self.consecutive_positive = 0
@@ -987,6 +987,166 @@ class EnhancedDopamineSubsystem:
             return "mild"
         else:
             return "none"
+
+    def learn_from_outcome(self, outcome: float, context: Optional[Dict] = None):
+        """
+        Learn from trading outcome by updating dopamine response patterns
+        
+        Args:
+            outcome: Trade outcome (positive for profit, negative for loss)
+            context: Optional context containing trade and market information
+        """
+        try:
+            # Normalize outcome to expected range [-1.0, 1.0]
+            normalized_outcome = np.tanh(outcome * 2.0)
+            
+            # Create synthetic P&L change if we have context
+            if context and 'trade_data' in context:
+                trade_data = context['trade_data']
+                pnl_change = getattr(trade_data, 'pnl', outcome)
+            else:
+                # Synthetic P&L change based on outcome
+                pnl_change = outcome * 100  # Convert to dollar-like units
+            
+            # Create learning snapshot with realistic data
+            learning_snapshot = DopamineSnapshot(
+                timestamp=time.time(),
+                phase=DopaminePhase.REALIZATION,  # Learning happens at trade realization
+                unrealized_pnl=0.0,  # Trade is closed
+                realized_pnl=pnl_change,
+                position_size=0.0,  # Position closed
+                current_price=0.0,  # Not relevant for learning
+                trade_duration=0.0,
+                expected_outcome=self.expected_pnl,
+                confidence_level=self.expectation_confidence
+            )
+            
+            # Generate dopamine response for this outcome
+            learning_response = self._calculate_realization_response(learning_snapshot)
+            
+            # Update internal learning parameters based on outcome
+            self._update_learning_from_outcome(normalized_outcome, learning_response)
+            
+            # Store learning experience
+            self.response_history.append(learning_response)
+            self.pnl_history.append(learning_snapshot)
+            
+            # Update expectations based on actual outcome
+            if hasattr(self, '_learning_outcomes'):
+                self._learning_outcomes.append(normalized_outcome)
+            else:
+                self._learning_outcomes = [normalized_outcome]
+            
+            # Keep only recent learning outcomes
+            if len(self._learning_outcomes) > 50:
+                self._learning_outcomes = self._learning_outcomes[-50:]
+            
+            # Update expectation confidence based on prediction accuracy
+            if self.expected_pnl != 0:
+                prediction_error = abs(pnl_change - self.expected_pnl) / max(abs(self.expected_pnl), 1.0)
+                confidence_adjustment = -0.1 * prediction_error  # Reduce confidence for bad predictions
+                self.expectation_confidence = np.clip(
+                    self.expectation_confidence + confidence_adjustment, 0.1, 1.0
+                )
+            
+        except Exception as e:
+            logger.error(f"Error in dopamine learning from outcome: {e}")
+    
+    def _update_learning_from_outcome(self, outcome: float, response: DopamineResponse):
+        """Update internal parameters based on learning outcome with adaptive adjustments"""
+        
+        # Adaptive learning rate based on confidence and recent performance
+        recent_accuracy = self._calculate_recent_prediction_accuracy()
+        learning_rate = 0.05 + (0.15 * self.expectation_confidence * recent_accuracy)
+        
+        # Enhanced prediction accuracy with graded assessment
+        prediction_error = self._calculate_prediction_error(outcome, response.signal)
+        prediction_accuracy = 1.0 / (1.0 + prediction_error)  # 0-1 scale
+        
+        # Adaptive sensitivity adjustment based on prediction quality and market volatility
+        volatility_factor = min(2.0, 1.0 + abs(outcome) * 2.0)  # Higher volatility = smaller adjustments
+        base_adjustment = 0.01 + (0.02 * prediction_accuracy)  # 0.01-0.03 range
+        sensitivity_adjustment = base_adjustment / volatility_factor
+        
+        if prediction_accuracy > 0.7:  # Good prediction
+            self.current_sensitivity *= (1.0 + sensitivity_adjustment)
+        elif prediction_accuracy < 0.3:  # Poor prediction
+            self.current_sensitivity *= (1.0 - sensitivity_adjustment * 0.5)
+        
+        # Bound sensitivity to reasonable range
+        self.current_sensitivity = np.clip(self.current_sensitivity, 0.05, 0.3)
+        
+        # Adaptive tolerance adjustment based on outcome magnitude and frequency
+        outcome_magnitude = abs(outcome)
+        magnitude_threshold = 0.3 + (0.4 * self.tolerance_level)  # Adaptive threshold
+        
+        if outcome > magnitude_threshold:  # Adaptive positive threshold
+            tolerance_increase = self.tolerance_buildup_rate * (1.0 + outcome_magnitude)
+            self.tolerance_level += tolerance_increase
+        elif outcome < -magnitude_threshold:  # Adaptive negative threshold
+            tolerance_decrease = self.tolerance_decay_rate * (1.0 + outcome_magnitude)
+            self.tolerance_level -= tolerance_decrease
+            # Adaptive withdrawal based on loss severity
+            withdrawal_increase = 0.02 + (0.08 * outcome_magnitude)
+            self.withdrawal_intensity += withdrawal_increase
+        
+        # Adaptive addiction patterns based on streak strength and outcome quality
+        addiction_threshold = 0.2 + (0.3 * self.tolerance_level)  # Higher tolerance = higher threshold
+        streak_factor = min(3.0, self.consecutive_positive / 2.0) if self.consecutive_positive > 0 else 1.0
+        
+        if outcome > addiction_threshold and self.consecutive_positive >= 2:
+            # Addiction risk scales with streak strength and outcome magnitude
+            addiction_increase = (0.01 + 0.04 * outcome_magnitude) * streak_factor
+            self.addiction_score += addiction_increase
+        elif outcome < -addiction_threshold:
+            # Recovery scales with loss magnitude and current addiction level
+            recovery_factor = 0.01 + (0.03 * outcome_magnitude * self.addiction_score)
+            self.addiction_score -= recovery_factor
+        
+        # Bound all psychological parameters
+        self.tolerance_level = np.clip(self.tolerance_level, 0.0, 1.0)
+        self.addiction_score = np.clip(self.addiction_score, 0.0, 1.0)
+        self.withdrawal_intensity = np.clip(self.withdrawal_intensity, 0.0, 1.0)
+        
+        # Update base sensitivity to match current sensitivity
+        self.base_sensitivity = self.current_sensitivity
+        
+        # Store prediction accuracy for future adaptive adjustments
+        if not hasattr(self, '_prediction_accuracy_history'):
+            self._prediction_accuracy_history = deque(maxlen=20)
+        self._prediction_accuracy_history.append(prediction_accuracy)
+    
+    def _calculate_prediction_error(self, actual_outcome: float, predicted_signal: float) -> float:
+        """Calculate prediction error with consideration for magnitude and direction"""
+        
+        # Normalize both values to comparable scale
+        normalized_actual = np.tanh(actual_outcome * 2.0)
+        normalized_predicted = np.tanh(predicted_signal)
+        
+        # Direction error (most important)
+        direction_error = 0.0
+        if (normalized_actual > 0.1 and normalized_predicted < -0.1) or \
+           (normalized_actual < -0.1 and normalized_predicted > 0.1):
+            direction_error = 1.0  # Complete direction mismatch
+        elif abs(normalized_actual) < 0.1 and abs(normalized_predicted) > 0.3:
+            direction_error = 0.5  # Predicted movement when should be neutral
+        
+        # Magnitude error
+        magnitude_error = abs(normalized_actual - normalized_predicted)
+        
+        # Combined error (direction weighted more heavily)
+        total_error = direction_error * 0.7 + magnitude_error * 0.3
+        
+        return total_error
+    
+    def _calculate_recent_prediction_accuracy(self) -> float:
+        """Calculate recent prediction accuracy for adaptive learning"""
+        
+        if not hasattr(self, '_prediction_accuracy_history') or not self._prediction_accuracy_history:
+            return 0.5  # Neutral starting point
+        
+        recent_accuracies = list(self._prediction_accuracy_history)[-10:]  # Last 10 predictions
+        return np.mean(recent_accuracies)
 
 
 # Backwards compatibility alias

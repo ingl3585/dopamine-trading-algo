@@ -1,3 +1,2 @@
-from .system_monitor import SystemMonitor
-
-__all__ = ['SystemMonitor']
+# Monitoring module - system monitor removed in favor of logging
+__all__ = []

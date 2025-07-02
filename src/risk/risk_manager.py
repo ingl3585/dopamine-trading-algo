@@ -102,6 +102,52 @@ class RiskManager:
             confidence=decision.confidence
         )
     
+    def _alert_insufficient_margin(self, net_liquidation: float, margin_per_contract: float, max_affordable: int):
+        """Alert system to insufficient margin for trading"""
+        try:
+            logger.critical(f"SYSTEM ALERT: Insufficient margin - Net Liquidation: ${net_liquidation:,.2f}, Required: ${margin_per_contract}")
+            
+            # Track margin insufficiency events
+            if not hasattr(self, 'margin_alerts'):
+                self.margin_alerts = []
+            
+            self.margin_alerts.append({
+                'net_liquidation': net_liquidation,
+                'margin_per_contract': margin_per_contract,
+                'max_affordable': max_affordable,
+                'time': time.time()
+            })
+            
+            # Keep only last 100 events
+            self.margin_alerts = self.margin_alerts[-100:]
+            
+        except Exception as e:
+            logger.error(f"Failed to log margin insufficiency alert: {e}")
+    
+    def _alert_margin_adjustment(self, original_size: int, adjusted_size: int, net_liquidation: float):
+        """Alert system to margin-based position size adjustment"""
+        try:
+            logger.warning(f"MARGIN ADJUSTMENT: Position reduced from {original_size} to {adjusted_size} contracts")
+            logger.warning(f"Net Liquidation: ${net_liquidation:,.2f}, MNQ Margin: $100/contract")
+            
+            # Track margin adjustments for pattern analysis
+            if not hasattr(self, 'margin_adjustments'):
+                self.margin_adjustments = []
+            
+            self.margin_adjustments.append({
+                'original_size': original_size,
+                'adjusted_size': adjusted_size,
+                'net_liquidation': net_liquidation,
+                'reduction_percentage': (original_size - adjusted_size) / original_size,
+                'time': time.time()
+            })
+            
+            # Keep only last 100 events
+            self.margin_adjustments = self.margin_adjustments[-100:]
+            
+        except Exception as e:
+            logger.error(f"Failed to log margin adjustment alert: {e}")
+
     def _learn_from_position_limit_rejection(self, decision, market_data, current_position, max_contracts):
         """Provide learning feedback when orders are rejected due to position limits"""
         try:
@@ -132,7 +178,9 @@ class RiskManager:
             
             # SINGLE PENALTY POINT: Only send to trading agent (consolidates all penalty logic)
             if self.agent and hasattr(self.agent, 'learn_from_rejection'):
-                self.agent.learn_from_rejection('position_limit', violation_data, 0.0)  # No reward here
+                # Pass violation data to agent for unified penalty processing
+                violation_data['position_limit_violation'] = True
+                self.agent.learn_from_rejection('position_limit', violation_data)
             
             # Track violation for risk learning (tracking only, no penalty)
             if hasattr(self.risk_learning, 'track_violation'):
@@ -148,15 +196,27 @@ class RiskManager:
     def _calculate_adaptive_position_size(self, decision: Decision, market_data: MarketData) -> int:
         """Enhanced position sizing with intelligent learning-based awareness"""
         
-        # Get current position exposure from NinjaTrader (real position)
-        current_position_size = getattr(market_data, 'total_position_size', 0)
-        # Fallback to portfolio tracking if NinjaTrader data unavailable
-        if current_position_size == 0:
-            current_position_size = self.portfolio.get_total_position_size()
+        # Get current position exposure with validation
+        ninja_position = getattr(market_data, 'total_position_size', None)
+        portfolio_position = self.portfolio.get_total_position_size()
+        
+        # Validate position consistency
+        if ninja_position is not None:
+            position_diff = abs(ninja_position - portfolio_position)
+            if position_diff > 0:
+                logger.warning(f"POSITION MISMATCH: NinjaTrader={ninja_position}, Portfolio={portfolio_position}, Diff={position_diff}")
+                # Use NinjaTrader as authoritative source
+                current_position_size = ninja_position
+                # Update portfolio to match NinjaTrader
+                self.portfolio.sync_position_with_ninjatrader(ninja_position)
+            else:
+                current_position_size = ninja_position
+        else:
+            logger.warning("No position data from NinjaTrader - using portfolio fallback")
+            current_position_size = portfolio_position
         
         # Debug logging for position tracking
-        logger.info(f"Position check: NinjaTrader={getattr(market_data, 'total_position_size', 'MISSING')}, "
-                   f"Portfolio={self.portfolio.get_total_position_size()}, Using={current_position_size}")
+        logger.debug(f"Position validated: NinjaTrader={ninja_position}, Portfolio={portfolio_position}, Using={current_position_size}")
         
         # Learned position sizing parameters
         max_contracts = int(self.meta_learner.get_parameter('max_contracts_limit'))  # Learned, starts at 10
@@ -229,8 +289,36 @@ class RiskManager:
         else:
             final_size = min(base_size, remaining_capacity)
         
-        # Absolute maximum enforcement
-        final_size = min(final_size, max_contracts)
+        # CRITICAL: Margin requirement validation for MNQ intraday trading
+        # Each MNQ contract requires $100 margin intraday
+        margin_per_contract = 100.0
+        net_liquidation = market_data.net_liquidation
+        
+        # Calculate maximum contracts based on net liquidation
+        max_affordable_contracts = int(net_liquidation / margin_per_contract)
+        
+        if max_affordable_contracts <= 0:
+            logger.error(f"CRITICAL: Insufficient margin - Net Liquidation: ${net_liquidation:,.2f}, Required: ${margin_per_contract}")
+            logger.error("ALERT: No contracts can be traded due to insufficient margin")
+            self._alert_insufficient_margin(net_liquidation, margin_per_contract, 0)
+            return 0
+        
+        # Apply margin-based position limit
+        if final_size > max_affordable_contracts:
+            logger.warning(f"Position size {final_size} exceeds margin capacity {max_affordable_contracts}. Reducing to margin limit.")
+            logger.warning(f"Net Liquidation: ${net_liquidation:,.2f}, Required: ${final_size * margin_per_contract:,.2f}")
+            final_size = max_affordable_contracts
+            self._alert_margin_adjustment(final_size, max_affordable_contracts, net_liquidation)
+        
+        # Final validation: ensure we have sufficient margin for the calculated size
+        required_margin = final_size * margin_per_contract
+        if required_margin > net_liquidation:
+            logger.error(f"CRITICAL: Final size validation failed - Required: ${required_margin:,.2f}, Available: ${net_liquidation:,.2f}")
+            final_size = max(1, int(net_liquidation / margin_per_contract))
+            logger.warning(f"Emergency position size reduction to {final_size} contracts")
+        
+        # Absolute maximum enforcement (both contract limit and margin limit)
+        final_size = min(final_size, max_contracts, max_affordable_contracts)
         
         # Record this sizing decision for learning
         self.risk_learning.record_risk_event(

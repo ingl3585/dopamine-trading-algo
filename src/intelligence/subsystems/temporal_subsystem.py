@@ -20,15 +20,15 @@ class FFTTemporalSubsystem:
         self.learning_batch_size = 25
 
     def analyze_cycles(self, prices: List[float], timestamps: Optional[List[float]] = None) -> float:
-        if len(prices) < 32:
-            logger.debug(f"Insufficient data for temporal analysis: {len(prices)} prices (need 32+)")
+        if len(prices) < 8:  # Much lower minimum for adaptive discovery
+            logger.debug(f"Insufficient data for temporal analysis: {len(prices)} prices (need 8+)")
             return 0.0
         
         try:
             signals = []
             logger.debug(f"Starting temporal analysis with {len(prices)} prices")
             
-            for window_size in [64, 128, 256]:
+            for window_size in [8, 16, 32, 64, 128, 256]:  # More adaptive window sizes
                 if len(prices) >= window_size:
                     try:
                         signal = self._fft_analysis(prices[-window_size:], window_size)
@@ -237,14 +237,36 @@ class FFTTemporalSubsystem:
             if cycle_key in self.cycle_memory:
                 data = self.cycle_memory[cycle_key]
                 
-                learning_rate = 0.05 * (1.0 + data['confidence'])
+                # Adaptive learning rate based on cycle stability and market volatility
+                cycle_stability = 1.0 / (1.0 + abs(cycle['amplitude'] - data['strength']))
+                market_volatility = min(2.0, 1.0 + abs(outcome) * 3.0)  # Higher volatility = more conservative
+                adaptive_learning_rate = (0.02 + 0.08 * data['confidence'] * cycle_stability) / market_volatility
                 
                 old_performance = data['performance']
-                new_performance = data['performance'] + learning_rate * (outcome - data['performance'])
+                new_performance = data['performance'] + adaptive_learning_rate * (outcome - data['performance'])
                 
+                # Enhanced confidence update considering prediction accuracy and cycle consistency
                 prediction_error = abs(outcome - data['performance'])
-                confidence_update = 0.02 * (1.0 - prediction_error)
+                accuracy_factor = 1.0 / (1.0 + prediction_error * 2.0)
+                
+                # Bonus confidence for cycles that consistently perform
+                consistency_bonus = 0.0
+                if hasattr(self, '_cycle_performance_history'):
+                    if cycle_key in self._cycle_performance_history:
+                        recent_performances = self._cycle_performance_history[cycle_key][-5:]
+                        if len(recent_performances) >= 3:
+                            consistency = 1.0 - np.std(recent_performances) / (np.mean(np.abs(recent_performances)) + 0.1)
+                            consistency_bonus = max(0, consistency * 0.1)
+                
+                confidence_update = (0.01 + 0.04 * accuracy_factor + consistency_bonus) - (prediction_error * 0.05)
                 new_confidence = max(0.1, min(1.0, data['confidence'] + confidence_update))
+                
+                # Track performance history for consistency analysis
+                if not hasattr(self, '_cycle_performance_history'):
+                    self._cycle_performance_history = {}
+                if cycle_key not in self._cycle_performance_history:
+                    self._cycle_performance_history[cycle_key] = deque(maxlen=10)
+                self._cycle_performance_history[cycle_key].append(outcome)
                 
                 self.cycle_memory[cycle_key] = {
                     'strength': cycle['amplitude'],

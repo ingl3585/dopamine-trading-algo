@@ -38,7 +38,7 @@ class CommentaryRequest:
     portfolio_context: Dict
     style: CommentaryStyle = CommentaryStyle.ANALYTICAL
     tone: CommentaryTone = CommentaryTone.PROFESSIONAL
-    max_length: int = 200
+    max_length: int = 10000
     urgency: float = 0.5
     context_data: Dict = None  # Enhanced agent context
 
@@ -469,7 +469,7 @@ Tone: {request.tone.value}
         for memory in recent:
             time_ago = time.time() - memory['timestamp']
             if time_ago < 300:  # 5 minutes
-                context_lines.append(f"Recently: {memory['event']} - {memory['response'][:100]}...")
+                context_lines.append(f"Recently: {memory['event']} - {memory['response'][:500]}...")
         
         if context_lines:
             return f"RECENT CONTEXT:\n" + "\n".join(context_lines)

@@ -17,9 +17,9 @@
     "api_key": "",
     "base_url": "http://localhost:11434",
     "temperature": 0.7,
-    "max_tokens": 500,
+    "max_tokens": 8000,
     "min_request_interval": 5.0,
-    "request_timeout": 30.0
+    "request_timeout": 120.0
   },
   
   
@@ -41,7 +41,7 @@
   },
   
   "commentary": {
-    "max_length": 800,
+    "max_length": 10000,
     "min_interval": 30.0,
     "default_style": "analytical",
     "default_tone": "professional",

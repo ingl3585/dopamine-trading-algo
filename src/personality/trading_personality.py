@@ -49,13 +49,13 @@ class PersonalityConfig:
     consistency_preference: float = 0.8
     default_style: CommentaryStyle = CommentaryStyle.ANALYTICAL
     default_tone: CommentaryTone = CommentaryTone.PROFESSIONAL
-    max_commentary_length: int = 200
+    max_commentary_length: int = 10000
     min_commentary_interval: float = 30.0  # seconds
     
     # LLM Configuration
     llm_model: str = "gpt-4"
     llm_temperature: float = 0.7
-    llm_max_tokens: int = 300
+    llm_max_tokens: int = 8000
     llm_base_url: str = "http://localhost:11434"
     llm_api_key: str = ""
     mock_llm: bool = False

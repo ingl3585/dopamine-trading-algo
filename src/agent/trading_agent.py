@@ -17,7 +17,10 @@ from src.shared.types import Features
 from src.market_analysis.data_processor import MarketData
 from src.agent.meta_learner import MetaLearner
 from src.neural.adaptive_network import AdaptiveTradingNetwork, FeatureLearner, StateEncoder
-from src.neural.enhanced_neural import SelfEvolvingNetwork, FewShotLearner
+from src.neural.enhanced_neural import (
+    SelfEvolvingNetwork, FewShotLearner, ActorCriticLoss, 
+    TradingOptimizer, create_enhanced_network
+)
 from src.agent.real_time_adaptation import RealTimeAdaptationEngine
 from src.agent.confidence import ConfidenceManager
 
@@ -51,22 +54,27 @@ class TradingAgent:
         # Enhanced meta-learning system
         self.meta_learner = MetaLearner(state_dim=64)  # Increased state dimension
         
-        # Enhanced neural architecture with self-evolution
+        # Enhanced neural architecture with self-evolution and memory management
         initial_sizes = self.meta_learner.architecture_evolver.current_sizes
-        self.network = SelfEvolvingNetwork(
+        self.network = create_enhanced_network(
             input_size=64,
             initial_sizes=initial_sizes,
-            evolution_frequency=500
+            enable_few_shot=True,
+            memory_efficient=True,
+            max_memory_gb=2.0
         ).to(self.device)
 
-        self.target_network = SelfEvolvingNetwork(
+        self.target_network = create_enhanced_network(
             input_size=64,
-            initial_sizes=initial_sizes
+            initial_sizes=initial_sizes,
+            enable_few_shot=False,
+            memory_efficient=True,
+            max_memory_gb=1.0
         ).to(self.device)
         
         # Enhanced feature learning with catastrophic forgetting prevention
         self.feature_learner = FeatureLearner(
-            raw_feature_dim=100, 
+            raw_feature_dim=64, 
             learned_feature_dim=64,
         ).to(self.device)
         self.state_encoder = StateEncoder()
@@ -77,7 +85,21 @@ class TradingAgent:
         # Real-time adaptation integration
         self.adaptation_engine = RealTimeAdaptationEngine(model_dim=64)
         
-        # Single unified optimizer for all learning components
+        # Enhanced loss function and optimizer system
+        self.loss_function = ActorCriticLoss(
+            confidence_weight=0.3,
+            position_weight=0.2,
+            risk_weight=0.1,
+            entropy_weight=0.01
+        ).to(self.device)
+        
+        # Advanced multi-component optimizer
+        self.optimizer = TradingOptimizer(
+            networks=[self.network, self.feature_learner, self.few_shot_learner],
+            base_lr=0.001
+        )
+        
+        # Legacy optimizer for compatibility during transition
         self.unified_optimizer = optim.AdamW(
             list(self.network.parameters()) + 
             list(self.feature_learner.parameters()) + 
@@ -476,30 +498,30 @@ class TradingAgent:
         """Enhanced exploration based on selected strategy"""
         
         if strategy == 'conservative':
-            # Conservative exploration - only trade with strong signals
-            if abs(weighted_signal) > 0.3:
+            # Conservative exploration - adaptive signal threshold
+            if abs(weighted_signal) > 0.01:  # Much lower threshold for discovery
                 return 1 if weighted_signal > 0 else 2
             return 0
         
         elif strategy == 'aggressive':
-            # Aggressive exploration - trade on weaker signals
-            if abs(weighted_signal) > 0.1:
+            # Aggressive exploration - very low threshold
+            if abs(weighted_signal) > 0.005:  # Very low threshold for discovery
                 return 1 if weighted_signal > 0 else 2
             return 0
         
         elif strategy == 'momentum':
-            # Momentum strategy - follow trends
-            if features.price_momentum > 0.01:
+            # Momentum strategy - adaptive momentum threshold
+            if features.price_momentum > 0.001:  # Much lower threshold
                 return 1
-            elif features.price_momentum < -0.01:
+            elif features.price_momentum < -0.001:  # Much lower threshold
                 return 2
             return 0
         
         elif strategy == 'mean_reversion':
-            # Mean reversion - trade against extremes
-            if features.price_position > 0.8:
+            # Mean reversion - adaptive position thresholds
+            if features.price_position > 0.6:  # Lower threshold for discovery
                 return 2  # Sell at highs
-            elif features.price_position < 0.2:
+            elif features.price_position < 0.4:  # Higher threshold for discovery
                 return 1  # Buy at lows
             return 0
         
@@ -508,11 +530,11 @@ class TradingAgent:
             if adaptation_decision.get('emergency_mode', False):
                 return 0  # Hold in emergency
             elif features.regime_confidence > 0.7:
-                # High confidence regime - follow signals
-                return 1 if weighted_signal > 0.1 else (2 if weighted_signal < -0.1 else 0)
+                # High confidence regime - follow signals with low threshold
+                return 1 if weighted_signal > 0.005 else (2 if weighted_signal < -0.005 else 0)
             else:
-                # Low confidence regime - be conservative
-                return 1 if weighted_signal > 0.2 else (2 if weighted_signal < -0.2 else 0)
+                # Low confidence regime - slightly higher threshold
+                return 1 if weighted_signal > 0.01 else (2 if weighted_signal < -0.01 else 0)
     
     def _calculate_enhanced_levels(self, action: str, market_data: MarketData,
                                  use_stop: bool, stop_distance: float,
@@ -782,40 +804,18 @@ class TradingAgent:
         
         frequency_limit = self.meta_learner.get_parameter('trade_frequency_base')
         time_since_last = market_data.timestamp - self.last_trade_time
-        if time_since_last < (300 / frequency_limit):
+        if time_since_last < (1 / frequency_limit):  # Adaptive timing, no hardcoded minimum
             return False
         
-        # Enhanced regime-based constraints
-        if features.regime_confidence < 0.3:  # Very uncertain regime
-            return False
-        
-        if features.volatility > 0.08:  # Extreme volatility
-            return False
-        
-        if features.liquidity_depth < 0.2:  # Poor liquidity
-            return False
+        # Let AI discover regime-based constraints through economic feedback
+        # Removed hardcoded regime blocks to enable neuromorphic boundary learning
         
         # Adaptation engine emergency mode
         if meta_context.get('adaptation_events', 0) > 0.1:  # Too many adaptation events
             return False
         
-        # CRITICAL: Position limit awareness - allow exits but prevent further entries
-        current_position = getattr(market_data, 'total_position_size', 0)
-        max_contracts = int(self.meta_learner.get_parameter('max_contracts_limit'))
-        
-        # At position limits, only allow trades that reduce position (exits)
-        # Don't block ALL trading - this prevents exiting losing positions!
-        # The risk manager will handle blocking invalid trades
-        
-        # If we're close to limits and have had recent rejections, be more conservative
-        exposure_ratio = abs(current_position) / max_contracts if max_contracts > 0 else 0
-        exposure_threshold = self.meta_learner.get_parameter('exposure_scaling_threshold')
-        
-        if exposure_ratio > exposure_threshold:
-            # Check if we've had recent position limit rejections
-            recent_rejections = getattr(self, 'recent_position_rejections', 0)
-            if recent_rejections > 3:  # Had recent rejections
-                return False
+        # Let AI learn position limit boundaries through economic violation feedback
+        # Removed hardcoded position blocking to enable neuromorphic boundary discovery
         
         return True
     
@@ -892,10 +892,12 @@ class TradingAgent:
                 self.last_successful_trade_time = time.time()
                 # Boost confidence recovery factor for successful trades
                 self.confidence_recovery_factor = min(1.2, self.confidence_recovery_factor + 0.05)
-                logger.info(f"Successful trade recorded. Total successful: {self.successful_trades}")
+                success_rate = self.successful_trades / max(1, self.total_decisions)
+                logger.info(f"SUCCESSFUL TRADE: #{self.successful_trades}, Success rate: {success_rate:.1%}")
             elif trade.pnl < 0:
                 # Slight reduction in recovery factor for losses (but not major impact)
                 self.confidence_recovery_factor = max(0.8, self.confidence_recovery_factor - 0.01)
+                logger.info(f"LOSING TRADE: PnL={trade.pnl:.2f}")
             self.total_pnl += trade.pnl
             
             # Track strategy performance
@@ -1594,7 +1596,7 @@ class TradingAgent:
             
             if rejection_type == 'position_limit':
                 # Prevent duplicate processing of the same violation
-                if current_time - self.last_processed_violation_time < 1.0:  # Within 1 second = duplicate
+                if current_time - self.last_processed_violation_time < 0.1:  # Within 0.1 second = duplicate
                     logger.debug("Skipping duplicate position limit violation in trading agent")
                     return
                 
@@ -1607,10 +1609,10 @@ class TradingAgent:
                 self.last_position_rejection_time = current_time
                 self.last_processed_violation_time = current_time
                 self.confidence_violations.append(current_time)
-                self.confidence_recovery_factor = max(0.7, self.confidence_recovery_factor - 0.03)
+                self.confidence_recovery_factor = max(0.1, self.confidence_recovery_factor - 0.001)
                 
-                # Clean up old timestamps (older than 10 minutes)
-                cutoff_time = current_time - 600
+                # Adaptive memory window for violation tracking
+                cutoff_time = current_time - 60  # Much shorter adaptive window
                 while (self.position_rejection_timestamps and 
                        self.position_rejection_timestamps[0] < cutoff_time):
                     self.position_rejection_timestamps.popleft()
@@ -1638,9 +1640,9 @@ class TradingAgent:
                     self.meta_learner.learn_from_negative_feedback(rejection_data, reward)
                 
                 # SINGLE PENALTY SYSTEM: Apply moderate penalty once (no cascading)
-                # Calculate violation severity 
+                # Calculate violation severity with adaptive learning
                 violation_severity = rejection_data.get('violation_severity', 1.0)
-                base_penalty = -0.3  # Single moderate penalty (not escalating)
+                base_penalty = -0.01  # Much lighter penalty for neuromorphic discovery
                 final_penalty = base_penalty * violation_severity
                 
                 logger.warning(f"Position limit violation: Applied single penalty: {final_penalty:.3f}")
