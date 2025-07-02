@@ -308,7 +308,7 @@ class PersonalityIntegration:
                 self.last_commentary_time = time.time()
                 
                 if self.config.log_commentary:
-                    logger.info(f"Periodic Commentary: {commentary_response.text}")
+                    logger.info(f"\n\n[DOPAMINE]: {commentary_response.text}\n")
                 
                 return commentary_response.text
             
