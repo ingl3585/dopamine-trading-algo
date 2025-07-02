@@ -8,8 +8,10 @@ from src.intelligence.intelligence_engine import IntelligenceEngine
 from src.agent.trading_agent import TradingAgent
 from src.risk.risk_manager import RiskManager
 from src.communication.tcp_bridge import TCPServer
-from src.portfolio.portfolio_manager import PortfolioManager
+from src.portfolio.portfolio import Portfolio
 from src.core.config import Config
+from src.core.dependency_registry import registry, register_service
+from src.core.state_coordinator import state_coordinator, register_state_component
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +19,7 @@ logger = logging.getLogger(__name__)
 try:
     from src.personality.config_manager import PersonalityConfigManager
     from src.personality.trading_personality import TradingPersonality, TriggerEvent
+    from src.personality.personality_integration import PersonalityIntegration, PersonalityIntegrationConfig
     PERSONALITY_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"Personality system not available: {e}")
@@ -26,13 +29,19 @@ logger = logging.getLogger(__name__)
 
 class TradingSystem:
     def __init__(self):
-        logger.info("Initializing trading system with historical bootstrapping")
+        logger.info("Initializing trading system with coordinated architecture")
         self.config = Config()
-        self.portfolio = PortfolioManager(self.config)
+        self.portfolio = Portfolio()
         self.data_processor = DataProcessor()
         self.intelligence = IntelligenceEngine(self.config)
         self.agent = TradingAgent(self.intelligence, self.portfolio)
         self.risk_manager = RiskManager(self.portfolio, self.agent.meta_learner, self.agent)
+        
+        # Register services in dependency registry
+        self._setup_dependency_injection()
+        
+        # Register components for coordinated state management
+        self._setup_state_coordination()
         
         self.tcp_server = TCPServer()
         self.tcp_server.on_market_data = self._process_market_data
@@ -47,29 +56,111 @@ class TradingSystem:
         # Enhanced tracking
         self.total_decisions = 0
         self.data_updates_received = 0
-        self.last_detailed_log = time.time()
         
         # Account monitoring
         self.last_account_balance = 0.0
         self.account_change_threshold = 0.05
         
-        # AI Trading Personality Integration
+        # AI Trading Personality Integration with Enhanced Context
         self.personality = None
+        self.personality_integration = None
         if PERSONALITY_AVAILABLE:
             try:
                 personality_config_manager = PersonalityConfigManager()
-                personality_config = personality_config_manager.get_personality_config()
-                if personality_config_manager.get_integration_config().enabled:
-                    self.personality = TradingPersonality(personality_config)
-                    logger.info(f"AI Trading Personality '{personality_config.personality_name}' initialized")
+                integration_config = personality_config_manager.get_integration_config()
+                if integration_config.enabled:
+                    # Use enhanced PersonalityIntegration for better context
+                    integration_config_obj = PersonalityIntegrationConfig(
+                        enabled=True,
+                        personality_name=integration_config.personality_name,
+                        auto_commentary=integration_config.auto_commentary,
+                        llm_model=integration_config.llm_model,
+                        llm_api_key=integration_config.llm_api_key
+                    )
+                    self.personality_integration = PersonalityIntegration(integration_config_obj)
+                    # Keep backward compatibility
+                    self.personality = self.personality_integration.personality
+                    logger.info(f"Enhanced AI Trading Personality '{integration_config.personality_name}' initialized")
                 else:
                     logger.info("AI Trading Personality disabled in configuration")
             except Exception as e:
                 logger.error(f"Failed to initialize AI Trading Personality: {e}")
                 self.personality = None
+                self.personality_integration = None
         
-        # Load previous state if available
-        self._load_state()
+        # Load previous state if available using state coordinator
+        self._load_coordinated_state()
+    
+    def _setup_dependency_injection(self):
+        """Setup dependency injection to break circular imports"""
+        try:
+            # Register key services that might have circular dependencies
+            register_service('config', type(self.config), lambda: self.config)
+            register_service('portfolio', type(self.portfolio), lambda: self.portfolio)
+            register_service('intelligence', type(self.intelligence), lambda: self.intelligence)
+            register_service('agent', type(self.agent), lambda: self.agent)
+            register_service('risk_manager', type(self.risk_manager), lambda: self.risk_manager)
+            
+            # Register adaptation engine when needed
+            def create_adaptation_engine():
+                from src.agent.real_time_adaptation import RealTimeAdaptationEngine
+                return RealTimeAdaptationEngine(model_dim=64)
+            
+            register_service('adaptation_engine', None, create_adaptation_engine)
+            
+            logger.info("Dependency injection setup completed")
+            
+        except Exception as e:
+            logger.error(f"Failed to setup dependency injection: {e}")
+    
+    def _setup_state_coordination(self):
+        """Setup coordinated state management for all components"""
+        try:
+            # Register portfolio state management
+            register_state_component(
+                'portfolio',
+                lambda: self.portfolio.__dict__.copy(),
+                lambda state: setattr(self.portfolio, '__dict__', state),
+                priority=10
+            )
+            
+            # Register agent state management (high priority)
+            register_state_component(
+                'agent',
+                lambda: {'model_state': 'placeholder'},  # Agent will implement proper state methods
+                lambda state: None,  # Agent will implement proper load
+                priority=20
+            )
+            
+            # Register intelligence state management
+            register_state_component(
+                'intelligence',
+                lambda: self.intelligence.save_patterns('data/intelligence_state.json'),  # Use proper filepath
+                lambda state: None,  # Intelligence will implement proper load
+                priority=15
+            )
+            
+            # Enable auto-save every 5 minutes
+            state_coordinator.enable_auto_save(300)
+            
+            logger.info("State coordination setup completed")
+            
+        except Exception as e:
+            logger.error(f"Failed to setup state coordination: {e}")
+    
+    def _load_coordinated_state(self):
+        """Load state using state coordinator"""
+        try:
+            latest_state_file = state_coordinator.get_latest_state_file()
+            if latest_state_file:
+                logger.info(f"Loading coordinated state from {latest_state_file}")
+                state_coordinator.load_state(str(latest_state_file))
+            else:
+                logger.info("No previous state file found, starting fresh")
+        except Exception as e:
+            logger.error(f"Failed to load coordinated state: {e}")
+            # Fallback to individual component loading
+            self._load_state()
 
     def start(self):
         logger.info("Starting trading system - waiting for historical data...")
@@ -84,37 +175,61 @@ class TradingSystem:
             self.shutdown()
 
     def _main_loop(self):
+        import threading
+        
+        # Use event-driven approach instead of polling
+        stop_event = threading.Event()
+        
+        def periodic_tasks():
+            while self.running and not stop_event.is_set():
+                current_time = time.time()
+                
+                # Check auto-save and save state every 5 minutes
+                state_coordinator.check_auto_save()
+                if current_time - self.last_save > 300:
+                    self._save_coordinated_state()
+                    self.last_save = current_time
+                
+                # Wait with interruptible sleep
+                stop_event.wait(timeout=60)  # Check every minute instead of every 0.1s
+        
+        # Start periodic tasks in background
+        periodic_thread = threading.Thread(target=periodic_tasks, daemon=True)
+        periodic_thread.start()
+        
+        # Main loop for readiness check (minimal CPU usage)
         while self.running:
-            time.sleep(0.1)
-            
             # Wait for historical data processing before starting trading
             if not self.ready_for_trading:
                 if self.tcp_server.is_ready_for_live_trading() and self.intelligence.historical_processed:
                     self.ready_for_trading = True
                     logger.info("=== READY FOR LIVE TRADING ===")
                     self._log_bootstrap_summary()
-                continue
+                    # Switch to event-driven mode after ready
+                    break
+                else:
+                    time.sleep(1.0)  # Check readiness every second, not 0.1s
+            else:
+                break
+        
+        # Once ready, minimal polling for shutdown
+        while self.running:
+            time.sleep(5.0)  # Much less frequent polling
+        
+        # Signal periodic tasks to stop
+        stop_event.set()
+        periodic_thread.join(timeout=2)
             
-            # Enhanced status logging every 2 minutes during live trading
-            current_time = time.time()
-            if current_time - self.last_detailed_log > 120:  # Every 2 minutes
-                self._log_detailed_status()
-                self.last_detailed_log = current_time
-            
-            # Save state every 5 minutes
-            if current_time - self.last_save > 300:
-                self._save_state()
-                self.last_save = current_time
-            
-            # Log performance summary every 30 minutes
-            if current_time - self.last_account_update > 1800:
-                self._log_performance_summary()
-                self.last_account_update = current_time
 
     def _process_historical_data(self, historical_data):
         """Process historical data for pattern bootstrapping and priming the data processor."""
         try:
             logger.info("Processing historical data for pattern learning...")
+            
+            # Validate historical data quality
+            if not self._validate_historical_data(historical_data):
+                logger.error("Historical data validation failed - system not ready for trading")
+                return
             
             # Bootstrap the intelligence engine with historical patterns
             self.intelligence.bootstrap_from_historical_data(historical_data)
@@ -126,8 +241,76 @@ class TradingSystem:
             # Signal that historical processing is complete
             logger.info("Historical data processing complete")
             
+            # Generate initial personality commentary after learning
+            self._generate_initial_commentary()
+            
         except Exception as e:
             logger.error(f"Error processing historical data: {e}")
+    
+    def _validate_historical_data(self, historical_data):
+        """Validate historical data quality and completeness"""
+        try:
+            if not historical_data:
+                logger.error("Historical data is empty")
+                return False
+            
+            # Check for required data structures
+            required_fields = ['bars_4h', 'bars_1h', 'bars_15m', 'bars_5m', 'bars_1m']
+            for field in required_fields:
+                if field not in historical_data:
+                    logger.error(f"Missing required field: {field}")
+                    return False
+                
+                bars = historical_data[field]
+                if not isinstance(bars, list) or len(bars) < 10:
+                    logger.error(f"Insufficient data in {field}: {len(bars) if isinstance(bars, list) else 'invalid'} bars")
+                    return False
+            
+            # Validate data quality
+            for timeframe, bars in [(k, v) for k, v in historical_data.items() if k.startswith('bars_')]:
+                if not self._validate_bars_quality(bars, timeframe):
+                    return False
+            
+            logger.info(f"Historical data validation passed: "
+                       f"4h={len(historical_data.get('bars_4h', []))}, "
+                       f"1h={len(historical_data.get('bars_1h', []))}, "
+                       f"15m={len(historical_data.get('bars_15m', []))}, "
+                       f"5m={len(historical_data.get('bars_5m', []))}, "
+                       f"1m={len(historical_data.get('bars_1m', []))} bars")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error validating historical data: {e}")
+            return False
+    
+    def _validate_bars_quality(self, bars, timeframe):
+        """Validate individual bars for data quality"""
+        try:
+            if not bars or len(bars) < 5:
+                logger.error(f"Insufficient bars for {timeframe}: {len(bars)}")
+                return False
+            
+            # Check for valid price data
+            valid_bars = 0
+            for bar in bars:
+                if isinstance(bar, dict):
+                    required_fields = ['open', 'high', 'low', 'close', 'volume']
+                    if all(field in bar and isinstance(bar[field], (int, float)) and bar[field] > 0 
+                           for field in required_fields[:4]):  # OHLC must be positive
+                        if bar['high'] >= bar['low'] and bar['high'] >= max(bar['open'], bar['close']):
+                            valid_bars += 1
+            
+            quality_ratio = valid_bars / len(bars)
+            if quality_ratio < 0.9:  # 90% quality threshold
+                logger.error(f"Poor data quality for {timeframe}: {quality_ratio:.1%} valid bars")
+                return False
+            
+            logger.info(f"{timeframe} data quality: {quality_ratio:.1%} ({valid_bars}/{len(bars)} valid bars)")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error validating bars quality for {timeframe}: {e}")
+            return False
 
     def _process_market_data(self, raw_data):
         # Only process live market data if we're ready for trading
@@ -147,33 +330,62 @@ class TradingSystem:
                 logger.warning("Market data processing returned None")
                 return
             
-            # Log market data quality every 10 updates
-            if self.data_updates_received % 10 == 0:
-                logger.info(f"Market data: Price={market_data.price:.2f}, "
-                           f"1m_bars={len(market_data.prices_1m)}, "
-                           f"5m_bars={len(market_data.prices_5m)}, "
-                           f"15m_bars={len(market_data.prices_15m)}")
+            # Check for new higher timeframe bars and trigger enhanced analysis
+            if self.data_processor.check_and_reset_15m_bar_flag():
+                logger.info(f"New 15m bar: {market_data.price:.2f} (Account: ${market_data.account_balance:.0f}, Daily P&L: ${market_data.daily_pnl:.2f})")
+                self._trigger_15m_commentary(market_data)
+            
+            # New 1H bar triggers enhanced regime analysis
+            if self.data_processor.check_and_reset_1h_bar_flag():
+                logger.info(f"New 1H bar: {market_data.price:.2f} - Triggering enhanced regime analysis")
+                self._trigger_1h_analysis(market_data)
+            
+            # New 4H bar triggers major trend analysis  
+            if self.data_processor.check_and_reset_4h_bar_flag():
+                logger.info(f"New 4H bar: {market_data.price:.2f} - Triggering major trend analysis")
+                self._trigger_4h_analysis(market_data)
             
             # Check for significant account changes and adapt
             self._check_account_adaptation(market_data)
                 
             features = self.intelligence.extract_features(market_data)
             
-            # Log intelligence analysis every 5 updates
-            if self.data_updates_received % 5 == 0:
-                logger.info(f"Intelligence: DNA={features.dna_signal:.3f}, "
-                           f"Temporal={features.temporal_signal:.3f}, "
-                           f"Immune={features.immune_signal:.3f}, "
-                           f"Overall={features.overall_signal:.3f}, "
-                           f"Confidence={features.confidence:.3f}")
+            # Simplified intelligence logging every 20 updates
+            if self.data_updates_received % 20 == 0:
+                logger.info(f"Intelligence: Overall={features.overall_signal:.3f}, Confidence={features.confidence:.3f}")
             
             decision = self.agent.decide(features, market_data)
             self.total_decisions += 1
             
-            # Always log decision details
+            # Enhanced decision logging with confidence monitoring
+            confidence_status = "CRITICAL" if decision.confidence < 0.2 else "LOW" if decision.confidence < 0.4 else "NORMAL"
+            confidence_change = ""
+            
+            # Track confidence changes
+            if hasattr(self.agent, '_last_logged_confidence'):
+                change = decision.confidence - self.agent._last_logged_confidence
+                confidence_change = f" ({change:+.3f})"
+            self.agent._last_logged_confidence = decision.confidence
+            
+            # Log detailed confidence information
             logger.info(f"Decision #{self.total_decisions}: {decision.action.upper()} "
-                       f"(Size: {decision.size:.1f}, Conf: {decision.confidence:.3f}, "
+                       f"(Size: {decision.size:.1f}, Conf: {decision.confidence:.3f}{confidence_change} [{confidence_status}], "
                        f"Tool: {decision.primary_tool}, Exploration: {decision.exploration})")
+            
+            # Additional confidence monitoring for problematic values
+            if decision.confidence < 0.3:
+                recent_rejections = getattr(self.agent, 'recent_position_rejections', 0)
+                recovery_factor = getattr(self.agent, 'confidence_recovery_factor', 1.0)
+                logger.warning(f"LOW CONFIDENCE DETECTED: {decision.confidence:.3f} "
+                              f"(Recent rejections: {recent_rejections}, Recovery factor: {recovery_factor:.2f})")
+                
+                # Log confidence recovery status
+                if hasattr(self.agent, 'last_position_rejection_time') and self.agent.last_position_rejection_time > 0:
+                    time_since_rejection = time.time() - self.agent.last_position_rejection_time
+                    logger.info(f"Time since last rejection: {time_since_rejection/60:.1f} minutes")
+            
+            # LLM commentary now handled by 15-minute bar triggers only
+            # (Per-decision commentary disabled to avoid duplicate messages)
             
             if decision.action == 'hold':
                 return
@@ -215,11 +427,34 @@ class TradingSystem:
             logger.error(f"Raw data keys: {list(raw_data.keys()) if isinstance(raw_data, dict) else 'Not a dict'}")
 
     def _learn_from_outcome(self, outcome):
-        """Sequential learning coordinator - eliminates race conditions"""
-        # Phase 1: Subsystems learn first (no conflicts)
-        self.intelligence.learn_from_outcome(outcome)
-        # Phase 2: RL agent learns second (uses updated subsystem weights)
-        self.agent.learn_from_trade(outcome)
+        """Thread-safe sequential learning coordinator - eliminates race conditions"""
+        import threading
+        
+        # Use lock to ensure atomic learning sequence
+        if not hasattr(self, '_learning_lock'):
+            self._learning_lock = threading.Lock()
+        
+        with self._learning_lock:
+            try:
+                # Phase 1: Intelligence subsystems learn first (establish base patterns)
+                logger.debug("Phase 1: Intelligence learning from outcome")
+                self.intelligence.learn_from_outcome(outcome)
+                
+                # Phase 2: Agent learns second (uses updated subsystem state)
+                logger.debug("Phase 2: Agent learning from outcome") 
+                self.agent.learn_from_trade(outcome)
+                
+                # Phase 3: Risk learning engine updates (uses both intelligence and agent state)
+                logger.debug("Phase 3: Risk learning from outcome")
+                if hasattr(self.risk_manager, 'risk_learning'):
+                    self.risk_manager.risk_learning.learn_from_outcome(outcome)
+                
+                logger.debug("Sequential learning completed successfully")
+                
+            except Exception as e:
+                logger.error(f"Error in sequential learning: {e}")
+                # Continue operation even if learning fails
+                pass
 
     # Rest of the methods remain the same...
     def _process_trade_completion(self, completion_data):
@@ -251,6 +486,12 @@ class TradingSystem:
                           f"Reason: {trade.exit_reason} "
                           f"Regime: {risk_summary.get('current_regime', 'unknown')}")
                 
+                # Debug: Log portfolio statistics after trade completion
+                portfolio_summary = self.portfolio.get_summary()
+                logger.info(f"Portfolio after trade: {portfolio_summary['total_trades']} trades, "
+                           f"Win rate: {portfolio_summary['win_rate']:.1%}, "
+                           f"Daily P&L: ${portfolio_summary['daily_pnl']:.2f}")
+                
                 # AI Personality Commentary removed - only triggers on system status
                 
                 # Check for significant account changes after trade
@@ -270,10 +511,11 @@ class TradingSystem:
             logger.info(f"Historical bars processed: {bootstrap_stats['total_bars_processed']}")
             logger.info(f"Patterns discovered: {bootstrap_stats['patterns_discovered']}")
             logger.info(f"Bootstrap time: {bootstrap_stats['bootstrap_time']:.1f}s")
-            logger.info(f"DNA patterns: {intelligence_stats['dna_patterns']}")
-            logger.info(f"Micro patterns: {intelligence_stats['micro_patterns']}")
-            logger.info(f"Temporal patterns: {intelligence_stats['temporal_patterns']}")
-            logger.info(f"Immune patterns: {intelligence_stats['immune_patterns']}")
+            logger.info(f"Subsystem Patterns: DNA={intelligence_stats['dna_patterns']}, "
+                       f"Micro={intelligence_stats['micro_patterns']}, "
+                       f"Temporal={intelligence_stats['temporal_patterns']}, "
+                       f"Immune={intelligence_stats['immune_patterns']}, "
+                       f"Dopamine={intelligence_stats['dopamine_patterns']}")
             logger.info("System ready for live trading with pre-learned patterns")
             logger.info("=" * 30)
             
@@ -281,64 +523,44 @@ class TradingSystem:
             logger.error(f"Error logging bootstrap summary: {e}")
 
     def _log_detailed_status(self):
-        """Log detailed system status during live trading"""
-        try:
-            logger.info("=== SYSTEM STATUS ===")
-            logger.info(f"Data updates received: {self.data_updates_received}")
-            logger.info(f"Total decisions made: {self.total_decisions}")
-            
-            # Portfolio status
-            portfolio_summary = self.portfolio.get_summary()
-            logger.info(f"Portfolio: {portfolio_summary['total_trades']} trades, "
-                       f"Win rate: {portfolio_summary['win_rate']:.1%}, "
-                       f"Daily P&L: ${portfolio_summary['daily_pnl']:.2f}")
-            
-            # Agent status
-            agent_stats = self.agent.get_stats()
-            logger.info(f"Agent: {agent_stats['total_decisions']} decisions, "
-                       f"Success rate: {agent_stats['success_rate']:.1%}, "
-                       f"Learning efficiency: {agent_stats['learning_efficiency']:.1%}")
-            
-            # Intelligence status
-            intelligence_stats = self.intelligence.get_stats()
-            logger.info(f"Intelligence: DNA={intelligence_stats['dna_patterns']}, "
-                       f"Micro={intelligence_stats['micro_patterns']}, "
-                       f"Temporal={intelligence_stats['temporal_patterns']}, "
-                       f"Immune={intelligence_stats['immune_patterns']}")
-            
-            # Connection status
-            logger.info(f"TCP: {self.tcp_server.data_received} data messages, "
-                       f"{self.tcp_server.signals_sent} signals sent")
-            
-            # AI Personality Commentary - Only on System Status
-            if self.personality:
-                self._trigger_personality_system_update()
-            
-            logger.info("=" * 20)
-            
-        except Exception as e:
-            logger.error(f"Error logging detailed status: {e}")
+        """DEPRECATED: Heavy system monitoring replaced with 15m commentary"""
+        # This method was called every 2 minutes and generated excessive logs
+        # Now replaced with intelligent commentary triggered on 15-minute bars
+        pass
 
     def _check_account_adaptation(self, market_data):
-        """Check if we need to adapt to account balance changes"""
-        current_balance = market_data.account_balance
+        """Thread-safe account balance change detection and adaptation"""
+        if not hasattr(self, '_account_lock'):
+            import threading
+            self._account_lock = threading.Lock()
         
-        if self.last_account_balance == 0.0:
-            self.last_account_balance = current_balance
-            logger.info(f"Initial account balance: ${current_balance:.2f}")
-            return
-        
-        # Check for significant balance changes
-        balance_change = abs(current_balance - self.last_account_balance) / self.last_account_balance
-        
-        if balance_change > self.account_change_threshold:
-            logger.info(f"Significant account change detected: "
-                       f"${self.last_account_balance:.2f} -> ${current_balance:.2f} "
-                       f"({balance_change:.1%})")
+        with self._account_lock:
+            current_balance = market_data.account_balance
+            current_time = time.time()
             
-            # Trigger meta-learner adaptation
-            self.agent.meta_learner.adapt_to_account_size(current_balance)
-            self.last_account_balance = current_balance
+            # Initialize on first run
+            if self.last_account_balance == 0.0:
+                self.last_account_balance = current_balance
+                self.last_account_update = current_time
+                logger.info(f"Initial account balance: ${current_balance:.2f}")
+                return
+            
+            # Rate limiting: only check every 30 seconds to avoid race conditions
+            if current_time - self.last_account_update < 30:
+                return
+            
+            # Check for significant balance changes
+            balance_change = abs(current_balance - self.last_account_balance) / self.last_account_balance
+            
+            if balance_change > self.account_change_threshold:
+                logger.info(f"Significant account change detected: "
+                           f"${self.last_account_balance:.2f} -> ${current_balance:.2f} "
+                           f"({balance_change:.1%})")
+                
+                # Trigger meta-learner adaptation
+                self.agent.meta_learner.adapt_to_account_size(current_balance)
+                self.last_account_balance = current_balance
+                self.last_account_update = current_time
     
     def _update_account_tracking(self, new_balance):
         """Update account tracking after trade"""
@@ -371,7 +593,8 @@ class TradingSystem:
             logger.info(f"Intelligence Patterns: DNA={intelligence_stats['dna_patterns']}, "
                        f"Micro={intelligence_stats['micro_patterns']}, "
                        f"Temporal={intelligence_stats['temporal_patterns']}, "
-                       f"Immune={intelligence_stats['immune_patterns']}")
+                       f"Immune={intelligence_stats['immune_patterns']}, "
+                       f"Dopamine={intelligence_stats['dopamine_patterns']}")
             
             # Advanced risk metrics
             logger.info(f"Risk Regime: {risk_summary.get('current_regime', 'unknown')}")
@@ -388,6 +611,126 @@ class TradingSystem:
             
         except Exception as e:
             logger.error(f"Error logging performance summary: {e}")
+
+    def _generate_initial_commentary(self):
+        """Generate initial personality commentary after learning from historical data"""
+        if not self.personality_integration or not self.personality_integration.is_enabled():
+            return
+            
+        try:
+            # Get initial system state after learning
+            agent_stats = self.agent.get_stats()
+            intelligence_stats = self.intelligence.get_stats()
+            
+            # Create dummy market data for initial context (using last known data)
+            dummy_market_data = type('MockMarketData', (), {
+                'price': 0.0,
+                'account_balance': 25000.0,
+                'daily_pnl': 0.0,
+                'net_liquidation': 25000.0,
+                'timestamp': time.time(),
+                'prices_1m': [22400.0] * 25,  # Dummy price data
+                'volumes_1m': [1000] * 25,   # Dummy volume data
+                'prices_5m': [22400.0] * 10,
+                'volumes_5m': [5000] * 10,
+                'prices_15m': [22400.0] * 5,
+                'volumes_15m': [15000] * 5,
+                'volatility': 0.02,
+                'position_size': 0,
+                'unrealized_pnl': 0.0,
+                'margin_utilization': 0.0,
+                'buying_power': 25000.0,
+                'buying_power_ratio': 1.0,
+                'daily_pnl_pct': 0.0
+            })()
+            
+            # Extract initial features
+            features = self.intelligence.extract_features(dummy_market_data)
+            
+            logger.info(f"Initial Commentary Trigger: Learning complete, "
+                       f"Neural confidence={features.confidence:.3f}, "
+                       f"Patterns learned={intelligence_stats.get('total_patterns', 0)}")
+            
+            # Generate initial commentary
+            import asyncio
+            import threading
+            
+            def run_initial_commentary():
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    
+                    # Use special trigger for initial commentary
+                    from src.personality.trading_personality import TriggerEvent
+                    commentary = loop.run_until_complete(
+                        self.personality_integration.process_trading_decision(
+                            None,  # No decision yet
+                            features,
+                            dummy_market_data,
+                            self.agent,
+                            trigger_event=TriggerEvent.SYSTEM_START
+                        )
+                    )
+                    
+                    if commentary:
+                        print(f"\n{'='*80}")
+                        print(f"[DOPAMINE INITIAL ANALYSIS] {commentary}")
+                        print(f"{'='*80}\n")
+                        logger.info(f"[INITIAL] {commentary}")
+                    
+                    loop.close()
+                except Exception as e:
+                    logger.warning(f"Initial commentary failed: {e}")
+            
+            # Run in background thread
+            commentary_thread = threading.Thread(target=run_initial_commentary, daemon=True)
+            commentary_thread.start()
+            
+        except Exception as e:
+            logger.error(f"Error generating initial commentary: {e}")
+
+    def _trigger_15m_commentary(self, market_data):
+        """Trigger LLM commentary on new 15-minute bars"""
+        if not self.personality_integration:
+            return
+            
+        try:
+            # Get current system state for comprehensive context
+            portfolio_summary = self.portfolio.get_summary()
+            agent_stats = self.agent.get_stats()
+            intelligence_stats = self.intelligence.get_stats()
+            
+            # Extract features for current market conditions
+            features = self.intelligence.extract_features(market_data)
+            
+            logger.info(f"15m Commentary Trigger: Price={market_data.price:.2f}, "
+                       f"Overall_Signal={features.overall_signal:.3f}, "
+                       f"Trades={portfolio_summary['total_trades']}, "
+                       f"P&L=${portfolio_summary['daily_pnl']:.2f}")
+            
+            # Trigger the periodic commentary function (now on 15m bars)
+            import asyncio
+            if not hasattr(self, '_commentary_loop'):
+                # Create event loop for async commentary if needed
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                # Run commentary generation
+                commentary = loop.run_until_complete(
+                    self.personality_integration.periodic_commentary()
+                )
+                
+                if commentary:
+                    # Single unified output for 15-minute commentary
+                    logger.info(f"\n\n[DOPAMINE] {commentary}\n")
+                else:
+                    logger.debug("No commentary generated for this 15m bar")
+                    
+        except Exception as e:
+            logger.error(f"Error triggering 15m commentary: {e}")
 
     def _save_state(self):
         """
@@ -436,6 +779,20 @@ class TradingSystem:
         except Exception as e:
             logger.error(f"Error saving state: {e}")
     
+    def _save_coordinated_state(self):
+        """Save state using state coordinator (replaces _save_state)"""
+        try:
+            logger.debug("Triggering coordinated state save")
+            success = state_coordinator.save_state()
+            if success:
+                logger.info("Coordinated state save completed successfully")
+            else:
+                logger.warning("Coordinated state save had some failures")
+        except Exception as e:
+            logger.error(f"Error in coordinated state save: {e}")
+            # Fallback to old method
+            self._save_state()
+    
     def _load_state(self):
         try:
             self.agent.load_model('models/agent.pt')
@@ -465,7 +822,7 @@ class TradingSystem:
         logger.info("Shutting down trading system")
         self.running = False
         
-        self._save_state()
+        self._save_coordinated_state()
         self.tcp_server.stop()
         
         # Final performance summary
@@ -484,7 +841,9 @@ class TradingSystem:
         if intelligence_stats['historical_processed']:
             logger.info(f"Final pattern count: DNA={intelligence_stats['dna_patterns']}, "
                        f"Micro={intelligence_stats['micro_patterns']}, "
-                       f"Temporal={intelligence_stats['temporal_patterns']}")
+                       f"Temporal={intelligence_stats['temporal_patterns']}, "
+                       f"Immune={intelligence_stats['immune_patterns']}, "
+                       f"Dopamine={intelligence_stats['dopamine_patterns']}")
         
         # Shutdown personality system
         if self.personality:
@@ -625,34 +984,109 @@ class TradingSystem:
                 }
             }
             
-            # Trigger async commentary (don't wait for it)
-            import asyncio
-            try:
-                # Try to run in existing event loop
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # Schedule as task in running loop
-                    loop.create_task(self._async_personality_system_commentary(context))
-                else:
-                    # Create new event loop
-                    asyncio.run(self._async_personality_system_commentary(context))
-            except RuntimeError:
-                # No event loop, create new one
-                asyncio.run(self._async_personality_system_commentary(context))
+            # Old periodic commentary system removed - using enhanced real-time system instead
+            pass
                 
         except Exception as e:
             logger.error(f"Error triggering personality system update: {e}")
 
-    async def _async_personality_system_commentary(self, context):
-        """Async handler for periodic personality commentary"""
+    # Removed old periodic commentary system - now using enhanced real-time system
+    
+    def _trigger_1h_analysis(self, market_data):
+        """Trigger enhanced regime and trend analysis on new 1H bars"""
         try:
-            commentary = await self.personality.process_trading_event(TriggerEvent.PERIODIC_UPDATE, context)
-            if commentary:
-                # Log the commentary prominently 
-                logger.info(f"AI {self.personality.config.personality_name}: {commentary.text}")
-                
-                # Also print to console for immediate visibility
-                print(f"\n[{self.personality.config.personality_name}]: {commentary.text}\n")
-                
+            # Extract enhanced features with multi-timeframe analysis
+            features = self.intelligence.extract_features(market_data)
+            
+            # Log enhanced 1H analysis
+            logger.info(f"1H ANALYSIS - Trend: {features.higher_tf_bias:.4f}, "
+                       f"1H TF: {features.trend_1h:.4f}, "
+                       f"Alignment: {features.trend_alignment:.3f}, "
+                       f"Regime: {features.regime_confidence:.3f}")
+            
+            # Trigger adaptation engine update with enhanced context
+            if hasattr(self.agent, 'adaptation_engine'):
+                self.agent.adaptation_engine.process_regime_change({
+                    'timeframe': '1H',
+                    'trend_1h': features.trend_1h,
+                    'higher_tf_bias': features.higher_tf_bias,
+                    'trend_alignment': features.trend_alignment,
+                    'volatility_1h': features.volatility_1h
+                })
+            
+            # Update meta-learner with higher timeframe insights
+            self.agent.meta_learner.update_regime_parameters({
+                'trend_strength_1h': abs(features.trend_1h),
+                'trend_direction_1h': 1 if features.trend_1h > 0 else -1,
+                'volatility_regime_1h': 'high' if features.volatility_1h > 0.03 else 'normal'
+            })
+            
         except Exception as e:
-            logger.error(f"Error in async personality system commentary: {e}")
+            logger.error(f"Error in 1H analysis: {e}")
+    
+    def _trigger_4h_analysis(self, market_data):
+        """Trigger major trend and bias analysis on new 4H bars"""
+        try:
+            # Extract enhanced features with multi-timeframe analysis
+            features = self.intelligence.extract_features(market_data)
+            
+            # Log major 4H trend analysis
+            logger.info(f"4H MAJOR TREND ANALYSIS - Bias: {features.higher_tf_bias:.4f}, "
+                       f"4H TF: {features.trend_4h:.4f}, "
+                       f"Multi-TF Alignment: {features.trend_alignment:.3f}, "
+                       f"Vol 4H: {features.volatility_4h:.4f}")
+            
+            # Update trading bias based on 4H analysis
+            trend_4h = features.trend_4h
+            if abs(trend_4h) > 0.005:  # Significant 4H trend
+                bias_strength = min(abs(trend_4h) * 10, 1.0)  # Scale to 0-1
+                bias_direction = 1 if trend_4h > 0 else -1
+                
+                logger.info(f"4H BIAS UPDATE: Direction={bias_direction}, Strength={bias_strength:.3f}")
+                
+                # Update meta-learner with major trend bias
+                self.agent.meta_learner.update_trend_bias({
+                    'direction': bias_direction,
+                    'strength': bias_strength,
+                    'timeframe': '4H',
+                    'confidence': features.regime_confidence
+                })
+            
+            # Trigger portfolio rebalancing assessment for major trend changes
+            portfolio_summary = self.portfolio.get_summary()
+            current_position = portfolio_summary.get('total_position_size', 0)
+            
+            # Alert if position is against major 4H trend
+            if current_position != 0 and trend_4h != 0:
+                position_bias = 1 if current_position > 0 else -1
+                trend_bias = 1 if trend_4h > 0 else -1
+                
+                if position_bias != trend_bias and abs(trend_4h) > 0.01:
+                    logger.warning(f"POSITION VS 4H TREND CONFLICT: Position={position_bias}, 4H Trend={trend_bias:.4f}")
+            
+            # Enhanced personality commentary for major timeframe changes
+            if self.personality_integration:
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                commentary = loop.run_until_complete(
+                    self.personality_integration.process_market_event(
+                        '4h_trend_change',
+                        {
+                            'trend_4h': trend_4h,
+                            'higher_tf_bias': features.higher_tf_bias,
+                            'trend_alignment': getattr(features, 'trend_alignment', 0.0),
+                            'current_position': current_position
+                        }
+                    )
+                )
+                
+                if commentary:
+                    logger.info(f"\n\n[DOPAMINE 4H ANALYSIS] {commentary}\n")
+            
+        except Exception as e:
+            logger.error(f"Error in 4H analysis: {e}")

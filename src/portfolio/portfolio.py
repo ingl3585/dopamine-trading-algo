@@ -2,6 +2,7 @@
 
 import json
 import time
+import logging
 
 from collections import deque
 from dataclasses import dataclass, asdict
@@ -9,6 +10,8 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from src.risk.risk_manager import Order
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class Trade:
@@ -62,9 +65,20 @@ class Portfolio:
             self._update_account_metrics(order.market_data)
         
     def complete_trade(self, completion_data: Dict) -> Optional[Trade]:
-        pnl = completion_data.get('final_pnl', 0.0)
+        # Store completion data for use in stats update
+        self._completion_data = completion_data
+        
+        # Use NinjaTrader's authoritative P&L data
+        pnl = completion_data.get('pnl', completion_data.get('final_pnl', 0.0))  # Try 'pnl' first, fallback to 'final_pnl'
         exit_price = completion_data.get('exit_price', 0.0)
         exit_reason = completion_data.get('exit_reason', 'unknown')
+        
+        # Validate and sync daily P&L with NinjaTrader (authoritative source)
+        ninja_daily_pnl = completion_data.get('daily_pnl')
+        if ninja_daily_pnl is not None:
+            if abs(self.daily_pnl - ninja_daily_pnl) > 0.01:  # Significant difference
+                logger.warning(f"DAILY P&L MISMATCH: Portfolio={self.daily_pnl:.2f}, NinjaTrader={ninja_daily_pnl:.2f}")
+            self.daily_pnl = ninja_daily_pnl  # Always use NinjaTrader's authoritative value
         
         # Find matching pending order
         matching_order = self._find_matching_order(completion_data)
@@ -125,19 +139,20 @@ class Portfolio:
         self.total_pnl += trade.pnl
         self.daily_pnl += trade.pnl
         
-        # Update account balance tracking
-        if trade.exit_account_balance > 0:
+        # Update account balance tracking - use NinjaTrader data when available
+        exit_balance = self._completion_data.get('account_balance', trade.exit_account_balance) if hasattr(self, '_completion_data') else trade.exit_account_balance
+        if exit_balance > 0:
             self.account_balance_history.append({
                 'timestamp': trade.exit_time,
-                'balance': trade.exit_account_balance,
+                'balance': exit_balance,
                 'pnl': trade.pnl
             })
             
             # Update peak and drawdown
-            if trade.exit_account_balance > self.peak_balance:
-                self.peak_balance = trade.exit_account_balance
+            if exit_balance > self.peak_balance:
+                self.peak_balance = exit_balance
             
-            current_drawdown = (self.peak_balance - trade.exit_account_balance) / self.peak_balance
+            current_drawdown = (self.peak_balance - exit_balance) / self.peak_balance if self.peak_balance > 0 else 0.0
             if current_drawdown > self.max_drawdown:
                 self.max_drawdown = current_drawdown
         
@@ -258,7 +273,7 @@ class Portfolio:
             'losing_trades': self.losing_trades,
             'win_rate': self.get_win_rate(),
             'total_pnl': self.total_pnl,
-            'daily_pnl': self.daily_pnl,
+            'daily_pnl': self.daily_pnl,  # Updated from NinjaTrader's authoritative daily_pnl
             'avg_pnl_per_trade': self.total_pnl / max(1, total_trades),
             'consecutive_losses': self.consecutive_losses,
             'pending_orders': len(self.pending_orders)
@@ -268,6 +283,24 @@ class Portfolio:
         summary.update(account_perf)
         
         return summary
+    
+    def sync_position_with_ninjatrader(self, ninja_position: int):
+        """Sync portfolio position tracking with NinjaTrader's authoritative position"""
+        logger.info(f"Syncing portfolio position to match NinjaTrader: {ninja_position}")
+        # This would require more complex position tracking
+        # For now, we log the sync event for monitoring
+        pass
+    
+    def get_total_position_size(self) -> int:
+        """Get current total position size from portfolio tracking"""
+        # Calculate from pending orders (approximation)
+        total_size = 0
+        for order in self.pending_orders.values():
+            if order.action == 'buy':
+                total_size += order.size
+            elif order.action == 'sell':
+                total_size -= order.size
+        return abs(total_size)
     
     def save_state(self, filepath: str):
         # Convert trades to serializable format

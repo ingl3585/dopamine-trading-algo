@@ -34,9 +34,13 @@ namespace NinjaTrader.NinjaScript.Strategies
         private List<double> prices1m = new List<double>();
         private List<double> prices5m = new List<double>();
         private List<double> prices15m = new List<double>();
+        private List<double> prices1h = new List<double>();
+        private List<double> prices4h = new List<double>();
         private List<double> volumes1m = new List<double>();
         private List<double> volumes5m = new List<double>();
         private List<double> volumes15m = new List<double>();
+        private List<double> volumes1h = new List<double>();
+        private List<double> volumes4h = new List<double>();
         
         // Enhanced account tracking
         private double lastAccountBalance = 0;
@@ -70,9 +74,11 @@ namespace NinjaTrader.NinjaScript.Strategies
 				    break;
 				
 				case State.Configure:
-				    AddDataSeries(BarsPeriodType.Minute, 15);
-				    AddDataSeries(BarsPeriodType.Minute, 5);
-				    AddDataSeries(BarsPeriodType.Minute, 1);
+				    AddDataSeries(BarsPeriodType.Minute, 15);  // BarsArray[1] - 15min
+				    AddDataSeries(BarsPeriodType.Minute, 5);   // BarsArray[2] - 5min  
+				    AddDataSeries(BarsPeriodType.Minute, 1);   // BarsArray[3] - 1min
+				    AddDataSeries(BarsPeriodType.Minute, 60);  // BarsArray[4] - 1hour
+				    AddDataSeries(BarsPeriodType.Minute, 240); // BarsArray[5] - 4hour
 				    break;
                     
                 case State.Realtime:
@@ -152,21 +158,25 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        int historyDays = 10;
 		        int barsToSend15m = Math.Min(historyDays * 96, BarsArray[1].Count); // 96 15-min bars per day
 		        int barsToSend5m = Math.Min(historyDays * 288, BarsArray[2].Count); // 288 5-min bars per day
-		        int barsToSend1m = Math.Min(historyDays * 1440, BarsArray[0].Count); // 1440 1-min bars per day (using primary)
+		        int barsToSend1m = Math.Min(historyDays * 1440, BarsArray[3].Count); // 1440 1-min bars per day
+		        int barsToSend1h = Math.Min(historyDays * 24, BarsArray[4].Count); // 24 1-hour bars per day
+		        int barsToSend4h = Math.Min(historyDays * 6, BarsArray[5].Count); // 6 4-hour bars per day
 		        
 		        var historicalData = new
 		        {
 		            type = "historical_data",
 		            bars_15m = GetHistoricalBars(BarsArray[1], barsToSend15m),
 		            bars_5m = GetHistoricalBars(BarsArray[2], barsToSend5m),
-		            bars_1m = GetHistoricalBars(BarsArray[0], barsToSend1m), // Using primary series as 1m data
+		            bars_1m = GetHistoricalBars(BarsArray[3], barsToSend1m),
+		            bars_1h = GetHistoricalBars(BarsArray[4], barsToSend1h),
+		            bars_4h = GetHistoricalBars(BarsArray[5], barsToSend4h),
 		            timestamp = DateTime.Now.Ticks
 		        };
 		        
 		        string json = SerializeHistoricalData(historicalData);
 		        SendJsonMessage(json);
 		        
-		        Print($"Historical data sent: {historicalData.bars_15m.Count} 15m bars, " +
+		        Print($"Historical data sent: {historicalData.bars_4h.Count} 4h bars, {historicalData.bars_1h.Count} 1h bars, {historicalData.bars_15m.Count} 15m bars, " +
 		              $"{historicalData.bars_5m.Count} 5m bars, {historicalData.bars_1m.Count} 1m bars");
 		              
 		        historicalDataSent = true;
@@ -211,6 +221,8 @@ namespace NinjaTrader.NinjaScript.Strategies
             sb.Append($"\"bars_15m\":{SerializeBarArray(data.bars_15m)},");
             sb.Append($"\"bars_5m\":{SerializeBarArray(data.bars_5m)},");
             sb.Append($"\"bars_1m\":{SerializeBarArray(data.bars_1m)},");
+            sb.Append($"\"bars_1h\":{SerializeBarArray(data.bars_1h)},");
+            sb.Append($"\"bars_4h\":{SerializeBarArray(data.bars_4h)},");
             sb.Append($"\"timestamp\":{data.timestamp}");
             sb.Append("}");
             return sb.ToString();
@@ -239,36 +251,50 @@ namespace NinjaTrader.NinjaScript.Strategies
             sb.Append("]");
             return sb.ToString();
         }
-        
-		private void UpdatePriceData()
-		{
-		    // Only update when processing the primary series to avoid duplicate updates
-		    if (BarsInProgress != 0) 
-		        return;
-		    
-		    // The primary series data (whatever timeframe the strategy is running on)
-		    // We'll treat this as our base timeframe
-		    UpdateList(prices1m, Close[0], 1000);
-		    UpdateList(volumes1m, Volume[0], 1000);
-		    
-		    // Update from additional series if they have data
-		    // BarsArray[1] = 15m series
-		    if (BarsArray.Length > 1 && BarsArray[1].Count > 0)
-		    {
-		        UpdateList(prices15m, Closes[1][0], 100);
-		        UpdateList(volumes15m, Volumes[1][0], 100);
-		    }
-		    
-		    // BarsArray[2] = 5m series  
-		    if (BarsArray.Length > 2 && BarsArray[2].Count > 0)
-		    {
-		        UpdateList(prices5m, Closes[2][0], 300);
-		        UpdateList(volumes5m, Volumes[2][0], 300);
-		    }
+
+        private void UpdatePriceData()
+        {
+            // Only update when processing the primary series to avoid duplicate updates
+            if (BarsInProgress != 0)
+                return;
+
+            // The primary series data (whatever timeframe the strategy is running on)
+            // We'll treat this as our base timeframe
+            UpdateList(prices1m, Close[0], 1000);
+            UpdateList(volumes1m, Volume[0], 1000);
+
+            // Update from additional series if they have data
+            // BarsArray[1] = 15m series
+            if (BarsArray.Length > 1 && BarsArray[1].Count > 0)
+            {
+                UpdateList(prices15m, Closes[1][0], 100);
+                UpdateList(volumes15m, Volumes[1][0], 100);
+            }
+
+            // BarsArray[2] = 5m series  
+            if (BarsArray.Length > 2 && BarsArray[2].Count > 0)
+            {
+                UpdateList(prices5m, Closes[2][0], 300);
+                UpdateList(volumes5m, Volumes[2][0], 300);
+            }
+
+            // BarsArray[4] = 1h series
+            if (BarsArray.Length > 4 && BarsArray[4].Count > 0)
+            {
+                UpdateList(prices1h, Closes[4][0], 50);
+                UpdateList(volumes1h, Volumes[4][0], 50);
+            }
+            
+            // BarsArray[5] = 4h series
+            if (BarsArray.Length > 5 && BarsArray[5].Count > 0)
+            {
+                UpdateList(prices4h, Closes[5][0], 30);
+                UpdateList(volumes4h, Volumes[5][0], 30);
+            }
 		    
 		    // Note: BarsArray[3] would be 1m, but we're using the primary series as our minute data
-		    // If you want true 1m data separate from primary, you'd access it here as Closes[3][0]
-		}
+            // If you want true 1m data separate from primary, you'd access it here as Closes[3][0]
+        }
         
         private void UpdateList(List<double> list, double value, int maxSize)
         {
@@ -343,10 +369,14 @@ namespace NinjaTrader.NinjaScript.Strategies
 		        sb.Append($"\"type\":\"live_data\",");
 		        sb.Append($"\"price_1m\":{SerializeDoubleArray(prices1m)},");
 		        sb.Append($"\"price_5m\":{SerializeDoubleArray(prices5m)},");
-		        sb.Append($"\"price_15m\":{SerializeDoubleArray(prices15m)},");
+                sb.Append($"\"price_15m\":{SerializeDoubleArray(prices15m)},");
+                sb.Append($"\"price_1h\":{SerializeDoubleArray(prices1h)},");
+                sb.Append($"\"price_4h\":{SerializeDoubleArray(prices4h)},");
 		        sb.Append($"\"volume_1m\":{SerializeDoubleArray(volumes1m)},");
 		        sb.Append($"\"volume_5m\":{SerializeDoubleArray(volumes5m)},");
 		        sb.Append($"\"volume_15m\":{SerializeDoubleArray(volumes15m)},");
+                sb.Append($"\"volume_1h\":{SerializeDoubleArray(volumes1h)},");
+                sb.Append($"\"volume_4h\":{SerializeDoubleArray(volumes4h)},");
 	
 		        double currentBalance     = Account.Get(AccountItem.CashValue,             Currency.UsDollar);
 		        double currentBuyingPower = Account.Get(AccountItem.ExcessIntradayMargin,  Currency.UsDollar);

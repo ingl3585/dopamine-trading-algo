@@ -17,8 +17,12 @@ from src.shared.types import Features
 from src.market_analysis.data_processor import MarketData
 from src.agent.meta_learner import MetaLearner
 from src.neural.adaptive_network import AdaptiveTradingNetwork, FeatureLearner, StateEncoder
-from src.neural.enhanced_neural import SelfEvolvingNetwork, FewShotLearner
+from src.neural.enhanced_neural import (
+    SelfEvolvingNetwork, FewShotLearner, ActorCriticLoss, 
+    TradingOptimizer, create_enhanced_network
+)
 from src.agent.real_time_adaptation import RealTimeAdaptationEngine
+from src.agent.confidence import ConfidenceManager
 
 logger = logging.getLogger(__name__)
 
@@ -50,22 +54,27 @@ class TradingAgent:
         # Enhanced meta-learning system
         self.meta_learner = MetaLearner(state_dim=64)  # Increased state dimension
         
-        # Enhanced neural architecture with self-evolution
+        # Enhanced neural architecture with self-evolution and memory management
         initial_sizes = self.meta_learner.architecture_evolver.current_sizes
-        self.network = SelfEvolvingNetwork(
+        self.network = create_enhanced_network(
             input_size=64,
             initial_sizes=initial_sizes,
-            evolution_frequency=500
+            enable_few_shot=True,
+            memory_efficient=True,
+            max_memory_gb=2.0
         ).to(self.device)
 
-        self.target_network = SelfEvolvingNetwork(
+        self.target_network = create_enhanced_network(
             input_size=64,
-            initial_sizes=initial_sizes
+            initial_sizes=initial_sizes,
+            enable_few_shot=False,
+            memory_efficient=True,
+            max_memory_gb=1.0
         ).to(self.device)
         
         # Enhanced feature learning with catastrophic forgetting prevention
         self.feature_learner = FeatureLearner(
-            raw_feature_dim=100, 
+            raw_feature_dim=100,  # Match the actual state size from _create_enhanced_state
             learned_feature_dim=64,
         ).to(self.device)
         self.state_encoder = StateEncoder()
@@ -76,7 +85,21 @@ class TradingAgent:
         # Real-time adaptation integration
         self.adaptation_engine = RealTimeAdaptationEngine(model_dim=64)
         
-        # Single unified optimizer for all learning components
+        # Enhanced loss function and optimizer system
+        self.loss_function = ActorCriticLoss(
+            confidence_weight=0.3,
+            position_weight=0.2,
+            risk_weight=0.1,
+            entropy_weight=0.01
+        ).to(self.device)
+        
+        # Advanced multi-component optimizer
+        self.optimizer = TradingOptimizer(
+            networks=[self.network, self.feature_learner, self.few_shot_learner],
+            base_lr=0.001
+        )
+        
+        # Legacy optimizer for compatibility during transition
         self.unified_optimizer = optim.AdamW(
             list(self.network.parameters()) + 
             list(self.feature_learner.parameters()) + 
@@ -125,10 +148,24 @@ class TradingAgent:
             'adaptive': deque(maxlen=100)
         }
         
-        # Position limit rejection tracking
+        # NEW: Centralized confidence management system
+        self.confidence_manager = ConfidenceManager(
+            initial_confidence=0.6,
+            min_confidence=0.15,
+            max_confidence=0.95,
+            debug_mode=True
+        )
+        
+        # DEPRECATED: Legacy confidence tracking (to be removed)
+        # Keep temporarily for compatibility during transition
         self.recent_position_rejections = 0
         self.position_rejection_timestamps = deque(maxlen=50)
         self.last_position_rejection_time = 0.0
+        self.last_processed_violation_time = 0.0
+        self.confidence_recovery_factor = 1.0
+        self.last_successful_trade_time = 0.0
+        self.confidence_violations = deque(maxlen=20)
+        self.recovery_boost_active = False
         
         # Model ensemble for uncertainty quantification
         self.ensemble_predictions = deque(maxlen=10)
@@ -194,27 +231,43 @@ class TradingAgent:
     def decide(self, features: Features, market_data: MarketData) -> Decision:
         self.total_decisions += 1
         
+        # DOPAMINE PHASE: PRE-TRADE ANTICIPATION
+        # Trigger anticipation response before making decision
+        anticipation_context = {
+            'confidence': getattr(features, 'confidence', 0.5),
+            'expected_outcome': self._estimate_expected_outcome(features, market_data)
+        }
+        dopamine_anticipation = self.intelligence.dopamine_subsystem.process_trading_event(
+            'anticipation', self._create_dopamine_market_data(market_data), anticipation_context
+        )
+        
         # Check for architecture evolution
         if self.meta_learner.should_evolve_architecture():
             self._evolve_architecture()
         
-        # Enhanced state representation with microstructure features
+        # Enhanced state representation with microstructure features and dopamine state
         meta_context = self._get_enhanced_meta_context(market_data, features)
+        meta_context['dopamine_state'] = dopamine_anticipation.state.value
+        meta_context['dopamine_urgency'] = dopamine_anticipation.urgency_factor
+        
         raw_state = self._create_enhanced_state(market_data, features, meta_context)
         
         # Learn features with catastrophic forgetting prevention
-        learned_state = self.feature_learner(raw_state.unsqueeze(0).to(self.device))
+        learned_state = self.feature_learner(raw_state.unsqueeze(0).to(dtype=torch.float32, device=self.device))
         
         # Few-shot learning prediction
         few_shot_prediction = self.few_shot_learner(learned_state)
         
-        # Enhanced subsystem contributions with explicit dtype
+        # Enhanced subsystem contributions with explicit dtype and dopamine influence
+        base_dopamine_signal = float(features.dopamine_signal)
+        dopamine_amplified_signal = base_dopamine_signal * dopamine_anticipation.position_size_modifier
+        
         subsystem_signals = torch.tensor([
             float(features.dna_signal),
             float(features.temporal_signal),
             float(features.immune_signal),
             float(features.microstructure_signal),  # Enhanced with microstructure
-            float(features.dopamine_signal),  # Real-time P&L-based reward signal
+            dopamine_amplified_signal,  # Dopamine-amplified signal based on psychological state
             float(features.regime_adjusted_signal)
         ], dtype=torch.float64, device=self.device)
         
@@ -239,10 +292,7 @@ class TradingAgent:
             learned_state.squeeze(), adaptation_context
         )
         
-        # Enhanced trading constraints with regime awareness
-        if not self._should_consider_trading(market_data, meta_context, features):
-            return Decision('hold', 0, 0, regime_awareness=adaptation_context)
-        
+        # CRITICAL FIX: Always process neural network and confidence recovery BEFORE any early returns
         # Enhanced neural network decision with ensemble
         ensemble_outputs = []
         
@@ -264,76 +314,126 @@ class TradingAgent:
             temperature = 1.0 + features.volatility * 2.0  # Higher temperature for higher volatility
             action_logits = combined_outputs['action_logits'] / temperature
             action_probs = F.softmax(action_logits, dim=-1).detach().cpu().numpy()[0]
-            confidence = float(combined_outputs['confidence'].detach().cpu().numpy()[0])
+            raw_confidence = float(combined_outputs['confidence'].detach().cpu().numpy()[0])
             
-            # Enhanced exploration decision with adaptation strategy
-            should_explore = self.meta_learner.should_explore(
-                learned_state.squeeze(), 
-                meta_context
-            ) or adaptation_decision.get('emergency_mode', False)
+            # COMPREHENSIVE DEBUG: Log all confidence stages
+            logger.info(f"CONFIDENCE TRACE: raw_from_network={raw_confidence:.6f}")
             
-            # Strategy selection based on adaptation engine
-            selected_strategy = adaptation_decision.get('strategy_name', 'conservative')
+            # DEBUG: Log raw confidence from neural network
+            if raw_confidence < 0.1:
+                logger.error(f"CRITICAL: Neural network outputting raw_confidence={raw_confidence:.6f} - BoundedSigmoid may be failing!")
+                logger.error(f"Network confidence tensor: {combined_outputs['confidence']}")
+                logger.error(f"Network output keys: {list(combined_outputs.keys())}")
             
-            if should_explore or adaptation_decision.get('emergency_mode', False):
-                # Enhanced exploration with strategy awareness
-                action_idx = self._strategic_exploration(
-                    weighted_signal, selected_strategy, features, adaptation_decision
-                )
-                exploration = True
-            else:
-                # Exploitation with uncertainty consideration
-                uncertainty = adaptation_decision.get('uncertainty', 0.5)
-                if uncertainty > 0.7:  # High uncertainty, be more conservative
-                    action_probs[0] *= 1.5  # Boost hold probability
-                    action_probs = action_probs / np.sum(action_probs)  # Renormalize
-                
-                action_idx = np.argmax(action_probs)
-                exploration = False
+            # NEW: Use centralized confidence manager
+            market_context = {
+                'volatility': features.volatility,
+                'price_momentum': features.price_momentum,
+                'regime_confidence': features.regime_confidence
+            }
+            confidence = self.confidence_manager.process_neural_output(raw_confidence, market_context)
             
-            # Enhanced confidence threshold with regime awareness
-            base_threshold = self.meta_learner.get_parameter('confidence_threshold')
-            regime_adjustment = (1.0 - features.regime_confidence) * 0.2
-            volatility_adjustment = features.volatility * 0.3
-            confidence_threshold = base_threshold + regime_adjustment + volatility_adjustment
+            # CONFIDENCE DEBUG: Log final confidence after processing
+            logger.info(f"CONFIDENCE TRACE: after_recovery={confidence:.6f}")
+            if confidence != raw_confidence:
+                logger.info(f"Confidence processed: {raw_confidence:.3f} -> {confidence:.3f}")
+            if confidence < 0.15:
+                logger.error(f"CRITICAL: Final confidence={confidence:.6f} after processing - check confidence manager!")
+        
+        # Enhanced trading constraints with regime awareness - NOW uses recovered confidence
+        if not self._should_consider_trading(market_data, meta_context, features):
+            # CRITICAL FIX: Use recovered confidence instead of hardcoded 0
+            logger.info(f"CONFIDENCE TRACE: early_hold_decision={confidence:.6f}")
+            return Decision('hold', confidence, 0, regime_awareness=adaptation_context)
+        
+        # Enhanced exploration decision with adaptation strategy
+        should_explore = self.meta_learner.should_explore(
+            learned_state.squeeze(), 
+            meta_context
+        ) or adaptation_decision.get('emergency_mode', False)
+        
+        # Strategy selection based on adaptation engine
+        selected_strategy = adaptation_decision.get('strategy_name', 'conservative')
+        
+        if should_explore or adaptation_decision.get('emergency_mode', False):
+            # Enhanced exploration with strategy awareness
+            action_idx = self._strategic_exploration(
+                weighted_signal, selected_strategy, features, adaptation_decision
+            )
+            exploration = True
+        else:
+            # Exploitation with uncertainty consideration
+            uncertainty = adaptation_decision.get('uncertainty', 0.5)
+            if uncertainty > 0.7:  # High uncertainty, be more conservative
+                action_probs[0] *= 1.5  # Boost hold probability
+                action_probs = action_probs / np.sum(action_probs)  # Renormalize
             
-            if confidence < confidence_threshold and not exploration:
-                action_idx = 0
-            
-            # Enhanced sizing and risk parameters
-            raw_position_size = float(combined_outputs['position_size'].detach().cpu().numpy()[0])
-            risk_params = combined_outputs['risk_params'].detach().cpu().numpy()[0]
-            
-            # Ensure position size is always positive
-            position_size = max(0.1, abs(raw_position_size))
-            
-            # Uncertainty-adjusted position sizing
-            uncertainty_factor = 1.0 - adaptation_decision.get('uncertainty', 0.5)
-            position_size *= max(0.1, uncertainty_factor)  # Ensure factor is positive
-            
-            # Regime-aware risk management
-            use_stop = risk_params[0] > 0.5
-            stop_distance = risk_params[1]
-            use_target = risk_params[2] > 0.5
-            target_distance = risk_params[3]
-            
-            # Adjust risk parameters based on regime
-            if features.regime_confidence < 0.5:  # Uncertain regime
-                stop_distance *= 0.8  # Tighter stops
-                target_distance *= 1.2  # Wider targets
+            action_idx = np.argmax(action_probs)
+            exploration = False
+        
+        # Enhanced confidence threshold with regime awareness
+        base_threshold = self.meta_learner.get_parameter('confidence_threshold')
+        regime_adjustment = (1.0 - features.regime_confidence) * 0.2
+        volatility_adjustment = features.volatility * 0.3
+        confidence_threshold = base_threshold + regime_adjustment + volatility_adjustment
+        
+        if confidence < confidence_threshold and not exploration:
+            action_idx = 0
+        
+        # Enhanced sizing and risk parameters with dopamine influence
+        raw_position_size = float(combined_outputs['position_size'].detach().cpu().numpy()[0])
+        risk_params = combined_outputs['risk_params'].detach().cpu().numpy()[0]
+        
+        # Ensure position size is always positive
+        base_position_size = max(0.1, abs(raw_position_size))
+        
+        # DOPAMINE-DRIVEN POSITION SIZING
+        # Apply dopamine psychological modifiers to position sizing
+        dopamine_position_modifier = dopamine_anticipation.position_size_modifier
+        dopamine_risk_modifier = dopamine_anticipation.risk_tolerance_modifier
+        
+        # Adjust position size based on dopamine state
+        position_size = base_position_size * dopamine_position_modifier
+        
+        # Uncertainty-adjusted position sizing
+        uncertainty_factor = 1.0 - adaptation_decision.get('uncertainty', 0.5)
+        position_size *= max(0.1, uncertainty_factor)  # Ensure factor is positive
+        
+        # Apply dopamine urgency factor to position sizing
+        urgency_adjustment = 0.8 + (dopamine_anticipation.urgency_factor * 0.4)  # 0.8 to 1.2 range
+        position_size *= urgency_adjustment
+        
+        # Regime-aware risk management
+        use_stop = risk_params[0] > 0.5
+        stop_distance = risk_params[1]
+        use_target = risk_params[2] > 0.5
+        target_distance = risk_params[3]
+        
+        # Adjust risk parameters based on regime and dopamine state
+        if features.regime_confidence < 0.5:  # Uncertain regime
+            stop_distance *= 0.8  # Tighter stops
+        
+        # Dopamine-influenced risk parameters
+        stop_distance *= dopamine_risk_modifier
+        target_distance *= dopamine_risk_modifier
         
         # Convert to decision
         actions = ['hold', 'buy', 'sell']
         action = actions[action_idx]
         
         if action == 'hold':
-            return Decision(
+            # COMPREHENSIVE DEBUG: Log confidence before Decision creation
+            logger.info(f"CONFIDENCE TRACE: creating_hold_decision={confidence:.6f}")
+            decision = Decision(
                 'hold', confidence, 0,
                 adaptation_strategy=selected_strategy,
                 uncertainty_estimate=adaptation_decision.get('uncertainty', 0.5),
                 few_shot_prediction=float(few_shot_prediction.squeeze()),
                 regime_awareness=adaptation_context
             )
+            # COMPREHENSIVE DEBUG: Log confidence after Decision creation
+            logger.info(f"CONFIDENCE TRACE: hold_decision_created={decision.confidence:.6f}")
+            return decision
         
         # Enhanced stop and target calculation with regime awareness
         stop_price, target_price = self._calculate_enhanced_levels(
@@ -357,10 +457,21 @@ class TradingAgent:
         
         self.last_trade_time = market_data.timestamp
         
+        # DOPAMINE PHASE: EXECUTION 
+        # Process execution phase for dopamine response
+        execution_context = {
+            'action': action,
+            'position_size': position_size,
+            'confidence': confidence
+        }
+        dopamine_execution = self.intelligence.dopamine_subsystem.process_trading_event(
+            'execution', self._create_dopamine_market_data(market_data), execution_context
+        )
+        
         # Store few-shot learning example
         self.few_shot_learner.add_support_example(learned_state.squeeze(), weighted_signal.detach().item())
         
-        return Decision(
+        decision = Decision(
             action=action,
             confidence=confidence,
             size=position_size,
@@ -375,36 +486,42 @@ class TradingAgent:
             few_shot_prediction=float(few_shot_prediction.squeeze()),
             regime_awareness=adaptation_context
         )
+        
+        # Store dopamine context with decision for later reflection
+        decision.dopamine_anticipation = dopamine_anticipation
+        decision.dopamine_execution = dopamine_execution
+        
+        return decision
     
     def _strategic_exploration(self, weighted_signal: torch.Tensor, strategy: str, 
                              features: Features, adaptation_decision: Dict) -> int:
         """Enhanced exploration based on selected strategy"""
         
         if strategy == 'conservative':
-            # Conservative exploration - only trade with strong signals
-            if abs(weighted_signal) > 0.3:
+            # Conservative exploration - much lower threshold for post-loss recovery
+            if abs(weighted_signal) > 0.003:  # Reduced from 0.01 to enable recovery trading
                 return 1 if weighted_signal > 0 else 2
             return 0
         
         elif strategy == 'aggressive':
-            # Aggressive exploration - trade on weaker signals
-            if abs(weighted_signal) > 0.1:
+            # Aggressive exploration - extremely low threshold for discovery
+            if abs(weighted_signal) > 0.001:  # Reduced from 0.005 for more opportunities
                 return 1 if weighted_signal > 0 else 2
             return 0
         
         elif strategy == 'momentum':
-            # Momentum strategy - follow trends
-            if features.price_momentum > 0.01:
+            # Momentum strategy - very low threshold for recovery trading
+            if features.price_momentum > 0.0005:  # Reduced from 0.001
                 return 1
-            elif features.price_momentum < -0.01:
+            elif features.price_momentum < -0.0005:  # Reduced from -0.001
                 return 2
             return 0
         
         elif strategy == 'mean_reversion':
-            # Mean reversion - trade against extremes
-            if features.price_position > 0.8:
+            # Mean reversion - wider range for recovery opportunities
+            if features.price_position > 0.55:  # Reduced from 0.6 for more opportunities
                 return 2  # Sell at highs
-            elif features.price_position < 0.2:
+            elif features.price_position < 0.45:  # Increased from 0.4 for more opportunities
                 return 1  # Buy at lows
             return 0
         
@@ -413,11 +530,11 @@ class TradingAgent:
             if adaptation_decision.get('emergency_mode', False):
                 return 0  # Hold in emergency
             elif features.regime_confidence > 0.7:
-                # High confidence regime - follow signals
-                return 1 if weighted_signal > 0.1 else (2 if weighted_signal < -0.1 else 0)
+                # High confidence regime - follow signals with very low threshold
+                return 1 if weighted_signal > 0.002 else (2 if weighted_signal < -0.002 else 0)
             else:
-                # Low confidence regime - be conservative
-                return 1 if weighted_signal > 0.2 else (2 if weighted_signal < -0.2 else 0)
+                # Low confidence regime - recovery-friendly threshold  
+                return 1 if weighted_signal > 0.003 else (2 if weighted_signal < -0.003 else 0)
     
     def _calculate_enhanced_levels(self, action: str, market_data: MarketData,
                                  use_stop: bool, stop_distance: float,
@@ -687,40 +804,18 @@ class TradingAgent:
         
         frequency_limit = self.meta_learner.get_parameter('trade_frequency_base')
         time_since_last = market_data.timestamp - self.last_trade_time
-        if time_since_last < (300 / frequency_limit):
+        if time_since_last < (1 / frequency_limit):  # Adaptive timing, no hardcoded minimum
             return False
         
-        # Enhanced regime-based constraints
-        if features.regime_confidence < 0.3:  # Very uncertain regime
-            return False
-        
-        if features.volatility > 0.08:  # Extreme volatility
-            return False
-        
-        if features.liquidity_depth < 0.2:  # Poor liquidity
-            return False
+        # Let AI discover regime-based constraints through economic feedback
+        # Removed hardcoded regime blocks to enable neuromorphic boundary learning
         
         # Adaptation engine emergency mode
         if meta_context.get('adaptation_events', 0) > 0.1:  # Too many adaptation events
             return False
         
-        # CRITICAL: Position limit awareness - allow exits but prevent further entries
-        current_position = getattr(market_data, 'total_position_size', 0)
-        max_contracts = int(self.meta_learner.get_parameter('max_contracts_limit'))
-        
-        # At position limits, only allow trades that reduce position (exits)
-        # Don't block ALL trading - this prevents exiting losing positions!
-        # The risk manager will handle blocking invalid trades
-        
-        # If we're close to limits and have had recent rejections, be more conservative
-        exposure_ratio = abs(current_position) / max_contracts if max_contracts > 0 else 0
-        exposure_threshold = self.meta_learner.get_parameter('exposure_scaling_threshold')
-        
-        if exposure_ratio > exposure_threshold:
-            # Check if we've had recent position limit rejections
-            recent_rejections = getattr(self, 'recent_position_rejections', 0)
-            if recent_rejections > 3:  # Had recent rejections
-                return False
+        # Let AI learn position limit boundaries through economic violation feedback
+        # Removed hardcoded position blocking to enable neuromorphic boundary discovery
         
         return True
     
@@ -748,20 +843,61 @@ class TradingAgent:
         
         return primary_tool
     
+    # REMOVED: _apply_confidence_recovery method
+    # This functionality has been moved to the centralized ConfidenceManager
+    
     def learn_from_trade(self, trade):
         """Enhanced learning with comprehensive error handling and debugging"""
         try:
             logger.info(f"=== LEARNING FROM TRADE START ===")
             logger.info(f"Trade PnL: {trade.pnl}, Entry: {trade.entry_price}, Exit: {trade.exit_price}")
             
+            # DOPAMINE PHASE: REALIZATION
+            # Process trade exit and P&L realization for dopamine response
+            realization_market_data = {
+                'unrealized_pnl': 0.0,  # Position closed
+                'daily_pnl': getattr(trade, 'pnl', 0.0),
+                'realized_pnl': getattr(trade, 'pnl', 0.0),
+                'open_positions': 0.0,  # Position closed
+                'current_price': getattr(trade, 'exit_price', 0.0),
+                'trade_duration': getattr(trade, 'duration', 0.0)
+            }
+            
+            realization_context = {
+                'expected_outcome': getattr(trade, 'expected_outcome', 0.0),
+                'confidence': getattr(trade, 'confidence', 0.5),
+                'action': getattr(trade, 'action', 'unknown')
+            }
+            
+            dopamine_realization = self.intelligence.dopamine_subsystem.process_trading_event(
+                'realization', realization_market_data, realization_context
+            )
+            
             if not hasattr(trade, 'intelligence_data'):
                 logger.warning("Trade missing intelligence_data - creating minimal data")
                 trade.intelligence_data = {'subsystem_signals': [0,0,0,0,0,0]}
             
-            # Update statistics
+            # NEW: Update confidence manager with trade outcome and dopamine integration
+            trade_context = {
+                'entry_price': trade.entry_price,
+                'exit_price': trade.exit_price,
+                'strategy': getattr(trade, 'adaptation_strategy', 'conservative'),
+                'tool_used': getattr(trade, 'primary_tool', 'unknown')
+            }
+            self.confidence_manager.handle_trade_outcome(trade.pnl, trade_context, dopamine_realization)
+            
+            # LEGACY: Update statistics (for compatibility)
             if trade.pnl > 0:
                 self.successful_trades += 1
-                logger.info(f"Successful trade recorded. Total successful: {self.successful_trades}")
+                self.last_successful_trade_time = time.time()
+                # Boost confidence recovery factor for successful trades
+                self.confidence_recovery_factor = min(1.2, self.confidence_recovery_factor + 0.05)
+                success_rate = self.successful_trades / max(1, self.total_decisions)
+                logger.info(f"SUCCESSFUL TRADE: #{self.successful_trades}, Success rate: {success_rate:.1%}")
+            elif trade.pnl < 0:
+                # Slight reduction in recovery factor for losses (but not major impact)
+                self.confidence_recovery_factor = max(0.8, self.confidence_recovery_factor - 0.01)
+                logger.info(f"LOSING TRADE: PnL={trade.pnl:.2f}")
             self.total_pnl += trade.pnl
             
             # Track strategy performance
@@ -929,6 +1065,26 @@ class TradingAgent:
                 logger.info(f"Successful adaptations: {self.meta_learner.successful_adaptations}")
             except Exception as e:
                 logger.error(f"Error getting learning stats: {e}")
+            
+            # DOPAMINE PHASE: REFLECTION
+            # Process post-trade reflection for learning and psychological adjustment
+            reflection_context = {
+                'learned_something': True,
+                'trade_outcome': 'profit' if trade.pnl > 0 else 'loss',
+                'strategy_effectiveness': getattr(trade, 'adaptation_strategy', 'unknown'),
+                'confidence_outcome': getattr(trade, 'confidence', 0.5)
+            }
+            
+            dopamine_reflection = self.intelligence.dopamine_subsystem.process_trading_event(
+                'reflection', realization_market_data, reflection_context
+            )
+            
+            # Log comprehensive dopamine learning
+            logger.info(f"DOPAMINE LEARNING: Realization signal={dopamine_realization.signal:.3f}, "
+                       f"Reflection signal={dopamine_reflection.signal:.3f}, "
+                       f"State={dopamine_reflection.state.value}, "
+                       f"Tolerance={dopamine_reflection.tolerance_level:.3f}, "
+                       f"Addiction={dopamine_reflection.addiction_risk:.3f}")
             
             logger.info(f"=== LEARNING FROM TRADE COMPLETE ===")
             
@@ -1162,7 +1318,7 @@ class TradingAgent:
         torch.save(adaptation_stats, adaptation_filepath)
     
     def load_model(self, filepath: str):
-        """Enhanced model loading"""
+        """Enhanced model loading with architecture compatibility check"""
         try:
             # Handle PyTorch 2.6+ security requirements
             try:
@@ -1172,9 +1328,16 @@ class TradingAgent:
                 logger.warning(f"weights_only=False failed, trying alternative loading: {weights_error}")
                 checkpoint = torch.load(filepath, map_location=self.device)
             
-            self.network.load_state_dict(checkpoint['network_state'])
-            self.target_network.load_state_dict(checkpoint['target_network_state'])
-            self.feature_learner.load_state_dict(checkpoint['feature_learner_state'])
+            # Check for architecture compatibility (BoundedSigmoid vs Sigmoid)
+            try:
+                self.network.load_state_dict(checkpoint['network_state'])
+                self.target_network.load_state_dict(checkpoint['target_network_state'])
+                self.feature_learner.load_state_dict(checkpoint['feature_learner_state'])
+            except Exception as arch_error:
+                logger.warning(f"Architecture mismatch detected (old model vs new BoundedSigmoid): {arch_error}")
+                logger.warning("Starting with fresh neural networks due to architecture change")
+                # Don't load network states - keep fresh networks with BoundedSigmoid
+                return
             
             if 'few_shot_learner_state' in checkpoint:
                 self.few_shot_learner.load_state_dict(checkpoint['few_shot_learner_state'])
@@ -1213,7 +1376,7 @@ class TradingAgent:
             logger.info("Enhanced model loaded successfully")
             
         except FileNotFoundError:
-            logger.info("No existing model found, starting fresh")
+            logger.info("No existing model found, starting fresh with BoundedSigmoid confidence (min=0.1)")
         except Exception as e:
             logger.error(f"Error loading model: {e}")
     
@@ -1281,6 +1444,150 @@ class TradingAgent:
             }
         }
     
+    def get_agent_context(self) -> Dict:
+        """Get comprehensive agent context for LLM"""
+        # Get ensemble agreement from recent predictions
+        ensemble_agreement = 0.5
+        if len(self.ensemble_predictions) > 1:
+            predictions = list(self.ensemble_predictions)
+            if len(predictions) >= 2:
+                agreement = 1.0 - np.std([p.get('confidence', 0.5) for p in predictions])
+                ensemble_agreement = max(0.0, min(1.0, agreement))
+        
+        return {
+            'neural_confidence': ensemble_agreement,
+            'learning_phase': getattr(self.meta_learner, 'current_phase', 'exploitation'),
+            'adaptation_trigger': getattr(self, 'last_adaptation_reason', 'none'),
+            'reward_prediction_error': getattr(self, 'last_reward_error', 0.0),
+            'exploration_vs_exploitation': self.exploration_rate,
+            'current_strategy': self.current_strategy,
+            'recent_performance_trend': self._calculate_performance_trend(),
+            'network_evolution_status': self.network.get_evolution_stats(),
+            'meta_learning_efficiency': self.meta_learner.get_learning_efficiency(),
+            'adaptation_events_rate': self.adaptation_events / max(1, self.total_decisions),
+            'regime_transitions_rate': self.regime_transitions / max(1, self.total_decisions)
+        }
+    
+    def get_decision_reasoning(self, decision) -> Dict:
+        """Get detailed decision reasoning context"""
+        if not hasattr(decision, 'intelligence_data') or not decision.intelligence_data:
+            return {}
+        
+        intel = decision.intelligence_data
+        subsystem_signals = intel.get('subsystem_signals', [0,0,0,0,0,0])
+        subsystem_weights = intel.get('subsystem_weights', [0,0,0,0,0,0])
+        
+        # Calculate weighted contributions
+        weighted_contributions = {}
+        tool_names = ['dna', 'temporal', 'immune', 'microstructure', 'dopamine', 'regime']
+        for i, (signal, weight, name) in enumerate(zip(subsystem_signals, subsystem_weights, tool_names)):
+            if i < len(subsystem_signals) and i < len(subsystem_weights):
+                weighted_contributions[name] = float(signal * weight)
+        
+        return {
+            'subsystem_contributions': weighted_contributions,
+            'risk_override_active': decision.confidence < 0.3,
+            'regime_alignment': intel.get('regime_context', {}).get('regime_confidence', 0.5),
+            'pattern_match_strength': intel.get('ensemble_uncertainty', 0.5),
+            'temporal_window_used': intel.get('adaptation_decision', {}).get('strategy_name', 'unknown'),
+            'uncertainty_level': decision.uncertainty_estimate,
+            'exploration_mode': decision.exploration,
+            'primary_signal_strength': max([abs(s) for s in subsystem_signals] + [0])
+        }
+    
+    def get_learning_context(self) -> Dict:
+        """Get system learning and adaptation context"""
+        recent_experiences = self._buffer_recent(20, 'experience')
+        recent_rewards = [exp.get('reward', 0) for exp in recent_experiences]
+        
+        performance_trend = 'stable'
+        if len(recent_rewards) >= 10:
+            first_half = np.mean(recent_rewards[:len(recent_rewards)//2])
+            second_half = np.mean(recent_rewards[len(recent_rewards)//2:])
+            if second_half > first_half + 0.1:
+                performance_trend = 'improving'
+            elif second_half < first_half - 0.1:
+                performance_trend = 'declining'
+        
+        return {
+            'recent_performance_trend': performance_trend,
+            'strategy_effectiveness': self._get_strategy_effectiveness(),
+            'market_adaptation_speed': self.adaptation_events / max(1, self.total_decisions * 0.1),
+            'subsystem_health': self._get_subsystem_health(),
+            'learning_efficiency': self.meta_learner.get_learning_efficiency(),
+            'architecture_evolution_stage': self.meta_learner.architecture_evolver.generations,
+            'confidence_recovery_status': self.confidence_recovery_factor,
+            'exploration_strategy': self.meta_learner.exploration_strategy.get_current_strategy() if hasattr(self.meta_learner.exploration_strategy, 'get_current_strategy') else 'standard'
+        }
+    
+    def _calculate_performance_trend(self) -> str:
+        """Calculate recent performance trend"""
+        recent_experiences = self._buffer_recent(20, 'experience')
+        if len(recent_experiences) < 10:
+            return 'insufficient_data'
+        
+        rewards = [exp.get('reward', 0) for exp in recent_experiences]
+        first_half = np.mean(rewards[:len(rewards)//2])
+        second_half = np.mean(rewards[len(rewards)//2:])
+        
+        if second_half > first_half + 0.1:
+            return 'improving'
+        elif second_half < first_half - 0.1:
+            return 'declining'
+        return 'stable'
+    
+    def _get_strategy_effectiveness(self) -> Dict:
+        """Get effectiveness scores for different strategies"""
+        effectiveness = {}
+        for strategy, performance in self.strategy_performance.items():
+            if len(performance) > 0:
+                avg_pnl = np.mean(list(performance))
+                win_rate = sum(1 for p in performance if p > 0) / len(performance)
+                effectiveness[strategy] = {
+                    'avg_pnl': avg_pnl,
+                    'win_rate': win_rate,
+                    'trade_count': len(performance),
+                    'score': avg_pnl * win_rate  # Combined effectiveness score
+                }
+        return effectiveness
+    
+    def _get_subsystem_health(self) -> Dict:
+        """Get health status of each subsystem"""
+        recent_experiences = self._buffer_recent(50, 'experience')
+        subsystem_performance = {'dna': [], 'temporal': [], 'immune': [], 'microstructure': [], 'dopamine': []}
+        
+        for exp in recent_experiences:
+            trade_data = exp.get('trade_data', {})
+            if isinstance(trade_data, dict):
+                primary_tool = trade_data.get('primary_tool', 'unknown')
+                reward = exp.get('reward', 0)
+                
+                # Extract base tool name (remove modifiers like '_uncertain')
+                base_tool = primary_tool.split('_')[0]
+                if base_tool in subsystem_performance:
+                    subsystem_performance[base_tool].append(reward)
+        
+        health_status = {}
+        for subsystem, rewards in subsystem_performance.items():
+            if len(rewards) > 0:
+                avg_reward = np.mean(rewards)
+                consistency = 1.0 - np.std(rewards) if len(rewards) > 1 else 1.0
+                health_status[subsystem] = {
+                    'avg_performance': avg_reward,
+                    'consistency': max(0, consistency),
+                    'usage_count': len(rewards),
+                    'health_score': avg_reward * consistency
+                }
+            else:
+                health_status[subsystem] = {
+                    'avg_performance': 0.0,
+                    'consistency': 0.5,
+                    'usage_count': 0,
+                    'health_score': 0.0
+                }
+        
+        return health_status
+
     def learn_from_rejection(self, rejection_type: str, rejection_data: Dict, reward: float):
         """Learn from order rejections to prevent future repeated failures"""
         try:
@@ -1288,13 +1595,24 @@ class TradingAgent:
             current_time = time.time()
             
             if rejection_type == 'position_limit':
-                # Update position rejection tracking
+                # Prevent duplicate processing of the same violation
+                if current_time - self.last_processed_violation_time < 0.1:  # Within 0.1 second = duplicate
+                    logger.debug("Skipping duplicate position limit violation in trading agent")
+                    return
+                
+                # NEW: Use centralized confidence manager for rejection handling
+                self.confidence_manager.handle_position_rejection(rejection_data)
+                
+                # LEGACY: Update position rejection tracking (for compatibility)
                 self.recent_position_rejections += 1
                 self.position_rejection_timestamps.append(current_time)
                 self.last_position_rejection_time = current_time
+                self.last_processed_violation_time = current_time
+                self.confidence_violations.append(current_time)
+                self.confidence_recovery_factor = max(0.1, self.confidence_recovery_factor - 0.001)
                 
-                # Clean up old timestamps (older than 10 minutes)
-                cutoff_time = current_time - 600
+                # Adaptive memory window for violation tracking
+                cutoff_time = current_time - 60  # Much shorter adaptive window
                 while (self.position_rejection_timestamps and 
                        self.position_rejection_timestamps[0] < cutoff_time):
                     self.position_rejection_timestamps.popleft()
@@ -1321,24 +1639,32 @@ class TradingAgent:
                 if hasattr(self.meta_learner, 'learn_from_negative_feedback'):
                     self.meta_learner.learn_from_negative_feedback(rejection_data, reward)
                 
-                # Also create a trade data entry with position violation flag for immediate learning
-                violation_trade_data = {
-                    'pnl': 0.0,  # No P&L for rejected trades
-                    'account_balance': rejection_data.get('account_balance', 10000),
-                    'hold_time': 0.0,
-                    'action': 'trade',
-                    'decision_confidence': rejection_data.get('decision_confidence', 0.5),
-                    'position_limit_violation': True,  # Critical flag for heavy penalty
-                    'subsystem_agreement': 0.5
+                # SINGLE PENALTY SYSTEM: Apply moderate penalty once (no cascading)
+                # Calculate violation severity with adaptive learning
+                violation_severity = rejection_data.get('violation_severity', 1.0)
+                base_penalty = -0.01  # Much lighter penalty for neuromorphic discovery
+                final_penalty = base_penalty * violation_severity
+                
+                logger.warning(f"Position limit violation: Applied single penalty: {final_penalty:.3f}")
+                
+                # Store rejection experience in separate buffer to prevent confidence contamination
+                rejection_experience = {
+                    'rejection_type': rejection_type,
+                    'timestamp': current_time,
+                    'tool_used': rejection_data.get('primary_tool', 'unknown'),
+                    'exploration_mode': rejection_data.get('exploration_mode', False),
+                    'position_context': rejection_data.get('current_position', 0),
+                    'single_penalty': final_penalty
                 }
                 
-                # Compute and apply the heavy penalty immediately using the rejection engine
-                violation_reward = self.meta_learner.reward_engine.compute_rejection_reward('position_limit', violation_trade_data)
-                logger.warning(f"Position limit violation: Applied reward penalty: {violation_reward}")
+                # Store in separate rejection buffer (doesn't affect main confidence training)
+                self._buffer_append(rejection_experience, 'previous_task')  # Isolated storage
                 
-                # Add to meta-learner outcome history for learning
+                # Apply SINGLE penalty to meta-learner (no reward engine cascading)
                 if hasattr(self.meta_learner, 'outcome_history'):
-                    self.meta_learner.outcome_history.append(violation_reward)
+                    # Apply the penalty only once, with isolation from confidence training
+                    isolated_penalty = final_penalty * 0.3  # Reduce impact on confidence even further
+                    self.meta_learner.outcome_history.append(isolated_penalty)
                 
                 # Update exploration strategy to avoid position limits
                 if hasattr(self.adaptation_engine, 'update_exploration_constraints'):
@@ -1352,3 +1678,57 @@ class TradingAgent:
             logger.error(f"Error in learn_from_rejection: {e}")
             import traceback
             logger.error(f"Traceback: {traceback.format_exc()}")
+    
+    def get_confidence_health(self) -> Dict:
+        """
+        Get comprehensive confidence health status from the confidence manager
+        
+        Returns:
+            Dict: Confidence health information including status, scores, and metrics
+        """
+        return self.confidence_manager.get_confidence_health()
+    
+    def get_confidence_debug_info(self) -> Dict:
+        """
+        Get detailed confidence debug information
+        
+        Returns:
+            Dict: Detailed debug information from confidence manager
+        """
+        return self.confidence_manager.get_debug_info()
+    
+    def get_current_confidence(self) -> float:
+        """
+        Get the current confidence value
+        
+        Returns:
+            float: Current confidence level
+        """
+        return self.confidence_manager.get_current_confidence()
+    
+    def _estimate_expected_outcome(self, features: Features, market_data: MarketData) -> float:
+        """Estimate expected outcome for dopamine anticipation phase"""
+        
+        # Simple expected outcome based on signal strength and confidence
+        signal_strength = abs(features.overall_signal)
+        base_expectation = signal_strength * features.confidence * 0.1
+        
+        # Add regime confidence influence
+        regime_adjustment = features.regime_confidence * 0.05
+        
+        # Direction-aware expectation
+        if features.overall_signal > 0:
+            return base_expectation + regime_adjustment
+        else:
+            return -(base_expectation + regime_adjustment)
+    
+    def _create_dopamine_market_data(self, market_data: MarketData) -> Dict:
+        """Create market data dictionary for dopamine subsystem"""
+        
+        return {
+            'unrealized_pnl': getattr(market_data, 'unrealized_pnl', 0.0),
+            'daily_pnl': getattr(market_data, 'daily_pnl', 0.0),
+            'open_positions': getattr(market_data, 'open_positions', 0.0),
+            'current_price': market_data.prices_1m[-1] if market_data.prices_1m else 0.0,
+            'trade_duration': getattr(market_data, 'trade_duration', 0.0)
+        }

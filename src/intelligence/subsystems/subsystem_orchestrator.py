@@ -140,14 +140,33 @@ class EnhancedIntelligenceOrchestrator:
             logger.warning(f"Immune subsystem error: {e}")
             votes['immune'] = {'signal': -0.01, 'confidence': 0.1, 'reasoning': 'Error fallback', 'strength': 0.1, 'context': {}}
 
-        # Add microstructure vote placeholder for future integration
-        votes['microstructure'] = {
-            'signal': 0.0,
-            'confidence': 0.1,
-            'reasoning': 'Microstructure analysis placeholder',
-            'strength': 0.0,
-            'context': {}
-        }
+        # Enhanced microstructure analysis
+        try:
+            microstructure_result = self.microstructure_subsystem.get_enhanced_signal(
+                {'prices': prices, 'volumes': volumes}, market_features
+            )
+            microstructure_signal = microstructure_result.get('microstructure_signal', 0.0)
+            
+            if np.isnan(microstructure_signal) or np.isinf(microstructure_signal):
+                microstructure_signal = 0.0
+            
+            votes['microstructure'] = {
+                'signal': microstructure_signal,
+                'confidence': min(1.0, abs(microstructure_signal) * 2.0),
+                'reasoning': f"Regime: {microstructure_result.get('market_regime', 'unknown')}, Liquidity: {microstructure_result.get('liquidity_score', 0.5):.2f}",
+                'strength': abs(microstructure_signal),
+                'context': microstructure_result
+            }
+            
+        except Exception as e:
+            logger.warning(f"Microstructure subsystem error: {e}")
+            votes['microstructure'] = {
+                'signal': 0.0,
+                'confidence': 0.1,
+                'reasoning': 'Error fallback',
+                'strength': 0.0,
+                'context': {}
+            }
         
         return votes
 
@@ -450,6 +469,10 @@ class EnhancedIntelligenceOrchestrator:
                 # Immune learning
                 if 'market_state' in context:
                     self.immune_subsystem.learn_threat(context['market_state'], outcome)
+                
+                # Microstructure learning
+                if 'microstructure_context' in context:
+                    self.microstructure_subsystem.learn_from_outcome(context['microstructure_context'], outcome)
             
             logger.debug(f"Orchestrator learned from outcome: {outcome:.4f}")
             

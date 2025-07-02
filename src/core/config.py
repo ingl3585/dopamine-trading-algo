@@ -178,11 +178,6 @@ class Config:
         """Get configuration value"""
         return self.settings.get(key, default)
     
-    def update_setting(self, key: str, value):
-        """Allow runtime updates to configuration"""
-        old_value = self.settings.get(key)
-        self.settings[key] = value
-        logger.info(f"Configuration updated: {key} = {value} (was {old_value})")
     
     def get_tcp_config(self) -> Dict[str, Any]:
         """Get TCP-specific configuration"""

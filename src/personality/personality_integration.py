@@ -11,7 +11,7 @@ from typing import Dict, Optional, Any
 from dataclasses import dataclass
 
 from .trading_personality import TradingPersonality, TriggerEvent, PersonalityConfig
-from .voice_synthesis import VoiceSynthesizer
+# Voice synthesis import removed
 from src.shared.types import Features
 from src.market_analysis.data_processor import MarketData
 
@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 class PersonalityIntegrationConfig:
     enabled: bool = True
     personality_name: str = "Alex"
-    voice_enabled: bool = False
     auto_commentary: bool = True
     commentary_interval: float = 120.0  # seconds
     log_commentary: bool = True
@@ -30,10 +29,6 @@ class PersonalityIntegrationConfig:
     # LLM Configuration
     llm_model: str = "gpt-4"
     llm_api_key: str = ""
-    
-    # Voice Configuration
-    voice_service: str = "elevenlabs"
-    voice_api_key: str = ""
 
 class PersonalityIntegration:
     """
@@ -46,27 +41,15 @@ class PersonalityIntegration:
         if not self.config.enabled:
             logger.info("Personality system disabled")
             self.personality = None
-            self.voice_synthesizer = None
             return
         
         # Initialize personality system
         personality_config = PersonalityConfig(
             personality_name=self.config.personality_name,
-            voice_enabled=self.config.voice_enabled,
             llm_model=self.config.llm_model
         )
         
         self.personality = TradingPersonality(personality_config)
-        
-        # Initialize voice synthesis if enabled
-        if self.config.voice_enabled:
-            voice_config = {
-                'tts_service': self.config.voice_service,
-                'api_key': self.config.voice_api_key
-            }
-            self.voice_synthesizer = VoiceSynthesizer(voice_config)
-        else:
-            self.voice_synthesizer = None
         
         # State tracking
         self.last_decision_context = {}
@@ -85,7 +68,7 @@ class PersonalityIntegration:
         return self.config.enabled and self.personality is not None
     
     async def process_trading_decision(self, decision: Any, features: Features, 
-                                     market_data: MarketData) -> Optional[str]:
+                                     market_data: MarketData, agent=None, trigger_event=None) -> Optional[str]:
         """
         Process a trading decision through the personality system
         
@@ -93,6 +76,7 @@ class PersonalityIntegration:
             decision: Trading decision object from agent
             features: Market features including all subsystem signals
             market_data: Current market data
+            agent: Trading agent instance for enhanced context
             
         Returns:
             Optional[str]: Commentary text if generated
@@ -106,11 +90,12 @@ class PersonalityIntegration:
             self.last_features = features
             self.last_market_data = market_data
             
-            # Determine trigger event based on decision
-            trigger_event = self._determine_trigger_event(decision)
+            # Determine trigger event based on decision (use passed trigger_event if provided)
+            if trigger_event is None:
+                trigger_event = self._determine_trigger_event(decision)
             
-            # Build comprehensive context
-            context = self._build_trading_context(decision, features, market_data)
+            # Build comprehensive context with enhanced agent insights
+            context = self._build_trading_context(decision, features, market_data, agent)
             
             # Store decision context for future reference
             self.last_decision_context = context['decision_context']
@@ -119,18 +104,11 @@ class PersonalityIntegration:
             commentary_response = await self.personality.process_trading_event(trigger_event, context)
             
             if commentary_response:
-                # Log commentary if enabled
-                if self.config.log_commentary:
-                    logger.info(f"Personality Commentary: {commentary_response.text}")
+                # Log commentary if enabled (disabled to reduce redundant logging)
+                # if self.config.log_commentary:
+                #     logger.info(f"Personality Commentary: {commentary_response.text}")
                 
-                # Speak commentary if voice enabled
-                if self.config.voice_enabled and self.voice_synthesizer:
-                    emotional_state = self.personality.get_current_emotional_state()
-                    await self.voice_synthesizer.speak_commentary(
-                        commentary_response.text,
-                        emotional_state.primary_emotion.value,
-                        emotional_state.emotional_intensity
-                    )
+                # Voice synthesis removed for cleaner operation
                 
                 return commentary_response.text
             
@@ -192,14 +170,6 @@ class PersonalityIntegration:
                 if self.config.log_commentary:
                     logger.info(f"Trade Completion Commentary: {commentary_response.text}")
                 
-                # Speak if voice enabled
-                if self.config.voice_enabled and self.voice_synthesizer:
-                    emotional_state = self.personality.get_current_emotional_state()
-                    await self.voice_synthesizer.speak_commentary(
-                        commentary_response.text,
-                        emotional_state.primary_emotion.value,
-                        emotional_state.emotional_intensity
-                    )
                 
                 return commentary_response.text
             
@@ -294,14 +264,6 @@ class PersonalityIntegration:
                 if self.config.log_commentary:
                     logger.info(f"Manual Query Response: {commentary_response.text}")
                 
-                # Speak response if voice enabled
-                if self.config.voice_enabled and self.voice_synthesizer:
-                    emotional_state = self.personality.get_current_emotional_state()
-                    await self.voice_synthesizer.speak_commentary(
-                        commentary_response.text,
-                        emotional_state.primary_emotion.value,
-                        emotional_state.emotional_intensity
-                    )
                 
                 return commentary_response.text
             
@@ -345,9 +307,6 @@ class PersonalityIntegration:
             if commentary_response:
                 self.last_commentary_time = time.time()
                 
-                if self.config.log_commentary:
-                    logger.info(f"Periodic Commentary: {commentary_response.text}")
-                
                 return commentary_response.text
             
             return None
@@ -369,7 +328,6 @@ class PersonalityIntegration:
             status = {
                 'enabled': True,
                 'personality_name': self.config.personality_name,
-                'voice_enabled': self.config.voice_enabled,
                 'current_emotion': emotional_state.primary_emotion.value,
                 'emotional_metrics': {
                     'confidence': emotional_state.confidence,
@@ -379,7 +337,6 @@ class PersonalityIntegration:
                     'stability': emotional_state.emotional_stability
                 },
                 'recent_activity': personality_summary.get('recent_performance', {}),
-                'voice_status': self.voice_synthesizer.get_voice_info() if self.voice_synthesizer else None
             }
             
             return status
@@ -415,8 +372,8 @@ class PersonalityIntegration:
         
         return TriggerEvent.PERIODIC_UPDATE
     
-    def _build_trading_context(self, decision: Any, features: Features, market_data: MarketData) -> Dict:
-        """Build comprehensive trading context"""
+    def _build_trading_context(self, decision: Any, features: Features, market_data: MarketData, agent=None) -> Dict:
+        """Build comprehensive trading context with enhanced agent insights"""
         
         # Extract subsystem signals
         subsystem_signals = {
@@ -459,11 +416,41 @@ class PersonalityIntegration:
             'uncertainty_estimate': getattr(decision, 'uncertainty_estimate', 0.5)
         }
         
+        # ENHANCED: Add agent context if available
+        agent_context = {}
+        decision_reasoning = {}
+        learning_context = {}
+        
+        if agent and hasattr(agent, 'get_agent_context'):
+            try:
+                agent_context = agent.get_agent_context()
+            except Exception as e:
+                logger.warning(f"Failed to get agent context: {e}")
+                agent_context = {}
+        
+        if agent and hasattr(agent, 'get_decision_reasoning'):
+            try:
+                decision_reasoning = agent.get_decision_reasoning(decision)
+            except Exception as e:
+                logger.warning(f"Failed to get decision reasoning: {e}")
+                decision_reasoning = {}
+        
+        if agent and hasattr(agent, 'get_learning_context'):
+            try:
+                learning_context = agent.get_learning_context()
+            except Exception as e:
+                logger.warning(f"Failed to get learning context: {e}")
+                learning_context = {}
+        
         return {
             'subsystem_signals': subsystem_signals,
             'market_data': market_context,
             'portfolio_state': portfolio_state,
-            'decision_context': decision_context
+            'decision_context': decision_context,
+            # ENHANCED CONTEXT
+            'agent_context': agent_context,
+            'decision_reasoning': decision_reasoning, 
+            'learning_context': learning_context
         }
     
     def _get_current_subsystem_signals(self) -> Dict:

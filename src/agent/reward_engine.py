@@ -219,12 +219,12 @@ class CoreRewardEngine:
     
     def __init__(self):
         self.components = {
-            'pnl_weight': MetaParameter(3.0, (1.0, 5.0)),  # Increase PnL weight significantly
-            'drawdown_penalty': MetaParameter(0.5, (0.0, 2.0)),
-            'hold_time_factor': MetaParameter(0.02, (0.0, 0.1)),  # Reduce hold penalty drastically
-            'win_rate_bonus': MetaParameter(0.1, (0.0, 0.5)),  # Reduce win rate bonus weight
-            'subsystem_consistency': MetaParameter(0.1, (0.0, 0.5)),  # Reduce consistency weight
-            'account_preservation': MetaParameter(0.2, (0.0, 0.5))  # Reduce preservation weight
+            'pnl_weight': MetaParameter(1.0, (0.1, 10.0)),  # Wide adaptive range for PnL discovery
+            'drawdown_penalty': MetaParameter(0.1, (0.0, 5.0)),  # Wider range for discovery
+            'hold_time_factor': MetaParameter(0.01, (0.0, 1.0)),  # Much wider adaptive range
+            'win_rate_bonus': MetaParameter(0.1, (0.0, 2.0)),  # Wider discovery range
+            'subsystem_consistency': MetaParameter(0.1, (0.0, 2.0)),  # Wider range
+            'account_preservation': MetaParameter(0.1, (0.0, 2.0))  # Wider adaptive range
         }
         
         self.outcome_history = deque(maxlen=200)
@@ -241,11 +241,16 @@ class CoreRewardEngine:
         decision_action = trade_data.get('action', 'trade')  # 'hold' or 'trade'
         decision_confidence = trade_data.get('decision_confidence', 0.5)
         
-        # Heavy penalty for position limit violations
+        # Progressive penalty for position limit violations (prevents confidence collapse)
         position_limit_violation = trade_data.get('position_limit_violation', False)
         if position_limit_violation:
-            logger.warning(f"POSITION LIMIT VIOLATION PENALTY: -5.0")
-            return -5.0  # Immediate heavy penalty, no other calculations needed
+            recent_violations = trade_data.get('recent_violations', 1)
+            # Start with small penalty, escalate gradually
+            base_penalty = 0.1
+            escalation_factor = min(recent_violations * 0.05, 0.3)  # Cap at 0.3
+            violation_penalty = -(base_penalty + escalation_factor)
+            logger.warning(f"POSITION LIMIT VIOLATION PENALTY: {violation_penalty:.3f} (violations: {recent_violations})")
+            return violation_penalty
         
         # Account-normalized PnL component - heavily reward profitable trades
         pnl_norm = np.tanh(pnl / (account_balance * 0.01))  # Normalize by 1% of account
@@ -357,8 +362,8 @@ class RejectionRewardEngine:
         """Compute reward penalty for trade rejections"""
         
         if rejection_type == 'position_limit':
-            # Escalating penalty for repeated position limit violations
-            penalty_multiplier = 0.05 + (self.recent_position_rejections * 0.05)
+            # Adaptive penalty for position limit violations - let system learn optimal escalation
+            penalty_multiplier = 0.01 + (self.recent_position_rejections * 0.01)  # Much lower, adaptive
             rejection_reward = base_reward * penalty_multiplier
             
             # Track rejection for learning
@@ -366,8 +371,8 @@ class RejectionRewardEngine:
             self.position_rejection_timestamps.append(current_time)
             self.recent_position_rejections += 1
             
-            # Clean up old timestamps (older than 10 minutes)
-            cutoff_time = current_time - 600
+            # Adaptive violation memory window - let system discover optimal memory length
+            cutoff_time = current_time - 60  # Much shorter initial window for adaptive discovery
             while (self.position_rejection_timestamps and 
                    self.position_rejection_timestamps[0] < cutoff_time):
                 self.position_rejection_timestamps.popleft()
@@ -379,10 +384,10 @@ class RejectionRewardEngine:
             return rejection_reward
             
         elif rejection_type == 'insufficient_margin':
-            return base_reward * 0.5  # Moderate penalty
+            return base_reward * 0.01  # Adaptive penalty discovery
             
         elif rejection_type == 'invalid_order':
-            return base_reward * 0.05  # Light penalty
+            return base_reward * 0.001  # Very light adaptive penalty
             
         else:
             return base_reward  # Default penalty
@@ -401,11 +406,11 @@ class UnifiedRewardEngine:
         self.dopamine_engine = DopamineRewardComponent(config.get('dopamine', {}))
         self.rejection_engine = RejectionRewardEngine()
         
-        # Engine weights
+        # Adaptive engine weights - let system discover optimal combinations
         self.weights = {
-            'core_weight': config.get('core_weight', 1.0),
-            'dopamine_weight': config.get('dopamine_weight', 0.3),
-            'rejection_weight': config.get('rejection_weight', 1.0)
+            'core_weight': config.get('core_weight', 0.33),
+            'dopamine_weight': config.get('dopamine_weight', 0.33), 
+            'rejection_weight': config.get('rejection_weight', 0.33)
         }
         
         # Overall tracking

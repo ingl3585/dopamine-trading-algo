@@ -416,23 +416,82 @@ class DNASubsystem:
         if outcome > self.performance_threshold:
             self.elite_sequences[sequence] = self.sequences[sequence].copy()
         
-        if len(self.sequences) % 100 == 0:
+        # Less frequent cleanup - only when significantly over capacity or periodically
+        if len(self.sequences) % 250 == 0 and len(self.sequences) > 1500:
             self._cleanup_sequences()
 
     def _cleanup_sequences(self):
-        if len(self.sequences) > 2000:
+        """Improved cleanup that preserves diversity and learning potential"""
+        
+        # Only cleanup when significantly over capacity
+        if len(self.sequences) > self.max_sequences * 1.5:  # 12,000 sequences
+            target_size = int(self.max_sequences * 0.9)  # Keep 90% (7,200)
+            
+            # Calculate multi-factor scores for each sequence
             sequence_scores = []
+            current_generation = max((data['generation'] for data in self.sequences.values()), default=0)
+            
             for seq, data in self.sequences.items():
-                age_factor = self.age_decay_factor ** data['age']
-                adjusted_score = data['performance'] * age_factor
-                sequence_scores.append((seq, adjusted_score))
+                # Performance component (weighted by recency)
+                age_factor = self.age_decay_factor ** min(data['age'], 100)  # Cap age penalty
+                performance_score = data['performance'] * age_factor
+                
+                # Diversity bonus for newer generations
+                generation_bonus = 0.0
+                if current_generation > 0:
+                    generation_ratio = data['generation'] / current_generation
+                    generation_bonus = generation_ratio * 0.2  # Up to 20% bonus for newer generations
+                
+                # Learning potential bonus for recent sequences with mixed performance
+                learning_potential = 0.0
+                if data['age'] < 20:  # Young sequences
+                    if -0.2 < data['performance'] < 0.2:  # Uncertain performance
+                        learning_potential = 0.15  # Give them a chance to prove themselves
+                
+                # Elite protection bonus
+                elite_bonus = 0.3 if seq in self.elite_sequences else 0.0
+                
+                # Combined score
+                total_score = performance_score + generation_bonus + learning_potential + elite_bonus
+                sequence_scores.append((seq, total_score, data))
             
+            # Sort by total score and keep the best ones
             sequence_scores.sort(key=lambda x: x[1], reverse=True)
-            sequences_to_keep = {seq for seq, _ in sequence_scores[:1500]}
-            sequences_to_keep.update(self.elite_sequences.keys())
             
+            # Ensure we keep all elite sequences regardless of score
+            sequences_to_keep = set(self.elite_sequences.keys())
+            
+            # Add top performers up to target size
+            for seq, score, data in sequence_scores:
+                if len(sequences_to_keep) >= target_size:
+                    break
+                sequences_to_keep.add(seq)
+            
+            # Update sequences
+            old_count = len(self.sequences)
             self.sequences = {seq: data for seq, data in self.sequences.items() 
                             if seq in sequences_to_keep}
+            
+            logger.info(f"DNA cleanup: {old_count} -> {len(self.sequences)} sequences "
+                       f"(elite: {len(self.elite_sequences)}, target: {target_size})")
+        
+        # Separate cleanup for very old, poor-performing sequences (more conservative)
+        elif len(self.sequences) > self.max_sequences:
+            old_poor_sequences = []
+            for seq, data in self.sequences.items():
+                # Only remove if sequence is old AND poor performing AND not elite
+                if (data['age'] > 200 and 
+                    data['performance'] < -0.5 and 
+                    seq not in self.elite_sequences):
+                    old_poor_sequences.append(seq)
+            
+            # Remove up to 10% of capacity worth of old poor sequences
+            max_remove = min(len(old_poor_sequences), int(self.max_sequences * 0.1))
+            for seq in old_poor_sequences[:max_remove]:
+                del self.sequences[seq]
+            
+            if max_remove > 0:
+                logger.debug(f"DNA conservative cleanup: removed {max_remove} old poor sequences")
 
     def get_evolution_stats(self) -> Dict:
         if not self.sequences:

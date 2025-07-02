@@ -547,7 +547,7 @@ class PersonalityMemory:
                     'timestamp': entry.timestamp,
                     'event_type': entry.event_type,
                     'emotional_state': entry.emotional_state,
-                    'commentary': entry.commentary[:200],  # Truncate for storage
+                    'commentary': entry.commentary[:2000],  # Truncate for storage
                     'confidence': entry.confidence,
                     'outcome': entry.outcome,
                     'key_themes': entry.key_themes

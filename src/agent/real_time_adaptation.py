@@ -211,8 +211,11 @@ class OnlineLearner:
             self.emergency_mode = True
             current_lr = self.emergency_learning_rate
         
-        # Forward pass
-        prediction = torch.dot(self.weights, features) + self.bias
+        # Forward pass with consistent dtype
+        features = features.to(dtype=torch.float32)
+        weights = self.weights.to(dtype=torch.float32)
+        bias = self.bias.to(dtype=torch.float32)
+        prediction = torch.dot(weights, features) + bias
         loss = (prediction - target) ** 2
         
         # Backward pass with adjusted learning rate
@@ -250,7 +253,11 @@ class OnlineLearner:
     
     def predict(self, features: torch.Tensor) -> float:
         with torch.no_grad():
-            return float(torch.dot(self.weights, features) + self.bias)
+            # Ensure consistent dtype for dot product
+            features = features.to(dtype=torch.float32)
+            weights = self.weights.to(dtype=torch.float32)
+            bias = self.bias.to(dtype=torch.float32)
+            return float(torch.dot(weights, features) + bias)
     
     def get_adaptation_stats(self) -> Dict:
         return {

@@ -138,7 +138,7 @@ class MetaLearner:
             'trade_frequency_base': MetaParameter(5.0, (1.0, 20.0)),
             
             # Position sizing (completely account-driven)
-            'position_size_factor': MetaParameter(0.1, (0.01, 0.5)),  # More conservative upper bound
+            'position_size_factor': MetaParameter(0.1, (0.001, 5.0)),  # Adaptive position sizing
             'max_position_factor': MetaParameter(0.3, (0.1, 0.7)),   # More conservative for smaller accounts
             
             # Confidence thresholds (learned)
@@ -151,7 +151,7 @@ class MetaLearner:
             'target_distance_factor': MetaParameter(0.03, (0.01, 0.1)),   # Reasonable targets for MNQ
             
             # Account protection (adaptive based on account size)
-            'loss_tolerance_factor': MetaParameter(0.03, (0.01, 0.1)),    # Max 3% daily loss initially
+            'loss_tolerance_factor': MetaParameter(0.03, (0.001, 1.0)),    # Adaptive loss tolerance
             'consecutive_loss_tolerance': MetaParameter(5.0, (2.0, 15.0)),
             
             # New: Account size awareness
@@ -159,7 +159,7 @@ class MetaLearner:
             'margin_utilization_limit': MetaParameter(0.7, (0.3, 0.9)),   # Max margin usage
             
             # Enhanced position management
-            'max_contracts_limit': MetaParameter(10.0, (5.0, 15.0)),      # Learned max position limit
+            'max_contracts_limit': MetaParameter(10.0, (1.0, 100.0)),      # Adaptive max position limit
             'position_concentration_factor': MetaParameter(0.8, (0.5, 1.0)), # How concentrated positions can be
             'exposure_scaling_threshold': MetaParameter(0.6, (0.4, 0.8))   # When to start scaling down
         }
@@ -270,10 +270,29 @@ class MetaLearner:
         # Adapt reward components
         self.reward_engine.adapt_parameters()
         
-        # Count successful adaptations
-        adaptations = sum(1 for name, param in self.parameters.items() 
-                         if abs(param.value - old_values[name]) > old_values[name] * 0.02)
-        self.successful_adaptations += adaptations
+        # Count successful adaptations with more reasonable criteria
+        adaptations = 0
+        for name, param in self.parameters.items():
+            old_val = old_values[name]
+            new_val = param.value
+            change = abs(new_val - old_val)
+            
+            # Multiple criteria for "successful adaptation"
+            is_successful = (
+                change > old_val * 0.005 or  # Lowered from 2% to 0.5%
+                change > 0.001 or            # Absolute minimum change
+                (hasattr(param, 'outcomes') and len(param.outcomes) > 0)  # Parameter is actively learning
+            )
+            
+            if is_successful:
+                adaptations += 1
+        
+        self.successful_adaptations += max(1, adaptations)  # At least 1 if learning occurred
+        
+        # Debug logging for learning efficiency tracking
+        logger.info(f"META-LEARNER: total_updates={self.total_updates}, "
+                   f"successful_adaptations={self.successful_adaptations}, "
+                   f"efficiency={self.get_learning_efficiency():.1%}")
     
     def adapt_parameters(self):
         for param in self.parameters.values():

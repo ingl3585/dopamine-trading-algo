@@ -62,18 +62,18 @@ class AdvancedRiskManager:
             'liquidity_crisis': False
         }
         
-        # Real-time drawdown prevention
-        self.max_portfolio_heat = 0.02  # 2% of account
-        self.emergency_stop_threshold = 0.05  # 5% drawdown triggers emergency
+        # Adaptive drawdown prevention - let AI discover optimal levels
+        self.max_portfolio_heat = 0.001  # Very low initial, adaptive discovery
+        self.emergency_stop_threshold = 0.001  # Very low initial, adaptive discovery
         self.current_portfolio_heat = 0.0
         
         # Regime detection for risk adjustment
         self.current_regime = 'normal'  # normal, volatile, crisis
         self.regime_history = deque(maxlen=50)
         
-        # Kelly criterion optimization
+        # Adaptive Kelly criterion optimization
         self.kelly_lookback = 100
-        self.kelly_adjustment_factor = 0.25  # Conservative Kelly
+        self.kelly_adjustment_factor = 0.01  # Very conservative initial, adaptive discovery
         
     def run_monte_carlo_simulation(self, current_position_size: int, 
                                  market_data, intelligence_data: Dict) -> List[RiskScenario]:

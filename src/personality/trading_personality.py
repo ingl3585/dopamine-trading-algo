@@ -1,7 +1,7 @@
 """
 AI Trading Personality - Main Orchestration Class
 
-The voice and personality of the sophisticated trading AI system
+The personality and commentary system for the sophisticated trading AI
 """
 
 import asyncio
@@ -19,6 +19,7 @@ from .personality_memory import PersonalityMemory
 logger = logging.getLogger(__name__)
 
 class TriggerEvent(Enum):
+    SYSTEM_START = "system_start"
     POSITION_ENTRY = "position_entry"
     POSITION_EXIT = "position_exit"
     MARKET_OPEN = "market_open"
@@ -49,14 +50,13 @@ class PersonalityConfig:
     consistency_preference: float = 0.8
     default_style: CommentaryStyle = CommentaryStyle.ANALYTICAL
     default_tone: CommentaryTone = CommentaryTone.PROFESSIONAL
-    voice_enabled: bool = False
-    max_commentary_length: int = 200
+    max_commentary_length: int = 10000
     min_commentary_interval: float = 30.0  # seconds
     
     # LLM Configuration
     llm_model: str = "gpt-4"
     llm_temperature: float = 0.7
-    llm_max_tokens: int = 300
+    llm_max_tokens: int = 8000
     llm_base_url: str = "http://localhost:11434"
     llm_api_key: str = ""
     mock_llm: bool = False
@@ -106,7 +106,6 @@ class TradingPersonality:
         self.emotional_state_callbacks: List[Callable[[EmotionalMetrics], None]] = []
         
         # Voice synthesis (placeholder for future implementation)
-        self.voice_synthesizer = None
         
         logger.info(f"AI Trading Personality '{self.config.personality_name}' initialized")
     
@@ -147,7 +146,7 @@ class TradingPersonality:
             # Determine commentary style and tone
             style, tone = self._determine_commentary_style(emotional_state, event, context)
             
-            # Create commentary request
+            # Create commentary request with enhanced context
             commentary_request = CommentaryRequest(
                 trigger_event=event.value,
                 market_context=context.get('market_data', {}),
@@ -157,7 +156,8 @@ class TradingPersonality:
                 style=style,
                 tone=tone,
                 max_length=self.config.max_commentary_length,
-                urgency=self._calculate_urgency(event, emotional_state)
+                urgency=self._calculate_urgency(event, emotional_state),
+                context_data=context  # Pass full enhanced context including agent insights
             )
             
             # Generate commentary
@@ -182,9 +182,6 @@ class TradingPersonality:
             self.last_commentary_time = time.time()
             self._notify_callbacks(commentary_response, emotional_state)
             
-            # Voice synthesis if enabled
-            if self.config.voice_enabled and self.voice_synthesizer:
-                await self._synthesize_voice(commentary_response)
             
             # Commentary will be logged by the trading system
             
@@ -494,18 +491,6 @@ class TradingPersonality:
             follow_up_suggested=False
         )
     
-    async def _synthesize_voice(self, commentary: CommentaryResponse):
-        """Synthesize voice for commentary (placeholder for future implementation)"""
-        
-        if not self.voice_synthesizer:
-            return
-        
-        try:
-            # This would integrate with a voice synthesis service
-            # await self.voice_synthesizer.speak(commentary.text)
-            pass
-        except Exception as e:
-            logger.error(f"Voice synthesis error: {e}")
     
     def save_state(self):
         """Save personality state"""

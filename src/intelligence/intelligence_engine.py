@@ -3,6 +3,7 @@
 import json
 import numpy as np
 import logging
+import time
 
 from collections import defaultdict, deque
 from dataclasses import dataclass
@@ -12,7 +13,7 @@ from typing import Dict, List, Optional
 from src.market_analysis.data_processor import MarketData
 from src.intelligence.subsystem_evolution import EnhancedIntelligenceOrchestrator
 from src.market_analysis.microstructure_analyzer import MarketMicrostructureEngine
-from src.agent.reward_engine import DopamineRewardComponent
+from src.intelligence.subsystems.enhanced_dopamine_subsystem import EnhancedDopamineSubsystem
 from src.shared.types import Features
 
 logger = logging.getLogger(__name__)
@@ -28,10 +29,10 @@ class IntelligenceEngine:
         # Microstructure analysis (4th subsystem)
         self.microstructure_engine = MarketMicrostructureEngine()
         
-        # Dopamine subsystem (5th subsystem) - P&L-based reward system
-        self.dopamine_subsystem = DopamineRewardComponent(config)
+        # Enhanced Dopamine subsystem (5th subsystem) - Complete trading psychology system
+        self.dopamine_subsystem = EnhancedDopamineSubsystem(config)
         
-        # Real-time adaptation (lazy import to avoid circular dependency)
+        # Real-time adaptation (dependency injection to avoid circular imports)
         self.adaptation_engine = None
         
         # Pattern storage
@@ -61,14 +62,24 @@ class IntelligenceEngine:
         self.load_patterns(self.memory_file)
 
     def _get_adaptation_engine(self):
-        """Lazy initialization of adaptation engine to avoid circular dependency"""
+        """Get adaptation engine via dependency injection"""
         if self.adaptation_engine is None:
-            from src.agent.real_time_adaptation import RealTimeAdaptationEngine
-            self.adaptation_engine = RealTimeAdaptationEngine(model_dim=64)
+            from src.core.dependency_registry import get_service
+            try:
+                self.adaptation_engine = get_service('adaptation_engine')
+            except ValueError:
+                # Fallback to direct creation if not registered
+                from src.agent.real_time_adaptation import RealTimeAdaptationEngine
+                self.adaptation_engine = RealTimeAdaptationEngine(model_dim=64)
+                logger.warning("Adaptation engine not in registry, created directly")
         return self.adaptation_engine
 
     def save_patterns(self, filepath: str):
         """Enhanced save with all subsystem patterns"""
+        if not filepath or filepath.strip() == "":
+            filepath = "data/intelligence_memory.json"
+            logger.warning(f"Empty filepath provided, using default: {filepath}")
+        
         orchestrator_stats = self.orchestrator.get_comprehensive_stats()
         microstructure_features = self.microstructure_engine.get_microstructure_features()
         adaptation_stats = self._get_adaptation_engine().get_comprehensive_stats()
@@ -162,7 +173,7 @@ class IntelligenceEngine:
             total_bars = 0
             
             # Process each timeframe with comprehensive subsystem training
-            for timeframe in ['15m', '5m', '1m']:
+            for timeframe in ['4h', '1h', '15m', '5m', '1m']:
                 bars_key = f'bars_{timeframe}'
                 if bars_key in historical_data:
                     bars = historical_data[bars_key]
@@ -221,7 +232,7 @@ class IntelligenceEngine:
     
     def _process_historical_bars_comprehensive(self, bars, timeframe):
         """Process historical bars with training for all four subsystems"""
-        if not bars or len(bars) < 50:  # Need more data for comprehensive training
+        if not bars or len(bars) < 5:  # Need more data for comprehensive training
             return 0
         
         logger.debug(f"Comprehensive processing {len(bars)} bars for {timeframe}")
@@ -247,7 +258,7 @@ class IntelligenceEngine:
         processed_count = 0
         window_size = min(100, len(bars) // 4)  # Larger window for comprehensive training
         
-        logger.debug(f"Starting comprehensive processing with window_size={window_size}")
+        logger.info(f"Starting comprehensive processing with window_size={window_size}")
         
         # Process overlapping windows for comprehensive training
         step_size = max(1, window_size // 4)  # Overlapping windows for better training
@@ -564,11 +575,11 @@ class IntelligenceEngine:
         immune_strength = immune_result.get('strength', 0.0)
         microstructure_strength = microstructure_result.get('strength', 0.0)
         
-        # Base weights for each subsystem
+        # Equal adaptive weights for subsystem discovery
         base_weights = {
-            'dna': 0.3,
+            'dna': 0.25,
             'temporal': 0.25,
-            'immune': 0.2,
+            'immune': 0.25,
             'microstructure': 0.25
         }
         
@@ -786,10 +797,12 @@ class IntelligenceEngine:
     
     def _classify_market_regime(self, volatility: float, momentum: float, stress: float) -> str:
         """Classify market regime for subsystem training"""
-        if stress > 0.5 or volatility > 0.06:
+        # Adaptive regime classification - let AI discover market states
+        regime_score = stress * 2.0 + volatility * 10.0 + abs(momentum) * 50.0
+        if regime_score > 2.0:  # Much higher threshold for adaptive discovery
             return 'crisis'
-        elif volatility > 0.03 or abs(momentum) > 0.02:
-            return 'volatile'
+        elif regime_score > 1.0:  # Higher threshold
+            return 'volatile' 
         else:
             return 'normal'
     
@@ -906,6 +919,9 @@ class IntelligenceEngine:
             # Learn in microstructure engine
             self.microstructure_engine.learn_from_outcome(outcome)
             
+            # Learn in enhanced dopamine subsystem
+            self.dopamine_subsystem.learn_from_outcome(outcome, {'trade_data': trade})
+            
             # Update adaptation engine
             adaptation_context = {
                 'volatility': learning_context['market_state'].get('volatility', 0.02),
@@ -996,6 +1012,313 @@ class IntelligenceEngine:
         
         return f"p{momentum_bucket}_{position_bucket}_{vol_bucket}_d{dna_bucket}_m{micro_bucket}"
     
+    def _alert_timestamp_failure(self, timestamp):
+        """Alert system to timestamp validation failure"""
+        try:
+            # Log critical alert
+            logger.critical(f"SYSTEM ALERT: Timestamp validation failed - {timestamp}")
+            
+            # Track timestamp failures for pattern analysis
+            if not hasattr(self, 'timestamp_failures'):
+                self.timestamp_failures = []
+            
+            self.timestamp_failures.append({
+                'timestamp': timestamp,
+                'timestamp_type': type(timestamp).__name__,
+                'time': time.time()
+            })
+            
+            # Keep only last 100 failures
+            self.timestamp_failures = self.timestamp_failures[-100:]
+            
+        except Exception as e:
+            logger.error(f"Failed to log timestamp failure alert: {e}")
+    
+    def _alert_insufficient_data(self, price_count: int, volume_count: int):
+        """Alert system to insufficient data for feature extraction"""
+        try:
+            logger.critical(f"SYSTEM ALERT: Insufficient data - Prices: {price_count}, Volumes: {volume_count}")
+            
+            # Track data insufficiency patterns
+            if not hasattr(self, 'data_insufficiency_events'):
+                self.data_insufficiency_events = []
+            
+            self.data_insufficiency_events.append({
+                'price_count': price_count,
+                'volume_count': volume_count,
+                'time': time.time()
+            })
+            
+            # Keep only last 100 events
+            self.data_insufficiency_events = self.data_insufficiency_events[-100:]
+            
+        except Exception as e:
+            logger.error(f"Failed to log data insufficiency alert: {e}")
+    
+    def _calculate_dynamic_signal_weights(self, signals: list, market_features: dict, consensus_strength: float) -> list:
+        """Calculate dynamic weights based on signal quality, reliability, and recent performance"""
+        try:
+            # Initialize subsystem performance tracking if not exists
+            if not hasattr(self, 'subsystem_performance'):
+                self.subsystem_performance = {
+                    'dna': {'correct_predictions': 0, 'total_predictions': 0, 'recent_accuracy': 0.5},
+                    'temporal': {'correct_predictions': 0, 'total_predictions': 0, 'recent_accuracy': 0.5},
+                    'immune': {'correct_predictions': 0, 'total_predictions': 0, 'recent_accuracy': 0.5},
+                    'microstructure': {'correct_predictions': 0, 'total_predictions': 0, 'recent_accuracy': 0.5},
+                    'dopamine': {'correct_predictions': 0, 'total_predictions': 0, 'recent_accuracy': 0.5}
+                }
+            
+            # Signal quality metrics (strength, consistency, reliability)
+            signal_names = ['dna', 'temporal', 'immune', 'microstructure', 'dopamine']
+            base_weights = []
+            
+            for i, (signal, name) in enumerate(zip(signals, signal_names)):
+                # 1. Signal strength component (0-1)
+                signal_strength = min(1.0, abs(signal))
+                
+                # 2. Signal reliability based on recent performance (0-1)
+                performance = self.subsystem_performance[name]
+                if performance['total_predictions'] > 10:
+                    reliability = performance['recent_accuracy']
+                else:
+                    reliability = 0.5  # Default for insufficient data
+                
+                # 3. Market condition suitability (0-1)
+                suitability = self._calculate_subsystem_suitability(name, market_features)
+                
+                # 4. Signal consistency (how well it aligns with consensus)
+                if consensus_strength > 0:
+                    if signal * consensus_strength > 0:  # Same direction as consensus
+                        consistency = min(1.0, abs(signal) / max(0.1, abs(consensus_strength)))
+                    else:  # Contrarian signal
+                        consistency = 0.3  # Lower weight for contrarian signals
+                else:
+                    consistency = 0.5  # Neutral when no consensus
+                
+                # Combine components with adaptive weights
+                weight = (
+                    signal_strength * 0.3 +      # Current signal strength
+                    reliability * 0.4 +          # Historical performance  
+                    suitability * 0.2 +          # Market condition fit
+                    consistency * 0.1            # Consensus alignment
+                )
+                
+                base_weights.append(max(0.05, weight))  # Minimum 5% weight
+            
+            # Normalize weights to sum to 1.0
+            total_weight = sum(base_weights)
+            if total_weight > 0:
+                normalized_weights = [w / total_weight for w in base_weights]
+            else:
+                normalized_weights = [0.2] * 5  # Fallback to equal weights
+            
+            # Log weight distribution for monitoring
+            if hasattr(self, 'weight_logging_counter'):
+                self.weight_logging_counter += 1
+            else:
+                self.weight_logging_counter = 0
+            
+            # Log every 100 calculations to avoid spam
+            if self.weight_logging_counter % 100 == 0:
+                weight_str = ", ".join(f"{name}: {w:.3f}" for name, w in zip(signal_names, normalized_weights))
+                logger.info(f"Dynamic signal weights - {weight_str}")
+            
+            return normalized_weights
+            
+        except Exception as e:
+            logger.error(f"Error calculating dynamic signal weights: {e}")
+            return [0.2, 0.2, 0.2, 0.2, 0.2]  # Fallback to equal weights
+    
+    def _calculate_subsystem_suitability(self, subsystem_name: str, market_features: dict) -> float:
+        """Calculate how suitable a subsystem is for current market conditions"""
+        try:
+            volatility = market_features.get('volatility', 0.02)
+            price_momentum = market_features.get('price_momentum', 0.0)
+            volume_momentum = market_features.get('volume_momentum', 0.0)
+            time_of_day = market_features.get('time_of_day', 0.5)
+            
+            # Each subsystem has different strengths in different market conditions
+            if subsystem_name == 'dna':
+                # DNA system works well in trending markets
+                trend_strength = abs(price_momentum)
+                return min(1.0, trend_strength * 3.0 + 0.3)
+            
+            elif subsystem_name == 'temporal':
+                # Temporal system works well during specific time periods
+                # Peak performance during market open/close
+                time_factor = abs(time_of_day - 0.5) * 2  # Distance from midday
+                return min(1.0, time_factor * 0.8 + 0.4)
+            
+            elif subsystem_name == 'immune':
+                # Immune system excels in volatile, risky conditions
+                return min(1.0, volatility * 20 + 0.2)
+            
+            elif subsystem_name == 'microstructure':
+                # Microstructure works well with high volume activity
+                volume_factor = abs(volume_momentum)
+                return min(1.0, volume_factor * 2.0 + 0.3)
+            
+            elif subsystem_name == 'dopamine':
+                # Dopamine system works consistently across conditions
+                # Slight preference for moderate volatility
+                vol_preference = 1.0 - abs(volatility - 0.03) * 10
+                return max(0.3, min(1.0, vol_preference))
+            
+            else:
+                return 0.5  # Default suitability
+                
+        except Exception as e:
+            logger.error(f"Error calculating subsystem suitability for {subsystem_name}: {e}")
+            return 0.5
+    
+    def _coordinate_subsystem_learning(self, learning_data: dict):
+        """Coordinate concurrent learning phases across subsystems to prevent conflicts"""
+        try:
+            # Initialize learning coordination if not exists
+            if not hasattr(self, 'learning_coordinator'):
+                import threading
+                self.learning_coordinator = {
+                    'active_learners': set(),
+                    'learning_queue': [],
+                    'coordination_lock': threading.Lock(),
+                    'max_concurrent_learners': 2,  # Limit concurrent learning
+                    'learning_round': 0
+                }
+            
+            coordinator = self.learning_coordinator
+            
+            with coordinator['coordination_lock']:
+                # Determine which subsystems need learning updates
+                subsystems_to_update = []
+                
+                # Priority-based learning scheduling
+                learning_priorities = {
+                    'dopamine': learning_data.get('trade_outcome', 0) * 2,  # Highest priority for trade outcomes
+                    'immune': learning_data.get('risk_violation', 0) * 1.8,  # High priority for risk events
+                    'dna': learning_data.get('pattern_match', 0) * 1.5,     # Medium-high for patterns
+                    'temporal': learning_data.get('time_relevance', 0) * 1.2, # Medium for time-based
+                    'microstructure': learning_data.get('volume_significance', 0) * 1.0 # Base priority
+                }
+                
+                # Sort by priority (descending)
+                sorted_subsystems = sorted(learning_priorities.items(), key=lambda x: x[1], reverse=True)
+                
+                # Schedule learning updates
+                for subsystem_name, priority in sorted_subsystems:
+                    if priority > 0.1:  # Only learn if significant priority
+                        if len(coordinator['active_learners']) < coordinator['max_concurrent_learners']:
+                            # Start learning immediately
+                            coordinator['active_learners'].add(subsystem_name)
+                            self._start_subsystem_learning(subsystem_name, learning_data, priority)
+                        else:
+                            # Queue for later
+                            coordinator['learning_queue'].append((subsystem_name, learning_data, priority))
+                
+                coordinator['learning_round'] += 1
+                
+                # Log coordination status
+                if coordinator['learning_round'] % 50 == 0:
+                    active_str = ", ".join(coordinator['active_learners'])
+                    queue_len = len(coordinator['learning_queue'])
+                    logger.info(f"Learning coordination - Active: [{active_str}], Queued: {queue_len}")
+            
+        except Exception as e:
+            logger.error(f"Error in subsystem learning coordination: {e}")
+    
+    def _start_subsystem_learning(self, subsystem_name: str, learning_data: dict, priority: float):
+        """Start learning process for a specific subsystem"""
+        try:
+            # Update subsystem performance tracking with learning data
+            if hasattr(self, 'subsystem_performance'):
+                performance = self.subsystem_performance[subsystem_name]
+                
+                # Update prediction accuracy if we have outcome data
+                if 'actual_outcome' in learning_data and 'predicted_outcome' in learning_data:
+                    predicted = learning_data['predicted_outcome']
+                    actual = learning_data['actual_outcome']
+                    
+                    # Simple accuracy: same direction = correct
+                    correct = (predicted * actual) > 0
+                    
+                    performance['total_predictions'] += 1
+                    if correct:
+                        performance['correct_predictions'] += 1
+                    
+                    # Update recent accuracy (rolling average)
+                    if performance['total_predictions'] > 0:
+                        accuracy = performance['correct_predictions'] / performance['total_predictions']
+                        # Weighted average: 80% historical, 20% current
+                        performance['recent_accuracy'] = (
+                            performance['recent_accuracy'] * 0.8 + accuracy * 0.2
+                        )
+                
+                # Trigger actual subsystem learning
+                self._trigger_subsystem_learning(subsystem_name, learning_data, priority)
+                
+        except Exception as e:
+            logger.error(f"Error starting learning for {subsystem_name}: {e}")
+        finally:
+            # Remove from active learners when done
+            if hasattr(self, 'learning_coordinator'):
+                self.learning_coordinator['active_learners'].discard(subsystem_name)
+                self._process_learning_queue()
+    
+    def _trigger_subsystem_learning(self, subsystem_name: str, learning_data: dict, priority: float):
+        """Trigger actual learning update for specific subsystem"""
+        try:
+            if subsystem_name == 'dopamine' and hasattr(self.orchestrator, 'dopamine_subsystem'):
+                # Update dopamine learning
+                outcome = learning_data.get('trade_outcome', 0)
+                if abs(outcome) > 0.01:  # Significant outcome
+                    self.orchestrator.dopamine_subsystem.update_dopamine_response(outcome, priority)
+            
+            elif subsystem_name == 'immune' and hasattr(self.orchestrator, 'immune_subsystem'):
+                # Update immune system
+                risk_data = learning_data.get('risk_violation', 0)
+                if risk_data > 0:
+                    self.orchestrator.immune_subsystem.learn_from_threat(learning_data)
+            
+            elif subsystem_name == 'dna' and hasattr(self.orchestrator, 'dna_subsystem'):
+                # Update DNA patterns
+                pattern_data = learning_data.get('pattern_match', 0)
+                if abs(pattern_data) > 0.1:
+                    self.orchestrator.dna_subsystem.evolve_patterns(learning_data)
+            
+            elif subsystem_name == 'temporal' and hasattr(self.orchestrator, 'temporal_subsystem'):
+                # Update temporal patterns
+                time_data = learning_data.get('time_relevance', 0)
+                if abs(time_data) > 0.1:
+                    self.orchestrator.temporal_subsystem.update_cycles(learning_data)
+            
+            elif subsystem_name == 'microstructure':
+                # Update microstructure analysis
+                volume_data = learning_data.get('volume_significance', 0)
+                if abs(volume_data) > 0.1:
+                    if hasattr(self, 'microstructure_engine'):
+                        self.microstructure_engine.learn_from_outcome(learning_data)
+        
+        except Exception as e:
+            logger.error(f"Error triggering learning for {subsystem_name}: {e}")
+    
+    def _process_learning_queue(self):
+        """Process queued learning requests when capacity becomes available"""
+        try:
+            coordinator = self.learning_coordinator
+            
+            while (len(coordinator['active_learners']) < coordinator['max_concurrent_learners'] and 
+                   coordinator['learning_queue']):
+                
+                # Get highest priority item from queue
+                coordinator['learning_queue'].sort(key=lambda x: x[2], reverse=True)
+                subsystem_name, learning_data, priority = coordinator['learning_queue'].pop(0)
+                
+                # Start learning
+                coordinator['active_learners'].add(subsystem_name)
+                self._start_subsystem_learning(subsystem_name, learning_data, priority)
+        
+        except Exception as e:
+            logger.error(f"Error processing learning queue: {e}")
+
     def _default_features(self) -> Features:
         """Enhanced default features with all subsystems"""
         return Features(
@@ -1046,6 +1369,15 @@ class IntelligenceEngine:
         if isinstance(microstructure_features, dict):
             micro_patterns_count = microstructure_features.get('pattern_count', 0)
         
+        # Get dopamine subsystem stats
+        dopamine_stats = 0
+        try:
+            dopamine_metrics = self.dopamine_subsystem.get_enhanced_performance_metrics()
+            if isinstance(dopamine_metrics, dict) and dopamine_metrics.get('status') != 'insufficient_data':
+                dopamine_stats = dopamine_metrics.get('total_updates', 0)
+        except:
+            dopamine_stats = 0
+        
         return {
             'total_patterns': len(self.patterns),
             'recent_performance': np.mean(self.recent_outcomes) if self.recent_outcomes else 0,
@@ -1053,11 +1385,12 @@ class IntelligenceEngine:
             'historical_processed': self.historical_processed,
             'bootstrap_stats': self.bootstrap_stats,
             'subsystem_training_progress': self.subsystem_training_progress,
-            # Individual subsystem stats
+            # Individual subsystem stats - ALL 5 SUBSYSTEMS
             'dna_patterns': dna_stats.get('total_sequences', 0),
             'micro_patterns': micro_patterns_count,
             'temporal_patterns': temporal_cycles,
             'immune_patterns': immune_stats.get('total_antibodies', 0),
+            'dopamine_patterns': dopamine_stats,
             # Detailed subsystem stats
             'orchestrator': orchestrator_stats,
             'adaptation': adaptation_stats,
@@ -1072,7 +1405,9 @@ class IntelligenceEngine:
         # --- Pre-computation Guards ---
         # Ensure we have enough data points to calculate features meaningfully.
         if len(data.prices_1m) < 20 or len(data.volumes_1m) < 20:
-            logger.warning("Insufficient data for feature extraction. Returning default features.")
+            logger.error(f"CRITICAL: Insufficient data for feature extraction. Prices: {len(data.prices_1m)}, Volumes: {len(data.volumes_1m)}")
+            logger.error("ALERT: Returning default features due to insufficient market data")
+            self._alert_insufficient_data(len(data.prices_1m), len(data.volumes_1m))
             return self._default_features()
 
         # Use the most recent 20 data points for stable calculations.
@@ -1102,10 +1437,17 @@ class IntelligenceEngine:
             now = datetime.fromtimestamp(data.timestamp)
             time_of_day = (now.hour * 60 + now.minute) / 1440
         except (OSError, ValueError, OverflowError):
-            logger.warning(f"Invalid timestamp format received: {data.timestamp}. Cannot calculate time features.")
-            # Do not proceed with fabricated time data. Return defaults.
+            logger.error(f"CRITICAL: Invalid timestamp format received: {data.timestamp}. Cannot calculate time features.")
+            logger.error(f"Timestamp type: {type(data.timestamp)}, Value: {data.timestamp}")
+            logger.error("ALERT: Returning default features due to timestamp validation failure")
+            # CRITICAL: Alert system to timestamp validation failure
+            self._alert_timestamp_failure(data.timestamp)
             return self._default_features()
 
+        # --- Multi-Timeframe Analysis ---
+        # Enhanced analysis with higher timeframes for better trend detection
+        tf_analysis = self._analyze_multi_timeframe(data, price_momentum)
+        
         # --- Subsystem Feature Preparation ---
         # This dictionary will be passed to the subsystems.
         market_features = {
@@ -1118,7 +1460,20 @@ class IntelligenceEngine:
             'margin_utilization': data.margin_utilization,
             'buying_power_ratio': data.buying_power_ratio,
             'daily_pnl_pct': data.daily_pnl_pct,
-            'regime': self._classify_market_regime(volatility, price_momentum, volatility * 10)
+            'regime': self._classify_market_regime(volatility, price_momentum, volatility * 10),
+            # Enhanced with all timeframe features
+            'trend_1m': tf_analysis['trend_1m'],
+            'trend_5m': tf_analysis['trend_5m'],
+            'trend_15m': tf_analysis['trend_15m'],
+            'trend_1h': tf_analysis['trend_1h'],
+            'trend_4h': tf_analysis['trend_4h'],
+            'trend_alignment': tf_analysis['trend_alignment'],
+            'higher_tf_bias': tf_analysis['higher_tf_bias'],
+            'volatility_1m': tf_analysis['volatility_1m'],
+            'volatility_5m': tf_analysis['volatility_5m'],
+            'volatility_15m': tf_analysis['volatility_15m'],
+            'volatility_1h': tf_analysis['volatility_1h'],
+            'volatility_4h': tf_analysis['volatility_4h']
         }
         
         # IMPORTANT: Do not fabricate timestamps for temporal analysis.
@@ -1163,17 +1518,22 @@ class IntelligenceEngine:
                 'open_positions': getattr(data, 'open_positions', 0.0),
                 'current_price': data.prices_1m[-1] if data.prices_1m else 0.0
             }
-            dopamine_signal = self.dopamine_subsystem.process_pnl_update(dopamine_market_data)
+            dopamine_signal = self.dopamine_subsystem.get_simple_signal(dopamine_market_data)
 
         except Exception as e:
             logger.error(f"Error during subsystem processing in extract_features: {e}")
             return self._default_features()
 
-        # --- Feature Aggregation and Confidence ---
+        # --- Dynamic Signal Quality Weighting ---
         subsystem_signals = [dna_signal, temporal_signal, immune_signal, microstructure_signal, dopamine_signal]
         consensus_strength = self._calculate_enhanced_consensus(subsystem_signals)
         
-        weights = [0.25, 0.2, 0.15, 0.2, 0.2]  # DNA, Temporal, Immune, Microstructure, Dopamine
+        # Calculate dynamic weights based on signal quality, reliability, and recent performance
+        weights = self._calculate_dynamic_signal_weights(
+            subsystem_signals, 
+            market_features, 
+            consensus_strength
+        )
         overall_signal = sum(signal * weight for signal, weight in zip(subsystem_signals, weights))
         
         signal_strength = sum(abs(s) for s in subsystem_signals)
@@ -1225,5 +1585,159 @@ class IntelligenceEngine:
             adaptation_quality=adaptation_quality,
             smart_money_flow=smart_money_flow,
             liquidity_depth=liquidity_depth,
-            regime_confidence=regime_confidence
+            regime_confidence=regime_confidence,
+            # Multi-timeframe features - all timeframes
+            trend_1m=tf_analysis['trend_1m'],
+            trend_5m=tf_analysis['trend_5m'],
+            trend_15m=tf_analysis['trend_15m'],
+            trend_1h=tf_analysis['trend_1h'],
+            trend_4h=tf_analysis['trend_4h'],
+            trend_alignment=tf_analysis['trend_alignment'],
+            higher_tf_bias=tf_analysis['higher_tf_bias'],
+            volatility_1m=tf_analysis['volatility_1m'],
+            volatility_5m=tf_analysis['volatility_5m'],
+            volatility_15m=tf_analysis['volatility_15m'],
+            volatility_1h=tf_analysis['volatility_1h'],
+            volatility_4h=tf_analysis['volatility_4h']
         )
+    
+    def _analyze_multi_timeframe(self, data: MarketData, price_momentum: float) -> Dict:
+        """
+        Enhanced multi-timeframe analysis for better trend detection and market bias
+        """
+        try:
+            # Initialize default values for all timeframes
+            analysis = {
+                'trend_1m': 0.0,
+                'trend_5m': 0.0,
+                'trend_15m': 0.0,
+                'trend_1h': 0.0,
+                'trend_4h': 0.0,
+                'trend_alignment': 0.0,
+                'higher_tf_bias': 0.0,
+                'volatility_1m': 0.02,
+                'volatility_5m': 0.02,
+                'volatility_15m': 0.02,
+                'volatility_1h': 0.02,
+                'volatility_4h': 0.02
+            }
+            
+            # 1M Timeframe Analysis
+            if hasattr(data, 'prices_1m') and len(data.prices_1m) >= 20:
+                prices_1m = np.array(data.prices_1m[-20:])
+                
+                # 1M trend strength
+                m1_short_ma = np.mean(prices_1m[-5:])
+                m1_long_ma = np.mean(prices_1m)
+                analysis['trend_1m'] = (m1_short_ma - m1_long_ma) / m1_long_ma if m1_long_ma > 0 else 0.0
+                
+                # 1M volatility
+                analysis['volatility_1m'] = np.std(prices_1m) / np.mean(prices_1m) if np.mean(prices_1m) > 0 else 0.02
+            
+            # 5M Timeframe Analysis
+            if hasattr(data, 'prices_5m') and len(data.prices_5m) >= 15:
+                prices_5m = np.array(data.prices_5m[-15:])
+                
+                # 5M trend strength
+                m5_short_ma = np.mean(prices_5m[-3:])
+                m5_long_ma = np.mean(prices_5m)
+                analysis['trend_5m'] = (m5_short_ma - m5_long_ma) / m5_long_ma if m5_long_ma > 0 else 0.0
+                
+                # 5M volatility
+                analysis['volatility_5m'] = np.std(prices_5m) / np.mean(prices_5m) if np.mean(prices_5m) > 0 else 0.02
+            
+            # 15M Timeframe Analysis
+            if hasattr(data, 'prices_15m') and len(data.prices_15m) >= 12:
+                prices_15m = np.array(data.prices_15m[-12:])
+                
+                # 15M trend strength
+                m15_short_ma = np.mean(prices_15m[-3:])
+                m15_long_ma = np.mean(prices_15m)
+                analysis['trend_15m'] = (m15_short_ma - m15_long_ma) / m15_long_ma if m15_long_ma > 0 else 0.0
+                
+                # 15M volatility
+                analysis['volatility_15m'] = np.std(prices_15m) / np.mean(prices_15m) if np.mean(prices_15m) > 0 else 0.02
+            
+            # 1H Timeframe Analysis (safe fallback if no data from NinjaTrader)
+            if hasattr(data, 'prices_1h') and len(data.prices_1h) >= 10:
+                prices_1h = np.array(data.prices_1h[-10:])
+                
+                # 1H trend strength
+                h1_short_ma = np.mean(prices_1h[-3:])
+                h1_long_ma = np.mean(prices_1h)
+                analysis['trend_1h'] = (h1_short_ma - h1_long_ma) / h1_long_ma if h1_long_ma > 0 else 0.0
+                
+                # 1H volatility
+                analysis['volatility_1h'] = np.std(prices_1h) / np.mean(prices_1h) if np.mean(prices_1h) > 0 else 0.02
+            
+            # 4H Timeframe Analysis (safe fallback if no data from NinjaTrader)
+            if hasattr(data, 'prices_4h') and len(data.prices_4h) >= 6:
+                prices_4h = np.array(data.prices_4h[-6:])
+                
+                # 4H trend strength
+                h4_short_ma = np.mean(prices_4h[-2:])
+                h4_long_ma = np.mean(prices_4h)
+                analysis['trend_4h'] = (h4_short_ma - h4_long_ma) / h4_long_ma if h4_long_ma > 0 else 0.0
+                
+                # 4H volatility
+                analysis['volatility_4h'] = np.std(prices_4h) / np.mean(prices_4h) if np.mean(prices_4h) > 0 else 0.02
+            
+            # Multi-Timeframe Alignment
+            # Calculate how well all 5 timeframes agree on direction
+            trend_1m = analysis['trend_1m']
+            trend_5m = analysis['trend_5m']
+            trend_15m = analysis['trend_15m']
+            trend_1h = analysis['trend_1h']
+            trend_4h = analysis['trend_4h']
+            
+            # All timeframes for comprehensive alignment
+            trends = [trend_1m, trend_5m, trend_15m, trend_1h, trend_4h]
+            positive_trends = sum(1 for t in trends if t > 0.001)
+            negative_trends = sum(1 for t in trends if t < -0.001)
+            
+            # Enhanced alignment scoring with all 5 timeframes
+            if positive_trends >= 4 and negative_trends == 0:
+                analysis['trend_alignment'] = 0.9  # Very strong bullish alignment
+            elif negative_trends >= 4 and positive_trends == 0:
+                analysis['trend_alignment'] = -0.9  # Very strong bearish alignment
+            elif positive_trends >= 3 and negative_trends <= 1:
+                analysis['trend_alignment'] = 0.6  # Strong bullish alignment
+            elif negative_trends >= 3 and positive_trends <= 1:
+                analysis['trend_alignment'] = -0.6  # Strong bearish alignment
+            elif positive_trends > negative_trends:
+                analysis['trend_alignment'] = 0.3  # Weak bullish alignment
+            elif negative_trends > positive_trends:
+                analysis['trend_alignment'] = -0.3  # Weak bearish alignment
+            else:
+                analysis['trend_alignment'] = 0.0  # No clear alignment
+            
+            # Higher Timeframe Bias (4H has most weight, then 1H, 15m, 5m, 1m)
+            # This gives the "big picture" market direction weighted by timeframe importance
+            weights = [0.05, 0.1, 0.2, 0.3, 0.35]  # 1m, 5m, 15m, 1h, 4h weights
+            analysis['higher_tf_bias'] = np.average(trends, weights=weights)
+            
+            # Log multi-timeframe analysis for debugging
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Multi-TF Analysis: 1m={trend_1m:.4f}, 5m={trend_5m:.4f}, 15m={trend_15m:.4f}, "
+                           f"1H={trend_1h:.4f}, 4H={trend_4h:.4f}, Alignment={analysis['trend_alignment']:.3f}, "
+                           f"Bias={analysis['higher_tf_bias']:.4f}")
+            
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"Error in multi-timeframe analysis: {e}")
+            # Return safe defaults for all timeframes
+            return {
+                'trend_1m': 0.0,
+                'trend_5m': 0.0,
+                'trend_15m': 0.0,
+                'trend_1h': 0.0,
+                'trend_4h': 0.0,
+                'trend_alignment': 0.0,
+                'higher_tf_bias': 0.0,
+                'volatility_1m': 0.02,
+                'volatility_5m': 0.02,
+                'volatility_15m': 0.02,
+                'volatility_1h': 0.02,
+                'volatility_4h': 0.02
+            }

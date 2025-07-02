@@ -23,15 +23,15 @@ class DynamicLayer(nn.Module):
 
 
 class AdaptiveTradingNetwork(nn.Module):
-    def __init__(self, input_size: int = 20, hidden_sizes: List[int] = [64, 32]):
+    def __init__(self, input_size: int = 64, hidden_sizes: List[int] = [128, 64]):
         super().__init__()
         self.input_size = input_size
         self.hidden_sizes = hidden_sizes
         
         self._build_network()
         
-        # Convert to double precision
-        self.double()
+        # Use consistent float32 precision
+        self.float()
     
     def _build_network(self):
         layers = []
@@ -82,7 +82,7 @@ class AdaptiveTradingNetwork(nn.Module):
 
 
 class FeatureLearner(nn.Module):
-    def __init__(self, raw_feature_dim: int = 50, learned_feature_dim: int = 20):
+    def __init__(self, raw_feature_dim: int = 64, learned_feature_dim: int = 64):
         super().__init__()
         self.raw_feature_dim = raw_feature_dim
         self.learned_feature_dim = learned_feature_dim
@@ -103,12 +103,16 @@ class FeatureLearner(nn.Module):
             nn.Linear(learned_feature_dim * 2, learned_feature_dim)
         )
         
-        # Convert to double precision
-        self.double()
+        # Use consistent float32 precision
+        self.float()
+        
+        # Ensure all parameters are float32
+        for param in self.parameters():
+            param.data = param.data.float()
         
         # Feature importance tracking
-        self.feature_importance = nn.Parameter(torch.ones(raw_feature_dim, dtype=torch.float64))
-        self.usage_counts = torch.zeros(raw_feature_dim, dtype=torch.float64)
+        self.feature_importance = nn.Parameter(torch.ones(raw_feature_dim, dtype=torch.float32))
+        self.usage_counts = torch.zeros(raw_feature_dim, dtype=torch.float32)
     
     def forward(self, raw_features: torch.Tensor) -> torch.Tensor:
         # Apply learned feature selection
@@ -252,11 +256,11 @@ class StateEncoder:
         
         features.extend([hour_norm, minute_norm, weekday_norm])
         
-        # Pad to exactly 20 features
-        while len(features) < 20:
+        # Pad to exactly 32 features for market data component
+        while len(features) < 32:
             features.append(0.0)
         
-        return torch.tensor(features[:20], dtype=torch.float32)
+        return torch.tensor(features[:32], dtype=torch.float32)
     
     def encode_intelligence_features(self, intelligence_features) -> torch.Tensor:
         return torch.tensor([
@@ -290,18 +294,18 @@ class StateEncoder:
             np.tanh(meta_context.get('time_since_last_trade', 0.0))
         ], dtype=torch.float32)
         
-        # Combine all features
+        # Combine all features with consistent dtype
         full_state = torch.cat([
-            market_state,
-            intelligence_state,
-            meta_state
-        ])
+            market_state,        # 32 features
+            intelligence_state,  # 12 features  
+            meta_state          # 7 features
+        ]).to(dtype=torch.float32)
         
-        # Pad or truncate to exactly 50 features for raw input
-        if len(full_state) < 50:
-            padding = torch.zeros(50 - len(full_state), dtype=torch.float64)
+        # Pad or truncate to exactly 64 features for consistent input
+        if len(full_state) < 64:
+            padding = torch.zeros(64 - len(full_state), dtype=torch.float32)
             full_state = torch.cat([full_state, padding])
         else:
-            full_state = full_state[:50]
+            full_state = full_state[:64]
         
         return full_state

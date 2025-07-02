@@ -10,7 +10,14 @@
 # **Dopamine Trading System**
 *A Neuromorphic AI Trading Platform with Unified Reward Engine*
 
-**Dopamine** is a fully autonomous, self-evolving black-box trading algorithm for MNQ futures that mimics neurological reward systems. Built with a centralized reward engine and dopamine-inspired learning mechanisms, it discovers optimal trading strategies through economic incentives and real-time P&L feedback.
+**Dopamine** is a fully autonomous, self-evolving black-box trading algorithm for MNQ futures that mimics neurological reward systems. Built with a centralized reward engine, **complete 5-timeframe integration (1m, 5m, 15m, 1h, 4h)**, and dopamine-inspired learning mechanisms, it discovers optimal trading strategies through economic incentives and real-time P&L feedback.
+
+### 🌟 **Latest Enhancement: Complete 5-Timeframe Integration**
+- **Cross-Timeframe Neural Attention**: Neural networks process all 5 timeframes simultaneously
+- **Enhanced Trend Alignment**: Sophisticated consensus scoring across all timeframes  
+- **Hierarchical Timeframe Weighting**: 35% 4h, 30% 1h, 20% 15m, 10% 5m, 5% 1m
+- **Complete Feature Extraction**: Trend and volatility tracking for every timeframe
+- **Multi-Timeframe Learning**: All subsystems learn patterns across the full spectrum
 
 ---
 
@@ -31,6 +38,8 @@
 - **Modular Design**: Core, dopamine, and rejection engines with consistent interface
 
 ### 🎯 **Autonomous Intelligence**
+- **5-Timeframe Analysis**: Complete integration across 1m, 5m, 15m, 1h, 4h timeframes
+- **Cross-Timeframe Attention**: Neural networks process all timeframes simultaneously
 - **Position-Aware Learning**: Economic penalties teach position limits (-$15+ violations)
 - **Context-Dependent Holding**: Rewards patience vs penalizes missed opportunities
 - **Real-Time Adaptation**: Works with NinjaTrader at 1x-10x replay speeds
@@ -171,12 +180,13 @@ graph TB
 │   │       ├── ⏰ temporal_subsystem.py   # FFT cycle detection
 │   │       ├── 🛡️ immune_subsystem.py     # Threat detection system
 │   │       ├── 📈 microstructure_subsystem.py # Market microstructure
-│   │       ├── 💉 dopamine_subsystem.py   # P&L reward system (LEGACY)
+│   │       ├── 💉 dopamine_subsystem.py   # Enhanced P&L reward system
+│   │       ├── 🚀 enhanced_dopamine_subsystem.py # Advanced dopamine psychology
 │   │       └── 🎭 subsystem_orchestrator.py # Subsystem coordination
 │   │
 │   ├── 🧪 neural/                         # NEURAL DOMAIN - Neural Networks
 │   │   ├── 🔄 adaptive_network.py         # Self-evolving architectures
-│   │   ├── ⚡ enhanced_neural.py          # Advanced neural components
+│   │   ├── ⚡ enhanced_neural.py          # 5-timeframe attention networks
 │   │   └── 🎲 uncertainty_estimator.py    # Uncertainty quantification
 │   │
 │   ├── 📊 market_analysis/                # MARKET ANALYSIS DOMAIN
@@ -327,10 +337,12 @@ class UnifiedRewardEngine:
 | Max Position | 10 | Per direction limit |
 
 #### Strategy Features
+- **5-Timeframe Data Series**: Minute-based configuration (15, 5, 1, 60, 240)
 - **Smart Position Limits**: Blocks same-direction scaling, allows exits
 - **Position Reversal Logic**: Automatic long↔short transitions
 - **Market Time Sync**: Uses `Time[0]` for replay compatibility
 - **Enhanced Data Stream**: Net liquidation, margin, position tracking
+- **Multi-Timeframe Historical**: Complete 1h/4h bar construction from 15m data
 
 ---
 
@@ -382,6 +394,14 @@ class UnifiedRewardEngine:
 
 ## 🧠 **AI Intelligence Systems**
 
+### 🌟 **5-Timeframe Integration**
+Complete multi-timeframe analysis across the entire system:
+- **Neural Networks**: Cross-timeframe attention processing all 5 timeframes
+- **Intelligence Engine**: Comprehensive trend analysis for 1m, 5m, 15m, 1h, 4h
+- **Trend Alignment**: Enhanced consensus scoring across all timeframes
+- **Feature Extraction**: Complete volatility and trend tracking per timeframe
+- **Weighted Bias**: Hierarchical timeframe importance (35% 4h, 30% 1h, 20% 15m, 10% 5m, 5% 1m)
+
 ### 🧬 **DNA Subsystem**
 Genetic pattern encoding and evolution:
 - **16-base encoding** (A-P) for market patterns
@@ -391,7 +411,8 @@ Genetic pattern encoding and evolution:
 
 ### ⏰ **Temporal Subsystem**
 FFT-based cycle detection and prediction:
-- **Multi-timeframe analysis** (64, 128, 256 periods)
+- **5-Timeframe analysis** across 1m, 5m, 15m, 1h, 4h periods
+- **Cross-timeframe cycle detection** (64, 128, 256 periods per timeframe)
 - **Seasonal and lunar patterns** with interference modeling
 - **Dominant cycle tracking** and future prediction
 - **Performance-weighted importance** scoring
@@ -410,12 +431,15 @@ Smart money and order flow analysis:
 - **Real-time tape reading** with momentum detection
 - **Market regime classification** and adaptation
 
-### 💉 **Dopamine Integration**
-Real-time P&L reward system:
+### 💉 **Enhanced Dopamine Subsystem**
+Advanced neuromorphic P&L reward system:
+- **Real-time confidence tracking** with withdrawal/recovery states
+- **Multi-timeframe reward integration** across all 5 timeframes
 - **Immediate feedback** on unrealized P&L changes
 - **Momentum amplification** for consecutive gains/losses
 - **Expectation error signals** for prediction accuracy
 - **Peak/trough detection** for trend continuation
+- **Confidence floor mechanisms** for learning phases
 
 ---
 
@@ -451,11 +475,12 @@ violation_penalty = -15.0 * violation_severity * escalation_multiplier
 - **Account Adaptation**: Adjust parameters for current balance
 
 ### 2. **Real-Time Decision Loop**
-- **Multi-Timeframe Processing**: 1m, 5m, 15m data streams
-- **Intelligence Analysis**: Four-subsystem signal generation
+- **Multi-Timeframe Processing**: Complete 1m, 5m, 15m, 1h, 4h data streams
+- **Cross-Timeframe Alignment**: Enhanced trend consensus across all timeframes
+- **Intelligence Analysis**: Five-subsystem signal generation with enhanced dopamine
 - **Reward-Based Decisions**: Unified reward engine guidance
 - **Economic Risk Assessment**: Position limits and Kelly sizing
-- **NinjaTrader Execution**: Smart position management
+- **NinjaTrader Execution**: Smart position management with 60/240-minute timeframes
 
 ### 3. **Continuous Learning**
 - **Trade Outcome Analysis**: P&L, timing, market conditions
@@ -554,13 +579,33 @@ engine.add_component('custom', CustomRewardComponent())
 
 ---
 
+## 🚀 **Advanced Neural Architecture**
+
+### Cross-Timeframe Attention Networks
+- **5-Timeframe Encoders**: Dedicated neural encoders for each timeframe
+- **Positional Embeddings**: Timeframe-aware position encoding
+- **Multi-Head Attention**: Cross-timeframe pattern recognition
+- **Self-Evolving Architecture**: Networks adapt structure based on performance
+- **Uncertainty Quantification**: Bayesian-inspired confidence estimation
+
+### Enhanced Dopamine Psychology
+- **Confidence State Management**: Withdrawal, recovery, and normal states
+- **Multi-Timeframe Rewards**: Integration across all timeframe signals
+- **Strategic Exploration**: Balanced exploration vs exploitation
+- **Learning Phase Adaptation**: Confidence floor mechanisms
+
+---
+
 ## 📈 **Performance Characteristics**
 
 ### Learning Capabilities
 - **No Hardcoded Rules**: Discovers optimal strategies through experience
+- **5-Timeframe Pattern Recognition**: Learns patterns across all timeframes
+- **Cross-Timeframe Attention**: Neural networks process timeframe relationships
 - **Economic Boundary Testing**: Learns position limits through violations
-- **Context-Dependent Decisions**: Holding vs trading based on confidence
+- **Context-Dependent Decisions**: Holding vs trading based on multi-timeframe confidence
 - **Market Regime Adaptation**: Parameters adjust for different conditions
+- **Enhanced Trend Alignment**: Consensus scoring across all 5 timeframes
 
 ### Expected Behavior
 - **Initial Learning Phase**: High exploration, some violations as boundaries discovered

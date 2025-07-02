@@ -253,8 +253,9 @@ class RegimeDetector:
         self.correlation_history = deque(maxlen=50)
         self.trend_strength_history = deque(maxlen=50)
         
-        # Regime thresholds (learned over time)
-        self.vol_thresholds = {'low': 0.01, 'medium': 0.03, 'high': 0.06}
+        # Regime thresholds adjusted for MNQ futures volatility (23hr trading)
+        # With 0.8% daily moves being "high", adjust thresholds accordingly
+        self.vol_thresholds = {'low': 0.002, 'medium': 0.005, 'high': 0.012}
         self.trend_thresholds = {'ranging': 0.3, 'trending': 0.7}
         
     def detect_current_regime(self, prices: List[float], volumes: List[float], 
@@ -299,7 +300,15 @@ class RegimeDetector:
         if not returns:
             return 0.0
         
-        return np.std(returns) * np.sqrt(252 * 24 * 60)  # Annualized for minute data
+        # Use rolling standard deviation scaled for practical trading decisions
+        # This gives us volatility as a percentage that matches our thresholds
+        raw_volatility = np.std(returns)
+        
+        # Scale to approximate daily volatility (sqrt of minutes in trading day)  
+        # For MNQ: ~23 hours * 60 minutes = 1380 minutes per day (nearly 24/7 trading)
+        daily_vol = raw_volatility * np.sqrt(1380)
+        
+        return daily_vol
     
     def _classify_volatility_regime(self, volatility: float) -> str:
         self.volatility_history.append(volatility)
@@ -356,6 +365,10 @@ class RegimeDetector:
             return 'unknown'
         
         try:
+            # Check for zero variance to avoid divide by zero warning
+            if np.std(price_changes) == 0 or np.std(volume_changes) == 0:
+                return 'unknown'
+            
             correlation = np.corrcoef(price_changes, volume_changes)[0, 1]
             
             if np.isnan(correlation):
@@ -403,23 +416,6 @@ class RegimeDetector:
         
         return np.mean(list(regime_scores.values()))
     
-    def update_regime_thresholds(self, recent_performance: List[float]):
-        # Adaptive thresholds based on performance
-        if len(recent_performance) < 10:
-            return
-        
-        avg_performance = np.mean(recent_performance)
-        
-        # If performance is poor, adjust thresholds to be more conservative
-        if avg_performance < -0.1:
-            self.vol_thresholds['low'] *= 0.9
-            self.vol_thresholds['medium'] *= 0.95
-            self.trend_thresholds['ranging'] *= 1.1
-        elif avg_performance > 0.1:
-            # Good performance, can be slightly more aggressive
-            self.vol_thresholds['low'] *= 1.05
-            self.vol_thresholds['medium'] *= 1.02
-            self.trend_thresholds['ranging'] *= 0.95
 
 
 class MarketMicrostructureEngine:
