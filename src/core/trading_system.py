@@ -393,7 +393,7 @@ class TradingSystem:
                             )
                             
                             if commentary:
-                                logger.info(f"\n[DOPAMINE] {commentary}\n")
+                                logger.info(f"\n\n[DOPAMINE] {commentary}\n")
                             
                             loop.close()
                         except Exception as e:

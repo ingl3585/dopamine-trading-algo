@@ -45,13 +45,33 @@ class DataProcessor:
         self.volumes_5m = deque(maxlen=200)
         self.volumes_15m = deque(maxlen=100)
         
-        # Track 15-minute bar changes for commentary triggering
-        self.last_15m_bar_count = 0
+        # Track bar changes for commentary triggering
+        self.last_15m_interval = 0  # Track 15-minute timestamp intervals
         self.new_15m_bar_available = False
 
     def process(self, raw_data: Dict) -> Optional[MarketData]:
         if not self._is_valid_data(raw_data):
             return None
+
+        # Check for new 15-minute interval first (before processing any data)
+        current_timestamp = raw_data.get('timestamp', time.time())
+        
+        # Convert .NET Ticks to Unix timestamp if needed
+        if current_timestamp > 1e15:  # Definitely .NET ticks (very large number)
+            unix_timestamp = (current_timestamp - 621355968000000000) / 10000000
+        else:
+            unix_timestamp = current_timestamp  # Already Unix timestamp
+        
+        # Round timestamp to 15-minute intervals (900 seconds = 15 minutes)
+        current_15m_interval = int(unix_timestamp // 900) * 900
+        
+        # Check if we've moved to a new 15-minute interval
+        if current_15m_interval > self.last_15m_interval:
+            self.last_15m_interval = current_15m_interval
+            self.new_15m_bar_available = True
+            from datetime import datetime
+            interval_time = datetime.fromtimestamp(current_15m_interval)
+            logger.info(f"New 15-minute interval started: {interval_time.strftime('%H:%M:%S')}")
 
         # Update price/volume buffers
         if 'price_1m' in raw_data and raw_data['price_1m']:
@@ -67,12 +87,7 @@ class DataProcessor:
             self.volumes_5m.extend(raw_data['volume_5m'])
             
         if 'price_15m' in raw_data and raw_data['price_15m']:
-            previous_count = len(self.prices_15m)
             self.prices_15m.extend(raw_data['price_15m'])
-            # Detect new 15-minute bar
-            if len(self.prices_15m) > previous_count:
-                self.new_15m_bar_available = True
-                logger.info(f"New 15-minute bar detected: {self.prices_15m[-1]:.2f}")
             
         if 'volume_15m' in raw_data and raw_data['volume_15m']:
             self.volumes_15m.extend(raw_data['volume_15m'])

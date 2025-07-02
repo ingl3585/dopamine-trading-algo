@@ -196,12 +196,19 @@ Tone: {request.tone.value}
         lines.append(f"Volatility: {volatility:.3f} ({'High' if volatility > 0.04 else 'Normal' if volatility > 0.015 else 'Low'})")
         
         trend_strength = market_context.get('trend_strength', 0.0)
-        if trend_strength > 0.02:
-            lines.append(f"Trend: Strong uptrend ({trend_strength:.3f})")
-        elif trend_strength < -0.02:
-            lines.append(f"Trend: Strong downtrend ({trend_strength:.3f})")
+        # More sensitive trend detection - use features.price_momentum as backup
+        price_momentum = market_context.get('price_momentum', 0.0)
+        
+        # Use the stronger of the two signals
+        effective_trend = max(abs(trend_strength), abs(price_momentum))
+        trend_direction = trend_strength if abs(trend_strength) > abs(price_momentum) else price_momentum
+        
+        if effective_trend > 0.005 and trend_direction > 0:  # Lowered threshold from 0.02 to 0.005
+            lines.append(f"Trend: Uptrend (strength: {effective_trend:.4f})")
+        elif effective_trend > 0.005 and trend_direction < 0:
+            lines.append(f"Trend: Downtrend (strength: {effective_trend:.4f})")
         else:
-            lines.append("Trend: Sideways/unclear")
+            lines.append(f"Trend: Sideways/unclear (strength: {effective_trend:.4f})")
         
         regime = market_context.get('regime', 'normal')
         lines.append(f"Market regime: {regime}")

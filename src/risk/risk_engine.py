@@ -308,3 +308,41 @@ class RiskLearningEngine:
             self.learned_max_risk_per_trade = min(0.02, self.learned_max_risk_per_trade)  # 2% max for medium accounts
         else:
             self.learned_max_risk_per_trade = min(0.03, self.learned_max_risk_per_trade)  # 3% max for large accounts
+    
+    def learn_from_outcome(self, trade):
+        """Learn from trade outcome to improve risk management"""
+        try:
+            # Convert trade to risk event for learning
+            event_type = getattr(trade, 'exit_reason', 'manual_exit')
+            position_size = getattr(trade, 'size', 1)
+            account_balance = getattr(trade, 'account_balance', 25000)
+            risk_percentage = abs(position_size * 0.01)  # Estimate risk percentage
+            outcome = getattr(trade, 'pnl', 0)
+            
+            market_conditions = {
+                'volatility': getattr(trade, 'volatility', 0.02),
+                'regime': getattr(trade, 'regime', 'normal'),
+                'trend_strength': getattr(trade, 'trend_strength', 0.5)
+            }
+            
+            decision_factors = {
+                'confidence': getattr(trade, 'confidence', 0.5),
+                'tool': getattr(trade, 'primary_tool', 'unknown')
+            }
+            
+            # Record the risk event
+            self.record_risk_event(
+                event_type=event_type,
+                position_size=position_size,
+                account_balance=account_balance,
+                risk_percentage=risk_percentage,
+                outcome=outcome,
+                market_conditions=market_conditions,
+                decision_factors=decision_factors
+            )
+            
+            logger.debug(f"Risk learning recorded: {event_type}, P&L: {outcome}")
+            
+        except Exception as e:
+            logger.error(f"Error in risk learning from outcome: {e}")
+            # Continue operation even if risk learning fails

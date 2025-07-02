@@ -180,7 +180,9 @@ class RiskManager:
             if self.agent and hasattr(self.agent, 'learn_from_rejection'):
                 # Pass violation data to agent for unified penalty processing
                 violation_data['position_limit_violation'] = True
-                self.agent.learn_from_rejection('position_limit', violation_data)
+                # Calculate negative reward for position limit violation
+                penalty_reward = -0.5  # Moderate penalty for hitting position limits
+                self.agent.learn_from_rejection('position_limit', violation_data, penalty_reward)
             
             # Track violation for risk learning (tracking only, no penalty)
             if hasattr(self.risk_learning, 'track_violation'):

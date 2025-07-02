@@ -774,13 +774,13 @@ class GPUMemoryManager:
             if self.should_cleanup():
                 self.cleanup_memory()
             
-            with torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
+            with torch.amp.autocast('cuda', enabled=torch.cuda.is_available()):
                 return model(*args, **kwargs)
         
         except torch.cuda.OutOfMemoryError:
             # Emergency cleanup and retry
             self.cleanup_memory()
-            with torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
+            with torch.amp.autocast('cuda', enabled=torch.cuda.is_available()):
                 return model(*args, **kwargs)
     
     def get_optimal_batch_size(self, model: nn.Module, input_shape: tuple) -> int:
@@ -835,7 +835,7 @@ class MemoryEfficientSelfEvolvingNetwork(SelfEvolvingNetwork):
     def train_step(self, loss_fn, optimizer, *args, **kwargs):
         """Memory-efficient training step with mixed precision"""
         if self.use_amp:
-            with torch.cuda.amp.autocast():
+            with torch.amp.autocast('cuda'):
                 loss = loss_fn(*args, **kwargs)
             
             optimizer.zero_grad()
