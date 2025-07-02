@@ -372,39 +372,8 @@ class TradingSystem:
                     time_since_rejection = time.time() - self.agent.last_position_rejection_time
                     logger.info(f"Time since last rejection: {time_since_rejection/60:.1f} minutes")
             
-            # ENHANCED: Generate personality commentary with full agent context
-            if self.personality_integration and self.personality_integration.is_enabled():
-                try:
-                    import asyncio
-                    import threading
-                    
-                    # Run async commentary in a separate thread to avoid blocking
-                    def run_commentary():
-                        try:
-                            # Create new event loop for this thread
-                            loop = asyncio.new_event_loop()
-                            asyncio.set_event_loop(loop)
-                            
-                            # Run the commentary generation
-                            commentary = loop.run_until_complete(
-                                self.personality_integration.process_trading_decision(
-                                    decision, features, market_data, self.agent
-                                )
-                            )
-                            
-                            if commentary:
-                                logger.info(f"\n\n[DOPAMINE] {commentary}\n")
-                            
-                            loop.close()
-                        except Exception as e:
-                            logger.warning(f"Personality commentary thread failed: {e}")
-                    
-                    # Start commentary in background thread
-                    commentary_thread = threading.Thread(target=run_commentary, daemon=True)
-                    commentary_thread.start()
-                    
-                except Exception as e:
-                    logger.warning(f"Personality commentary failed: {e}")
+            # LLM commentary now handled by 15-minute bar triggers only
+            # (Per-decision commentary disabled to avoid duplicate messages)
             
             if decision.action == 'hold':
                 return
@@ -743,9 +712,8 @@ class TradingSystem:
                 )
                 
                 if commentary:
-                    # Display commentary in console and log
-                    print(f"\n[DOPAMINE 15M BAR] {commentary}\n")
-                    logger.info(f"[15M] {commentary}")
+                    # Single unified output for 15-minute commentary
+                    logger.info(f"\n\n[DOPAMINE] {commentary}")
                 else:
                     logger.debug("No commentary generated for this 15m bar")
                     

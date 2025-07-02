@@ -316,7 +316,6 @@ class RiskLearningEngine:
             event_type = getattr(trade, 'exit_reason', 'manual_exit')
             position_size = getattr(trade, 'size', 1)
             account_balance = getattr(trade, 'account_balance', 25000)
-            risk_percentage = abs(position_size * 0.01)  # Estimate risk percentage
             outcome = getattr(trade, 'pnl', 0)
             
             market_conditions = {
@@ -330,12 +329,11 @@ class RiskLearningEngine:
                 'tool': getattr(trade, 'primary_tool', 'unknown')
             }
             
-            # Record the risk event
+            # Record the risk event (risk_percentage is calculated inside record_risk_event)
             self.record_risk_event(
                 event_type=event_type,
                 position_size=position_size,
                 account_balance=account_balance,
-                risk_percentage=risk_percentage,
                 outcome=outcome,
                 market_conditions=market_conditions,
                 decision_factors=decision_factors
