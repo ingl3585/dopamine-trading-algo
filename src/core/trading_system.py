@@ -713,7 +713,7 @@ class TradingSystem:
                 
                 if commentary:
                     # Single unified output for 15-minute commentary
-                    logger.info(f"\n\n[DOPAMINE] {commentary}")
+                    logger.info(f"\n\n[DOPAMINE] {commentary}\n")
                 else:
                     logger.debug("No commentary generated for this 15m bar")
                     

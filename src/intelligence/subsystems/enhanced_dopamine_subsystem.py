@@ -673,11 +673,18 @@ class EnhancedDopamineSubsystem:
         
         self.addiction_score = np.clip(self.addiction_score, 0.0, 1.0)
         
-        # Withdrawal intensity
+        # Withdrawal intensity with recovery mechanism
         if self.time_since_last_high > 5 and self.tolerance_level > 0.4:
             self.withdrawal_intensity += 0.1
         elif response.signal > 0.3:
             self.withdrawal_intensity -= 0.05
+        
+        # RECOVERY MECHANISM: Accelerated withdrawal recovery when stuck in withdrawn state
+        if self.withdrawal_intensity > 0.7 and self.time_since_last_high > 10:
+            # Force recovery after extended withdrawal period
+            recovery_rate = 0.15 + (self.time_since_last_high * 0.01)  # Accelerating recovery
+            self.withdrawal_intensity -= recovery_rate
+            logger.info(f"DOPAMINE RECOVERY: Accelerated withdrawal recovery, intensity reduced by {recovery_rate:.3f}")
         
         self.withdrawal_intensity = np.clip(self.withdrawal_intensity, 0.0, 1.0)
         

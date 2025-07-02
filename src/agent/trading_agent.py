@@ -498,30 +498,30 @@ class TradingAgent:
         """Enhanced exploration based on selected strategy"""
         
         if strategy == 'conservative':
-            # Conservative exploration - adaptive signal threshold
-            if abs(weighted_signal) > 0.01:  # Much lower threshold for discovery
+            # Conservative exploration - much lower threshold for post-loss recovery
+            if abs(weighted_signal) > 0.003:  # Reduced from 0.01 to enable recovery trading
                 return 1 if weighted_signal > 0 else 2
             return 0
         
         elif strategy == 'aggressive':
-            # Aggressive exploration - very low threshold
-            if abs(weighted_signal) > 0.005:  # Very low threshold for discovery
+            # Aggressive exploration - extremely low threshold for discovery
+            if abs(weighted_signal) > 0.001:  # Reduced from 0.005 for more opportunities
                 return 1 if weighted_signal > 0 else 2
             return 0
         
         elif strategy == 'momentum':
-            # Momentum strategy - adaptive momentum threshold
-            if features.price_momentum > 0.001:  # Much lower threshold
+            # Momentum strategy - very low threshold for recovery trading
+            if features.price_momentum > 0.0005:  # Reduced from 0.001
                 return 1
-            elif features.price_momentum < -0.001:  # Much lower threshold
+            elif features.price_momentum < -0.0005:  # Reduced from -0.001
                 return 2
             return 0
         
         elif strategy == 'mean_reversion':
-            # Mean reversion - adaptive position thresholds
-            if features.price_position > 0.6:  # Lower threshold for discovery
+            # Mean reversion - wider range for recovery opportunities
+            if features.price_position > 0.55:  # Reduced from 0.6 for more opportunities
                 return 2  # Sell at highs
-            elif features.price_position < 0.4:  # Higher threshold for discovery
+            elif features.price_position < 0.45:  # Increased from 0.4 for more opportunities
                 return 1  # Buy at lows
             return 0
         
@@ -530,11 +530,11 @@ class TradingAgent:
             if adaptation_decision.get('emergency_mode', False):
                 return 0  # Hold in emergency
             elif features.regime_confidence > 0.7:
-                # High confidence regime - follow signals with low threshold
-                return 1 if weighted_signal > 0.005 else (2 if weighted_signal < -0.005 else 0)
+                # High confidence regime - follow signals with very low threshold
+                return 1 if weighted_signal > 0.002 else (2 if weighted_signal < -0.002 else 0)
             else:
-                # Low confidence regime - slightly higher threshold
-                return 1 if weighted_signal > 0.01 else (2 if weighted_signal < -0.01 else 0)
+                # Low confidence regime - recovery-friendly threshold  
+                return 1 if weighted_signal > 0.003 else (2 if weighted_signal < -0.003 else 0)
     
     def _calculate_enhanced_levels(self, action: str, market_data: MarketData,
                                  use_stop: bool, stop_distance: float,

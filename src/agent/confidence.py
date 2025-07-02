@@ -347,6 +347,9 @@ class ConfidenceManager:
         reasons = []
         
         try:
+            # LEARNING PHASE PROTECTION: Prevent over-dampening during recovery
+            learning_floor = 0.35 if self.state.failed_trades > self.state.successful_trades else 0.25
+            
             # 1. Unrealized P&L impact (gradual, not panic-inducing)
             if hasattr(market_data, 'unrealized_pnl') and hasattr(market_data, 'position_size'):
                 if market_data.unrealized_pnl < 0 and market_data.position_size != 0:
@@ -356,25 +359,25 @@ class ConfidenceManager:
                     if drawdown_pct > 0.01:  # 1%+ drawdown
                         drawdown_factor = 1.0 - (drawdown_pct * self.config['drawdown_sensitivity'])
                         old_adjusted = adjusted
-                        adjusted *= max(0.85, drawdown_factor)  # Max 15% reduction
+                        adjusted *= max(learning_floor, drawdown_factor)  # Use learning floor instead of 0.85
                         
                         if adjusted != old_adjusted:
                             reduction = old_adjusted - adjusted
-                            reasons.append(f"Drawdown reality check: -{reduction:.3f} ({drawdown_pct:.1%} unrealized loss)")
+                            reasons.append(f"Drawdown reality check: -{reduction:.3f} ({drawdown_pct:.1%} unrealized loss, floor={learning_floor:.2f})")
                 
                 # Update state tracking
                 self.state.last_unrealized_pnl = market_data.unrealized_pnl
             
-            # 2. Market volatility adjustment
+            # 2. Market volatility adjustment with learning floor
             volatility = getattr(market_data, 'volatility', 0.02)
             if volatility > 0.04:  # High volatility
                 vol_factor = 1.0 - ((volatility - 0.04) * self.config['volatility_sensitivity'])
                 old_adjusted = adjusted
-                adjusted *= max(0.8, vol_factor)
+                adjusted *= max(learning_floor, vol_factor)  # Use same learning floor
                 
                 if adjusted != old_adjusted:
                     reduction = old_adjusted - adjusted
-                    reasons.append(f"High volatility adjustment: -{reduction:.3f} (vol={volatility:.3f})")
+                    reasons.append(f"High volatility adjustment: -{reduction:.3f} (vol={volatility:.3f}, floor={learning_floor:.2f})")
             
             # Update state tracking
             self.state.last_market_volatility = volatility
