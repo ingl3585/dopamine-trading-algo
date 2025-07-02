@@ -74,7 +74,7 @@ class TradingAgent:
         
         # Enhanced feature learning with catastrophic forgetting prevention
         self.feature_learner = FeatureLearner(
-            raw_feature_dim=64, 
+            raw_feature_dim=100,  # Match the actual state size from _create_enhanced_state
             learned_feature_dim=64,
         ).to(self.device)
         self.state_encoder = StateEncoder()
@@ -253,7 +253,7 @@ class TradingAgent:
         raw_state = self._create_enhanced_state(market_data, features, meta_context)
         
         # Learn features with catastrophic forgetting prevention
-        learned_state = self.feature_learner(raw_state.unsqueeze(0).to(self.device))
+        learned_state = self.feature_learner(raw_state.unsqueeze(0).to(dtype=torch.float32, device=self.device))
         
         # Few-shot learning prediction
         few_shot_prediction = self.few_shot_learner(learned_state)

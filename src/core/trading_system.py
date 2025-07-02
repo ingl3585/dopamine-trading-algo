@@ -135,7 +135,7 @@ class TradingSystem:
             # Register intelligence state management
             register_state_component(
                 'intelligence',
-                lambda: self.intelligence.save_patterns('temp'),  # Use existing save method
+                lambda: self.intelligence.save_patterns('data/intelligence_state.json'),  # Use proper filepath
                 lambda state: None,  # Intelligence will implement proper load
                 priority=15
             )
@@ -647,7 +647,20 @@ class TradingSystem:
                 'account_balance': 25000.0,
                 'daily_pnl': 0.0,
                 'net_liquidation': 25000.0,
-                'timestamp': time.time()
+                'timestamp': time.time(),
+                'prices_1m': [22400.0] * 25,  # Dummy price data
+                'volumes_1m': [1000] * 25,   # Dummy volume data
+                'prices_5m': [22400.0] * 10,
+                'volumes_5m': [5000] * 10,
+                'prices_15m': [22400.0] * 5,
+                'volumes_15m': [15000] * 5,
+                'volatility': 0.02,
+                'position_size': 0,
+                'unrealized_pnl': 0.0,
+                'margin_utilization': 0.0,
+                'buying_power': 25000.0,
+                'buying_power_ratio': 1.0,
+                'daily_pnl_pct': 0.0
             })()
             
             # Extract initial features

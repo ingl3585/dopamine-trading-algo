@@ -106,6 +106,10 @@ class FeatureLearner(nn.Module):
         # Use consistent float32 precision
         self.float()
         
+        # Ensure all parameters are float32
+        for param in self.parameters():
+            param.data = param.data.float()
+        
         # Feature importance tracking
         self.feature_importance = nn.Parameter(torch.ones(raw_feature_dim, dtype=torch.float32))
         self.usage_counts = torch.zeros(raw_feature_dim, dtype=torch.float32)
@@ -290,12 +294,12 @@ class StateEncoder:
             np.tanh(meta_context.get('time_since_last_trade', 0.0))
         ], dtype=torch.float32)
         
-        # Combine all features
+        # Combine all features with consistent dtype
         full_state = torch.cat([
             market_state,        # 32 features
             intelligence_state,  # 12 features  
             meta_state          # 7 features
-        ])
+        ]).to(dtype=torch.float32)
         
         # Pad or truncate to exactly 64 features for consistent input
         if len(full_state) < 64:

@@ -122,10 +122,17 @@ class StateCoordinator:
                 
                 # Save to file with atomic write
                 temp_filepath = filepath.with_suffix('.tmp')
+                
+                # Remove existing temp file if it exists
+                if temp_filepath.exists():
+                    temp_filepath.unlink()
+                
                 with open(temp_filepath, 'w') as f:
                     json.dump(asdict(snapshot), f, indent=2, default=self._json_encoder)
                 
-                # Atomic rename
+                # Atomic rename - handle existing file
+                if filepath.exists():
+                    filepath.unlink()
                 temp_filepath.rename(filepath)
                 
                 # Update history
@@ -262,6 +269,7 @@ class StateCoordinator:
     def _json_encoder(self, obj):
         """JSON encoder for complex objects"""
         import numpy as np
+        from collections import deque
         
         if isinstance(obj, np.integer):
             return int(obj)
@@ -271,8 +279,12 @@ class StateCoordinator:
             return bool(obj)
         elif isinstance(obj, np.ndarray):
             return obj.tolist()
+        elif isinstance(obj, deque):
+            return list(obj)
         elif hasattr(obj, 'isoformat'):  # datetime objects
             return obj.isoformat()
+        elif hasattr(obj, '__dict__'):  # Objects with attributes
+            return obj.__dict__
         
         raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
     

@@ -68,7 +68,7 @@ class PersonalityIntegration:
         return self.config.enabled and self.personality is not None
     
     async def process_trading_decision(self, decision: Any, features: Features, 
-                                     market_data: MarketData, agent=None) -> Optional[str]:
+                                     market_data: MarketData, agent=None, trigger_event=None) -> Optional[str]:
         """
         Process a trading decision through the personality system
         
@@ -90,8 +90,9 @@ class PersonalityIntegration:
             self.last_features = features
             self.last_market_data = market_data
             
-            # Determine trigger event based on decision
-            trigger_event = self._determine_trigger_event(decision)
+            # Determine trigger event based on decision (use passed trigger_event if provided)
+            if trigger_event is None:
+                trigger_event = self._determine_trigger_event(decision)
             
             # Build comprehensive context with enhanced agent insights
             context = self._build_trading_context(decision, features, market_data, agent)

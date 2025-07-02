@@ -76,6 +76,10 @@ class IntelligenceEngine:
 
     def save_patterns(self, filepath: str):
         """Enhanced save with all subsystem patterns"""
+        if not filepath or filepath.strip() == "":
+            filepath = "data/intelligence_memory.json"
+            logger.warning(f"Empty filepath provided, using default: {filepath}")
+        
         orchestrator_stats = self.orchestrator.get_comprehensive_stats()
         microstructure_features = self.microstructure_engine.get_microstructure_features()
         adaptation_stats = self._get_adaptation_engine().get_comprehensive_stats()

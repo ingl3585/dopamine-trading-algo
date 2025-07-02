@@ -365,6 +365,10 @@ class RegimeDetector:
             return 'unknown'
         
         try:
+            # Check for zero variance to avoid divide by zero warning
+            if np.std(price_changes) == 0 or np.std(volume_changes) == 0:
+                return 'unknown'
+            
             correlation = np.corrcoef(price_changes, volume_changes)[0, 1]
             
             if np.isnan(correlation):
