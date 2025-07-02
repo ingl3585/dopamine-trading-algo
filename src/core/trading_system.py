@@ -255,7 +255,7 @@ class TradingSystem:
                 return False
             
             # Check for required data structures
-            required_fields = ['bars_15m', 'bars_5m', 'bars_1m']
+            required_fields = ['bars_4h', 'bars_1h', 'bars_15m', 'bars_5m', 'bars_1m']
             for field in required_fields:
                 if field not in historical_data:
                     logger.error(f"Missing required field: {field}")
@@ -272,6 +272,8 @@ class TradingSystem:
                     return False
             
             logger.info(f"Historical data validation passed: "
+                       f"4h={len(historical_data.get('bars_4h', []))}, "
+                       f"1h={len(historical_data.get('bars_1h', []))}, "
                        f"15m={len(historical_data.get('bars_15m', []))}, "
                        f"5m={len(historical_data.get('bars_5m', []))}, "
                        f"1m={len(historical_data.get('bars_1m', []))} bars")
@@ -328,10 +330,20 @@ class TradingSystem:
                 logger.warning("Market data processing returned None")
                 return
             
-            # Check for new 15-minute bar and trigger commentary
+            # Check for new higher timeframe bars and trigger enhanced analysis
             if self.data_processor.check_and_reset_15m_bar_flag():
                 logger.info(f"New 15m bar: {market_data.price:.2f} (Account: ${market_data.account_balance:.0f}, Daily P&L: ${market_data.daily_pnl:.2f})")
                 self._trigger_15m_commentary(market_data)
+            
+            # New 1H bar triggers enhanced regime analysis
+            if self.data_processor.check_and_reset_1h_bar_flag():
+                logger.info(f"New 1H bar: {market_data.price:.2f} - Triggering enhanced regime analysis")
+                self._trigger_1h_analysis(market_data)
+            
+            # New 4H bar triggers major trend analysis  
+            if self.data_processor.check_and_reset_4h_bar_flag():
+                logger.info(f"New 4H bar: {market_data.price:.2f} - Triggering major trend analysis")
+                self._trigger_4h_analysis(market_data)
             
             # Check for significant account changes and adapt
             self._check_account_adaptation(market_data)
@@ -979,3 +991,102 @@ class TradingSystem:
             logger.error(f"Error triggering personality system update: {e}")
 
     # Removed old periodic commentary system - now using enhanced real-time system
+    
+    def _trigger_1h_analysis(self, market_data):
+        """Trigger enhanced regime and trend analysis on new 1H bars"""
+        try:
+            # Extract enhanced features with multi-timeframe analysis
+            features = self.intelligence.extract_features(market_data)
+            
+            # Log enhanced 1H analysis
+            logger.info(f"1H ANALYSIS - Trend: {features.higher_tf_bias:.4f}, "
+                       f"1H TF: {features.trend_1h:.4f}, "
+                       f"Alignment: {features.trend_alignment:.3f}, "
+                       f"Regime: {features.regime_confidence:.3f}")
+            
+            # Trigger adaptation engine update with enhanced context
+            if hasattr(self.agent, 'adaptation_engine'):
+                self.agent.adaptation_engine.process_regime_change({
+                    'timeframe': '1H',
+                    'trend_1h': features.trend_1h,
+                    'higher_tf_bias': features.higher_tf_bias,
+                    'trend_alignment': features.trend_alignment,
+                    'volatility_1h': features.volatility_1h
+                })
+            
+            # Update meta-learner with higher timeframe insights
+            self.agent.meta_learner.update_regime_parameters({
+                'trend_strength_1h': abs(features.trend_1h),
+                'trend_direction_1h': 1 if features.trend_1h > 0 else -1,
+                'volatility_regime_1h': 'high' if features.volatility_1h > 0.03 else 'normal'
+            })
+            
+        except Exception as e:
+            logger.error(f"Error in 1H analysis: {e}")
+    
+    def _trigger_4h_analysis(self, market_data):
+        """Trigger major trend and bias analysis on new 4H bars"""
+        try:
+            # Extract enhanced features with multi-timeframe analysis
+            features = self.intelligence.extract_features(market_data)
+            
+            # Log major 4H trend analysis
+            logger.info(f"4H MAJOR TREND ANALYSIS - Bias: {features.higher_tf_bias:.4f}, "
+                       f"4H TF: {features.trend_4h:.4f}, "
+                       f"Multi-TF Alignment: {features.trend_alignment:.3f}, "
+                       f"Vol 4H: {features.volatility_4h:.4f}")
+            
+            # Update trading bias based on 4H analysis
+            trend_4h = features.trend_4h
+            if abs(trend_4h) > 0.005:  # Significant 4H trend
+                bias_strength = min(abs(trend_4h) * 10, 1.0)  # Scale to 0-1
+                bias_direction = 1 if trend_4h > 0 else -1
+                
+                logger.info(f"4H BIAS UPDATE: Direction={bias_direction}, Strength={bias_strength:.3f}")
+                
+                # Update meta-learner with major trend bias
+                self.agent.meta_learner.update_trend_bias({
+                    'direction': bias_direction,
+                    'strength': bias_strength,
+                    'timeframe': '4H',
+                    'confidence': features.regime_confidence
+                })
+            
+            # Trigger portfolio rebalancing assessment for major trend changes
+            portfolio_summary = self.portfolio.get_summary()
+            current_position = portfolio_summary.get('total_position_size', 0)
+            
+            # Alert if position is against major 4H trend
+            if current_position != 0 and trend_4h != 0:
+                position_bias = 1 if current_position > 0 else -1
+                trend_bias = 1 if trend_4h > 0 else -1
+                
+                if position_bias != trend_bias and abs(trend_4h) > 0.01:
+                    logger.warning(f"POSITION VS 4H TREND CONFLICT: Position={position_bias}, 4H Trend={trend_bias:.4f}")
+            
+            # Enhanced personality commentary for major timeframe changes
+            if self.personality_integration:
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                except RuntimeError:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                
+                commentary = loop.run_until_complete(
+                    self.personality_integration.process_market_event(
+                        '4h_trend_change',
+                        {
+                            'trend_4h': trend_4h,
+                            'higher_tf_bias': features.higher_tf_bias,
+                            'trend_alignment': getattr(features, 'trend_alignment', 0.0),
+                            'current_position': current_position
+                        }
+                    )
+                )
+                
+                if commentary:
+                    logger.info(f"\n\n[DOPAMINE 4H ANALYSIS] {commentary}\n")
+            
+        except Exception as e:
+            logger.error(f"Error in 4H analysis: {e}")

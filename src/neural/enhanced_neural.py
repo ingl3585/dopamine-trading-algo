@@ -100,35 +100,49 @@ class CrossTimeframeAttention(nn.Module):
             nn.ReLU(),
             nn.Dropout(0.1)
         )
+        self.tf_1h_encoder = nn.Sequential(
+            nn.Linear(32, feature_dim),
+            nn.LayerNorm(feature_dim),
+            nn.ReLU(),
+            nn.Dropout(0.1)
+        )
+        self.tf_4h_encoder = nn.Sequential(
+            nn.Linear(32, feature_dim),
+            nn.LayerNorm(feature_dim),
+            nn.ReLU(),
+            nn.Dropout(0.1)
+        )
         
         # Positional encodings for timeframes
-        self.timeframe_embeddings = nn.Embedding(3, feature_dim)
+        self.timeframe_embeddings = nn.Embedding(5, feature_dim)
         
         # Cross-timeframe attention
         self.attention = MultiHeadAttention(feature_dim, num_heads)
         
         # Output projection with residual connection
         self.output = nn.Sequential(
-            nn.Linear(feature_dim * 3, feature_dim),
+            nn.Linear(feature_dim * 5, feature_dim),
             nn.LayerNorm(feature_dim),
             nn.ReLU(),
             nn.Linear(feature_dim, feature_dim)
         )
         
-    def forward(self, tf_1m: torch.Tensor, tf_5m: torch.Tensor, tf_15m: torch.Tensor) -> torch.Tensor:
+    def forward(self, tf_1m: torch.Tensor, tf_5m: torch.Tensor, tf_15m: torch.Tensor, tf_1h: torch.Tensor, tf_4h: torch.Tensor) -> torch.Tensor:
         batch_size = tf_1m.shape[0]
         
         # Encode each timeframe
         enc_1m = self.tf_1m_encoder(tf_1m).unsqueeze(1)
         enc_5m = self.tf_5m_encoder(tf_5m).unsqueeze(1)
         enc_15m = self.tf_15m_encoder(tf_15m).unsqueeze(1)
+        enc_1h = self.tf_1h_encoder(tf_1h).unsqueeze(1)
+        enc_4h = self.tf_4h_encoder(tf_4h).unsqueeze(1)
         
         # Add positional embeddings
-        timeframe_ids = torch.arange(3, device=tf_1m.device).unsqueeze(0).expand(batch_size, -1)
+        timeframe_ids = torch.arange(5, device=tf_1m.device).unsqueeze(0).expand(batch_size, -1)
         pos_embeddings = self.timeframe_embeddings(timeframe_ids).unsqueeze(1)
         
         # Stack timeframes for attention
-        timeframes = torch.cat([enc_1m, enc_5m, enc_15m], dim=1)
+        timeframes = torch.cat([enc_1m, enc_5m, enc_15m, enc_1h, enc_4h], dim=1)
         timeframes = timeframes + pos_embeddings
         
         # Apply cross-timeframe attention

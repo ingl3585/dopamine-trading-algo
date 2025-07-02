@@ -61,3 +61,17 @@ class Features:
     smart_money_flow: float = 0.0
     liquidity_depth: float = 0.5
     regime_confidence: float = 0.5
+    
+    # Multi-timeframe analysis
+    trend_1m: float = 0.0
+    trend_5m: float = 0.0
+    trend_15m: float = 0.0
+    trend_1h: float = 0.0
+    trend_4h: float = 0.0
+    trend_alignment: float = 0.0
+    higher_tf_bias: float = 0.0
+    volatility_1m: float = 0.02
+    volatility_5m: float = 0.02
+    volatility_15m: float = 0.02
+    volatility_1h: float = 0.02
+    volatility_4h: float = 0.02

@@ -173,7 +173,7 @@ class IntelligenceEngine:
             total_bars = 0
             
             # Process each timeframe with comprehensive subsystem training
-            for timeframe in ['15m', '5m', '1m']:
+            for timeframe in ['4h', '1h', '15m', '5m', '1m']:
                 bars_key = f'bars_{timeframe}'
                 if bars_key in historical_data:
                     bars = historical_data[bars_key]
@@ -232,7 +232,7 @@ class IntelligenceEngine:
     
     def _process_historical_bars_comprehensive(self, bars, timeframe):
         """Process historical bars with training for all four subsystems"""
-        if not bars or len(bars) < 50:  # Need more data for comprehensive training
+        if not bars or len(bars) < 5:  # Need more data for comprehensive training
             return 0
         
         logger.debug(f"Comprehensive processing {len(bars)} bars for {timeframe}")
@@ -258,7 +258,7 @@ class IntelligenceEngine:
         processed_count = 0
         window_size = min(100, len(bars) // 4)  # Larger window for comprehensive training
         
-        logger.debug(f"Starting comprehensive processing with window_size={window_size}")
+        logger.info(f"Starting comprehensive processing with window_size={window_size}")
         
         # Process overlapping windows for comprehensive training
         step_size = max(1, window_size // 4)  # Overlapping windows for better training
@@ -1444,6 +1444,10 @@ class IntelligenceEngine:
             self._alert_timestamp_failure(data.timestamp)
             return self._default_features()
 
+        # --- Multi-Timeframe Analysis ---
+        # Enhanced analysis with higher timeframes for better trend detection
+        tf_analysis = self._analyze_multi_timeframe(data, price_momentum)
+        
         # --- Subsystem Feature Preparation ---
         # This dictionary will be passed to the subsystems.
         market_features = {
@@ -1456,7 +1460,20 @@ class IntelligenceEngine:
             'margin_utilization': data.margin_utilization,
             'buying_power_ratio': data.buying_power_ratio,
             'daily_pnl_pct': data.daily_pnl_pct,
-            'regime': self._classify_market_regime(volatility, price_momentum, volatility * 10)
+            'regime': self._classify_market_regime(volatility, price_momentum, volatility * 10),
+            # Enhanced with all timeframe features
+            'trend_1m': tf_analysis['trend_1m'],
+            'trend_5m': tf_analysis['trend_5m'],
+            'trend_15m': tf_analysis['trend_15m'],
+            'trend_1h': tf_analysis['trend_1h'],
+            'trend_4h': tf_analysis['trend_4h'],
+            'trend_alignment': tf_analysis['trend_alignment'],
+            'higher_tf_bias': tf_analysis['higher_tf_bias'],
+            'volatility_1m': tf_analysis['volatility_1m'],
+            'volatility_5m': tf_analysis['volatility_5m'],
+            'volatility_15m': tf_analysis['volatility_15m'],
+            'volatility_1h': tf_analysis['volatility_1h'],
+            'volatility_4h': tf_analysis['volatility_4h']
         }
         
         # IMPORTANT: Do not fabricate timestamps for temporal analysis.
@@ -1568,5 +1585,159 @@ class IntelligenceEngine:
             adaptation_quality=adaptation_quality,
             smart_money_flow=smart_money_flow,
             liquidity_depth=liquidity_depth,
-            regime_confidence=regime_confidence
+            regime_confidence=regime_confidence,
+            # Multi-timeframe features - all timeframes
+            trend_1m=tf_analysis['trend_1m'],
+            trend_5m=tf_analysis['trend_5m'],
+            trend_15m=tf_analysis['trend_15m'],
+            trend_1h=tf_analysis['trend_1h'],
+            trend_4h=tf_analysis['trend_4h'],
+            trend_alignment=tf_analysis['trend_alignment'],
+            higher_tf_bias=tf_analysis['higher_tf_bias'],
+            volatility_1m=tf_analysis['volatility_1m'],
+            volatility_5m=tf_analysis['volatility_5m'],
+            volatility_15m=tf_analysis['volatility_15m'],
+            volatility_1h=tf_analysis['volatility_1h'],
+            volatility_4h=tf_analysis['volatility_4h']
         )
+    
+    def _analyze_multi_timeframe(self, data: MarketData, price_momentum: float) -> Dict:
+        """
+        Enhanced multi-timeframe analysis for better trend detection and market bias
+        """
+        try:
+            # Initialize default values for all timeframes
+            analysis = {
+                'trend_1m': 0.0,
+                'trend_5m': 0.0,
+                'trend_15m': 0.0,
+                'trend_1h': 0.0,
+                'trend_4h': 0.0,
+                'trend_alignment': 0.0,
+                'higher_tf_bias': 0.0,
+                'volatility_1m': 0.02,
+                'volatility_5m': 0.02,
+                'volatility_15m': 0.02,
+                'volatility_1h': 0.02,
+                'volatility_4h': 0.02
+            }
+            
+            # 1M Timeframe Analysis
+            if hasattr(data, 'prices_1m') and len(data.prices_1m) >= 20:
+                prices_1m = np.array(data.prices_1m[-20:])
+                
+                # 1M trend strength
+                m1_short_ma = np.mean(prices_1m[-5:])
+                m1_long_ma = np.mean(prices_1m)
+                analysis['trend_1m'] = (m1_short_ma - m1_long_ma) / m1_long_ma if m1_long_ma > 0 else 0.0
+                
+                # 1M volatility
+                analysis['volatility_1m'] = np.std(prices_1m) / np.mean(prices_1m) if np.mean(prices_1m) > 0 else 0.02
+            
+            # 5M Timeframe Analysis
+            if hasattr(data, 'prices_5m') and len(data.prices_5m) >= 15:
+                prices_5m = np.array(data.prices_5m[-15:])
+                
+                # 5M trend strength
+                m5_short_ma = np.mean(prices_5m[-3:])
+                m5_long_ma = np.mean(prices_5m)
+                analysis['trend_5m'] = (m5_short_ma - m5_long_ma) / m5_long_ma if m5_long_ma > 0 else 0.0
+                
+                # 5M volatility
+                analysis['volatility_5m'] = np.std(prices_5m) / np.mean(prices_5m) if np.mean(prices_5m) > 0 else 0.02
+            
+            # 15M Timeframe Analysis
+            if hasattr(data, 'prices_15m') and len(data.prices_15m) >= 12:
+                prices_15m = np.array(data.prices_15m[-12:])
+                
+                # 15M trend strength
+                m15_short_ma = np.mean(prices_15m[-3:])
+                m15_long_ma = np.mean(prices_15m)
+                analysis['trend_15m'] = (m15_short_ma - m15_long_ma) / m15_long_ma if m15_long_ma > 0 else 0.0
+                
+                # 15M volatility
+                analysis['volatility_15m'] = np.std(prices_15m) / np.mean(prices_15m) if np.mean(prices_15m) > 0 else 0.02
+            
+            # 1H Timeframe Analysis (safe fallback if no data from NinjaTrader)
+            if hasattr(data, 'prices_1h') and len(data.prices_1h) >= 10:
+                prices_1h = np.array(data.prices_1h[-10:])
+                
+                # 1H trend strength
+                h1_short_ma = np.mean(prices_1h[-3:])
+                h1_long_ma = np.mean(prices_1h)
+                analysis['trend_1h'] = (h1_short_ma - h1_long_ma) / h1_long_ma if h1_long_ma > 0 else 0.0
+                
+                # 1H volatility
+                analysis['volatility_1h'] = np.std(prices_1h) / np.mean(prices_1h) if np.mean(prices_1h) > 0 else 0.02
+            
+            # 4H Timeframe Analysis (safe fallback if no data from NinjaTrader)
+            if hasattr(data, 'prices_4h') and len(data.prices_4h) >= 6:
+                prices_4h = np.array(data.prices_4h[-6:])
+                
+                # 4H trend strength
+                h4_short_ma = np.mean(prices_4h[-2:])
+                h4_long_ma = np.mean(prices_4h)
+                analysis['trend_4h'] = (h4_short_ma - h4_long_ma) / h4_long_ma if h4_long_ma > 0 else 0.0
+                
+                # 4H volatility
+                analysis['volatility_4h'] = np.std(prices_4h) / np.mean(prices_4h) if np.mean(prices_4h) > 0 else 0.02
+            
+            # Multi-Timeframe Alignment
+            # Calculate how well all 5 timeframes agree on direction
+            trend_1m = analysis['trend_1m']
+            trend_5m = analysis['trend_5m']
+            trend_15m = analysis['trend_15m']
+            trend_1h = analysis['trend_1h']
+            trend_4h = analysis['trend_4h']
+            
+            # All timeframes for comprehensive alignment
+            trends = [trend_1m, trend_5m, trend_15m, trend_1h, trend_4h]
+            positive_trends = sum(1 for t in trends if t > 0.001)
+            negative_trends = sum(1 for t in trends if t < -0.001)
+            
+            # Enhanced alignment scoring with all 5 timeframes
+            if positive_trends >= 4 and negative_trends == 0:
+                analysis['trend_alignment'] = 0.9  # Very strong bullish alignment
+            elif negative_trends >= 4 and positive_trends == 0:
+                analysis['trend_alignment'] = -0.9  # Very strong bearish alignment
+            elif positive_trends >= 3 and negative_trends <= 1:
+                analysis['trend_alignment'] = 0.6  # Strong bullish alignment
+            elif negative_trends >= 3 and positive_trends <= 1:
+                analysis['trend_alignment'] = -0.6  # Strong bearish alignment
+            elif positive_trends > negative_trends:
+                analysis['trend_alignment'] = 0.3  # Weak bullish alignment
+            elif negative_trends > positive_trends:
+                analysis['trend_alignment'] = -0.3  # Weak bearish alignment
+            else:
+                analysis['trend_alignment'] = 0.0  # No clear alignment
+            
+            # Higher Timeframe Bias (4H has most weight, then 1H, 15m, 5m, 1m)
+            # This gives the "big picture" market direction weighted by timeframe importance
+            weights = [0.05, 0.1, 0.2, 0.3, 0.35]  # 1m, 5m, 15m, 1h, 4h weights
+            analysis['higher_tf_bias'] = np.average(trends, weights=weights)
+            
+            # Log multi-timeframe analysis for debugging
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Multi-TF Analysis: 1m={trend_1m:.4f}, 5m={trend_5m:.4f}, 15m={trend_15m:.4f}, "
+                           f"1H={trend_1h:.4f}, 4H={trend_4h:.4f}, Alignment={analysis['trend_alignment']:.3f}, "
+                           f"Bias={analysis['higher_tf_bias']:.4f}")
+            
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"Error in multi-timeframe analysis: {e}")
+            # Return safe defaults for all timeframes
+            return {
+                'trend_1m': 0.0,
+                'trend_5m': 0.0,
+                'trend_15m': 0.0,
+                'trend_1h': 0.0,
+                'trend_4h': 0.0,
+                'trend_alignment': 0.0,
+                'higher_tf_bias': 0.0,
+                'volatility_1m': 0.02,
+                'volatility_5m': 0.02,
+                'volatility_15m': 0.02,
+                'volatility_1h': 0.02,
+                'volatility_4h': 0.02
+            }

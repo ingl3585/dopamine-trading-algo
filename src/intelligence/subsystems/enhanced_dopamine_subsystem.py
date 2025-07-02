@@ -376,15 +376,19 @@ class EnhancedDopamineSubsystem:
     def _calculate_reflection_response(self, snapshot: DopamineSnapshot) -> DopamineResponse:
         """Calculate dopamine response during post-trade reflection"""
         
-        # Reflection is typically more muted
-        reflection_intensity = 0.3
+        # FIXED: Reflection should match the trade outcome, not always be positive
+        # Base reflection on actual trade result
+        base_reflection = np.tanh(snapshot.realized_pnl * 0.03)  # Muted version of realization
         
-        # Learning satisfaction - did we learn something?
-        learning_satisfaction = 0.1 if abs(snapshot.realized_pnl) > 0 else 0.0
+        # Learning component (small positive regardless of outcome)
+        learning_satisfaction = 0.05 if abs(snapshot.realized_pnl) > 0 else 0.0
         
-        # Regret or satisfaction based on recent performance
+        # Recent performance trend (now properly weighted)
         recent_performance = self._get_recent_performance_trend()
-        reflection_signal = reflection_intensity * (recent_performance + learning_satisfaction)
+        trend_influence = np.tanh(recent_performance * 0.02) * 0.3
+        
+        # FIXED: Reflection signal properly combines outcome + trend + learning
+        reflection_signal = base_reflection + trend_influence + learning_satisfaction
         
         dopamine_signal = np.clip(reflection_signal, -self.max_signal, self.max_signal)
         
@@ -393,7 +397,7 @@ class EnhancedDopamineSubsystem:
             phase=snapshot.phase,
             state=self._determine_psychological_state(dopamine_signal),
             anticipation_factor=0.0,
-            satisfaction_factor=learning_satisfaction,
+            satisfaction_factor=base_reflection,  # FIXED: Use actual trade satisfaction
             tolerance_level=self.tolerance_level,
             addiction_risk=self.addiction_score,
             withdrawal_intensity=self.withdrawal_intensity,
@@ -472,16 +476,17 @@ class EnhancedDopamineSubsystem:
     def _determine_psychological_state(self, dopamine_signal: float) -> DopamineState:
         """Determine current psychological state based on dopamine and other factors"""
         
+        # FIXED: More sensitive state detection for realistic behavior
         # Consider signal strength, tolerance, addiction, and withdrawal
-        if self.addiction_score > 0.7:
+        if self.addiction_score > 0.4:  # Reduced from 0.7 - earlier detection
             return DopamineState.ADDICTED
-        elif self.withdrawal_intensity > 0.6:
+        elif self.withdrawal_intensity > 0.4:  # Reduced from 0.6 - earlier detection
             return DopamineState.WITHDRAWN
-        elif dopamine_signal > 1.2:
+        elif dopamine_signal > 0.8:  # Reduced from 1.2 - more realistic
             return DopamineState.EUPHORIC
-        elif dopamine_signal > 0.3:
+        elif dopamine_signal > 0.2:  # Reduced from 0.3
             return DopamineState.CONFIDENT
-        elif dopamine_signal < -0.8:
+        elif dopamine_signal < -0.4:  # Increased from -0.8 - more sensitive
             return DopamineState.CAUTIOUS
         else:
             return DopamineState.BALANCED
@@ -560,11 +565,24 @@ class EnhancedDopamineSubsystem:
     def _get_recent_performance_trend(self) -> float:
         """Get recent performance trend for reflection calculations"""
         
-        if len(self.pnl_history) < 5:
+        if len(self.pnl_history) < 3:
             return 0.0
         
-        recent_pnls = [s.realized_pnl for s in list(self.pnl_history)[-5:]]
-        return np.mean(recent_pnls)
+        # FIXED: Use both realized and unrealized P&L for trend calculation
+        recent_snapshots = list(self.pnl_history)[-5:]
+        recent_pnls = []
+        
+        for snapshot in recent_snapshots:
+            # Combine realized and unrealized P&L for comprehensive performance view
+            total_pnl = snapshot.realized_pnl + (snapshot.unrealized_pnl * 0.5)  # Weight unrealized less
+            recent_pnls.append(total_pnl)
+        
+        if len(recent_pnls) < 2:
+            return 0.0
+            
+        # Calculate trend slope rather than just average
+        trend_slope = (recent_pnls[-1] - recent_pnls[0]) / len(recent_pnls)
+        return trend_slope
     
     def _update_enhanced_tracking(self, snapshot: DopamineSnapshot, response: DopamineResponse):
         """Update all enhanced tracking systems"""
@@ -665,11 +683,14 @@ class EnhancedDopamineSubsystem:
         
         self.tolerance_level = np.clip(self.tolerance_level, 0.0, 1.0)
         
-        # Addiction scoring
-        if self.consecutive_positive > 3 and self.tolerance_level > 0.6:
-            self.addiction_score += 0.05
-        elif response.signal < 0.0:
-            self.addiction_score -= 0.02
+        # FIXED: Addiction scoring - more realistic triggers
+        # Track winning streaks regardless of tolerance initially
+        if response.signal > 0.5:  # Any decent positive signal builds addiction risk
+            self.addiction_score += 0.02
+        elif self.consecutive_positive >= 2 and self.tolerance_level > 0.3:  # Lower thresholds
+            self.addiction_score += 0.03
+        elif response.signal < -0.2:  # Negative signals reduce addiction
+            self.addiction_score -= 0.025
         
         self.addiction_score = np.clip(self.addiction_score, 0.0, 1.0)
         
