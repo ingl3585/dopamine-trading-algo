@@ -41,7 +41,7 @@
   },
   
   "commentary": {
-    "max_length": 10000,
+    "max_length": 300,
     "min_interval": 30.0,
     "default_style": "analytical",
     "default_tone": "professional",

@@ -19,6 +19,7 @@ from .personality_memory import PersonalityMemory
 logger = logging.getLogger(__name__)
 
 class TriggerEvent(Enum):
+    SYSTEM_START = "system_start"
     POSITION_ENTRY = "position_entry"
     POSITION_EXIT = "position_exit"
     MARKET_OPEN = "market_open"

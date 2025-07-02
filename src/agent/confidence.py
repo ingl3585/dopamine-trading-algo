@@ -39,7 +39,7 @@ class ConfidenceAdjustment:
             self.metadata = {}
 
 class ConfidenceState:
-    """Current state of the confidence system"""
+    """Enhanced state of the confidence system with performance tracking"""
     
     def __init__(self):
         self.current_confidence: float = 0.6  # Default starting confidence
@@ -57,6 +57,16 @@ class ConfidenceState:
         # History for analysis
         self.adjustment_history: deque = deque(maxlen=1000)
         self.violation_timestamps: deque = deque(maxlen=100)
+        
+        # NEW: Performance tracking
+        self.trade_history: deque = deque(maxlen=200)  # Recent trade outcomes
+        self.strategy_performance: Dict = {}  # Per-strategy performance
+        self.current_strategy: str = 'conservative'
+        
+        # NEW: Market awareness
+        self.last_unrealized_pnl: float = 0.0
+        self.last_market_volatility: float = 0.02
+        self.subsystem_consensus_history: deque = deque(maxlen=50)
 
 class ConfidenceManager:
     """
@@ -85,16 +95,26 @@ class ConfidenceManager:
             'max_confidence': 1.00,
             'debug_mode': debug_mode,
             
-            # Recovery parameters
-            'base_recovery_rate': 0.02,  # Per minute recovery rate
-            'max_recovery_time': 15.0,   # Minutes for full recovery
-            'success_boost': 0.08,       # Boost from successful trades
-            'rejection_penalty': 0.05,   # Per rejection penalty
+            # Improved Recovery parameters (10/10 balance)
+            'base_recovery_rate': 0.005,  # Reduced from 0.02 - more realistic
+            'max_recovery_time': 45.0,    # Increased from 15.0 - slower recovery
+            'success_boost': 0.04,        # Reduced from 0.08 - less overconfidence  
+            'rejection_penalty': 0.05,    # Unchanged - already reasonable
+            'failed_trade_penalty': 0.05, # Increased from 0.015 - balanced learning
             
-            # Protection parameters
-            'violation_protection_threshold': 3,  # Rejections before protection kicks in
-            'protection_floor_base': 0.25,       # Base protection floor
-            'protection_duration': 600,          # Protection duration in seconds
+            # Market Reality parameters (NEW)
+            'drawdown_sensitivity': 0.3,   # Impact of unrealized losses
+            'volatility_sensitivity': 3.0, # Market volatility impact factor
+            'consensus_weight': 0.5,       # Subsystem agreement influence
+            
+            # Protection parameters  
+            'violation_protection_threshold': 3,
+            'protection_floor_base': 0.25,
+            'protection_duration': 600,
+            
+            # Performance tracking (NEW)
+            'strategy_memory_length': 50,  # Trades to remember per strategy
+            'performance_window': 20,      # Recent trades for performance calc
         }
         
         self.state = ConfidenceState()
@@ -104,7 +124,7 @@ class ConfidenceManager:
         
         logger.info(f"ConfidenceManager initialized: min={min_confidence}, max={max_confidence}")
     
-    def process_neural_output(self, raw_confidence: float, market_context: Dict = None) -> float:
+    def process_neural_output(self, raw_confidence: float, market_context: Dict = None, market_data = None) -> float:
         """
         Process raw neural network confidence output
         
@@ -124,9 +144,23 @@ class ConfidenceManager:
         adjusted = raw_confidence
         adjustment_reasons = []
         
-        # Apply recovery mechanisms
-        adjusted, recovery_reasons = self._apply_recovery_adjustments(adjusted)
+        # Apply market reality check (NEW)
+        if market_data:
+            adjusted, reality_reasons = self._apply_market_reality_check(adjusted, market_data)
+            adjustment_reasons.extend(reality_reasons)
+        
+        # Apply intelligent recovery mechanisms (ENHANCED)
+        adjusted, recovery_reasons = self._apply_intelligent_recovery(adjusted)
         adjustment_reasons.extend(recovery_reasons)
+        
+        # Apply strategy performance (NEW)
+        adjusted, strategy_reasons = self._apply_strategy_performance(adjusted)
+        adjustment_reasons.extend(strategy_reasons)
+        
+        # Apply subsystem consensus (NEW)
+        if market_context and 'subsystem_signals' in market_context:
+            adjusted, consensus_reasons = self._apply_subsystem_consensus(adjusted, market_context['subsystem_signals'])
+            adjustment_reasons.extend(consensus_reasons)
         
         # Apply protection mechanisms
         adjusted, protection_reasons = self._apply_protection_mechanisms(adjusted)
@@ -211,7 +245,7 @@ class ConfidenceManager:
             # Successful trade
             self.state.successful_trades += 1
             self.state.last_success_time = current_time
-            base_adjustment = 0.02
+            base_adjustment = self.config['success_boost']  # Now 0.04 instead of 0.02
             
             # Boost recovery factor
             boost = 0.02
@@ -223,7 +257,7 @@ class ConfidenceManager:
         else:
             # Failed trade
             self.state.failed_trades += 1
-            base_adjustment = -0.015
+            base_adjustment = -self.config['failed_trade_penalty']  # Now -0.05 instead of -0.015
             
             # Small penalty to recovery factor
             penalty = 0.01
@@ -293,9 +327,235 @@ class ConfidenceManager:
             )
             self.state.adjustment_history.append(adjustment)
         
+        # NEW: Track trade history for performance-based recovery
+        self.state.trade_history.append({
+            'pnl': pnl,
+            'timestamp': current_time,
+            'strategy': self.state.current_strategy,
+            'confidence': self.state.current_confidence
+        })
+        
+        # NEW: Update strategy performance tracking
+        self._update_strategy_performance(pnl, trade_context)
+        
         if self.config['debug_mode']:
             logger.info(f"CONFIDENCE: Trade outcome PnL={pnl:.2f}, recovery_factor={self.state.recovery_factor:.3f}")
     
+    def _apply_market_reality_check(self, confidence: float, market_data) -> Tuple[float, List[str]]:
+        """Apply real-time market awareness to confidence"""
+        adjusted = confidence
+        reasons = []
+        
+        try:
+            # 1. Unrealized P&L impact (gradual, not panic-inducing)
+            if hasattr(market_data, 'unrealized_pnl') and hasattr(market_data, 'position_size'):
+                if market_data.unrealized_pnl < 0 and market_data.position_size != 0:
+                    account_balance = getattr(market_data, 'account_balance', 25000)
+                    drawdown_pct = abs(market_data.unrealized_pnl) / account_balance
+                    
+                    if drawdown_pct > 0.01:  # 1%+ drawdown
+                        drawdown_factor = 1.0 - (drawdown_pct * self.config['drawdown_sensitivity'])
+                        old_adjusted = adjusted
+                        adjusted *= max(0.85, drawdown_factor)  # Max 15% reduction
+                        
+                        if adjusted != old_adjusted:
+                            reduction = old_adjusted - adjusted
+                            reasons.append(f"Drawdown reality check: -{reduction:.3f} ({drawdown_pct:.1%} unrealized loss)")
+                
+                # Update state tracking
+                self.state.last_unrealized_pnl = market_data.unrealized_pnl
+            
+            # 2. Market volatility adjustment
+            volatility = getattr(market_data, 'volatility', 0.02)
+            if volatility > 0.04:  # High volatility
+                vol_factor = 1.0 - ((volatility - 0.04) * self.config['volatility_sensitivity'])
+                old_adjusted = adjusted
+                adjusted *= max(0.8, vol_factor)
+                
+                if adjusted != old_adjusted:
+                    reduction = old_adjusted - adjusted
+                    reasons.append(f"High volatility adjustment: -{reduction:.3f} (vol={volatility:.3f})")
+            
+            # Update state tracking
+            self.state.last_market_volatility = volatility
+            
+        except Exception as e:
+            if self.config['debug_mode']:
+                logger.warning(f"Error in market reality check: {e}")
+        
+        return adjusted, reasons
+    
+    def _apply_intelligent_recovery(self, confidence: float) -> Tuple[float, List[str]]:
+        """Performance-based recovery instead of pure time-based"""
+        adjusted = confidence
+        reasons = []
+        current_time = time.time()
+        
+        # Get recent performance metrics
+        recent_trades = list(self.state.trade_history)[-self.config['performance_window']:]
+        
+        if len(recent_trades) >= 5:  # Enough data for intelligent recovery
+            win_rate = sum(1 for trade in recent_trades if trade.get('pnl', 0) > 0) / len(recent_trades)
+            avg_profit_factor = self._calculate_profit_factor(recent_trades)
+            
+            # Adaptive recovery rate based on performance
+            base_rate = self.config['base_recovery_rate']
+            
+            if win_rate > 0.7 and avg_profit_factor > 1.5:
+                recovery_multiplier = 2.0  # Fast recovery when crushing it
+                performance_desc = "excellent"
+            elif win_rate > 0.5:
+                recovery_multiplier = 1.2  # Normal recovery
+                performance_desc = "good"
+            elif win_rate < 0.3:
+                recovery_multiplier = 0.4  # Slow recovery when struggling
+                performance_desc = "poor"
+            else:
+                recovery_multiplier = 0.8
+                performance_desc = "average"
+        else:
+            # Fall back to original time-based recovery with reduced rate
+            recovery_multiplier = 1.0
+            performance_desc = "insufficient data"
+        
+        # Time-based recovery from rejections
+        if self.state.recent_rejections > 0 and self.state.last_rejection_time > 0:
+            time_since_rejection = current_time - self.state.last_rejection_time
+            recovery_minutes = time_since_rejection / 60.0
+            
+            # Apply intelligent recovery rate
+            max_recovery = base_rate * recovery_minutes * recovery_multiplier
+            recovery_boost = min(0.2, max_recovery) * self.state.recovery_factor  # Reduced max from 0.3
+            
+            if recovery_boost > 0.002:  # Only apply meaningful boosts
+                adjusted = min(self.config['max_confidence'], adjusted + recovery_boost)
+                reasons.append(f"Smart recovery: +{recovery_boost:.3f} ({performance_desc} performance, {recovery_minutes:.1f}min)")
+        
+        return adjusted, reasons
+    
+    def _apply_strategy_performance(self, confidence: float) -> Tuple[float, List[str]]:
+        """Apply strategy-specific confidence adjustments"""
+        reasons = []
+        
+        if self.state.current_strategy not in self.state.strategy_performance:
+            return confidence, reasons
+        
+        strategy_stats = self.state.strategy_performance[self.state.current_strategy]
+        
+        if strategy_stats.get('trades', 0) > 10:  # Enough data
+            strategy_win_rate = strategy_stats.get('win_rate', 0.5)
+            strategy_confidence_multiplier = 0.7 + (strategy_win_rate * 0.6)  # 0.7 to 1.3 range
+            
+            old_confidence = confidence
+            confidence *= strategy_confidence_multiplier
+            
+            if abs(confidence - old_confidence) > 0.01:
+                change = confidence - old_confidence
+                reasons.append(f"Strategy performance: {change:+.3f} ({self.state.current_strategy} win rate: {strategy_win_rate:.1%})")
+        
+        return confidence, reasons
+    
+    def _apply_subsystem_consensus(self, confidence: float, subsystem_signals: Dict) -> Tuple[float, List[str]]:
+        """Apply subsystem consensus weighting to confidence"""
+        reasons = []
+        
+        try:
+            # Extract signals
+            signals = [
+                subsystem_signals.get('dna_signal', 0),
+                subsystem_signals.get('temporal_signal', 0), 
+                subsystem_signals.get('immune_signal', 0),
+                subsystem_signals.get('microstructure_signal', 0),
+                subsystem_signals.get('dopamine_signal', 0)
+            ]
+            
+            # Calculate consensus strength
+            import numpy as np
+            signal_std = np.std(signals)
+            consensus_factor = 1.0 - (signal_std * self.config['consensus_weight'])
+            consensus_factor = max(0.7, min(1.3, consensus_factor))  # Bounded impact
+            
+            # Immune system warning override
+            immune_signal = subsystem_signals.get('immune_signal', 0)
+            if immune_signal < -0.5:
+                consensus_factor *= 0.8  # Additional reduction for strong immune warnings
+                reasons.append(f"Immune warning: {immune_signal:.2f}")
+            
+            old_confidence = confidence
+            confidence *= consensus_factor
+            
+            if abs(confidence - old_confidence) > 0.005:
+                change = confidence - old_confidence
+                reasons.append(f"Subsystem consensus: {change:+.3f} (std={signal_std:.2f})")
+            
+            # Track consensus history
+            self.state.subsystem_consensus_history.append({
+                'signals': signals,
+                'std': signal_std,
+                'factor': consensus_factor,
+                'timestamp': time.time()
+            })
+            
+        except Exception as e:
+            if self.config['debug_mode']:
+                logger.warning(f"Error in subsystem consensus: {e}")
+        
+        return confidence, reasons
+    
+    def _calculate_profit_factor(self, trades: list) -> float:
+        """Calculate profit factor from trade history"""
+        if not trades:
+            return 1.0
+        
+        gross_profit = sum(trade.get('pnl', 0) for trade in trades if trade.get('pnl', 0) > 0)
+        gross_loss = abs(sum(trade.get('pnl', 0) for trade in trades if trade.get('pnl', 0) < 0))
+        
+        if gross_loss == 0:
+            return 2.0 if gross_profit > 0 else 1.0
+        
+        return gross_profit / gross_loss
+    
+    def _update_strategy_performance(self, pnl: float, trade_context: Dict = None):
+        """Update strategy-specific performance tracking"""
+        strategy = self.state.current_strategy
+        
+        if strategy not in self.state.strategy_performance:
+            self.state.strategy_performance[strategy] = {
+                'trades': 0,
+                'wins': 0,
+                'total_pnl': 0.0,
+                'win_rate': 0.5,
+                'recent_trades': deque(maxlen=self.config['strategy_memory_length'])
+            }
+        
+        stats = self.state.strategy_performance[strategy]
+        stats['trades'] += 1
+        stats['total_pnl'] += pnl
+        
+        if pnl > 0:
+            stats['wins'] += 1
+        
+        stats['recent_trades'].append({
+            'pnl': pnl,
+            'timestamp': time.time()
+        })
+        
+        # Update win rate
+        if stats['trades'] > 0:
+            stats['win_rate'] = stats['wins'] / stats['trades']
+        
+        if self.config['debug_mode']:
+            logger.debug(f"Strategy {strategy} performance: {stats['win_rate']:.1%} win rate over {stats['trades']} trades")
+    
+    def update_current_strategy(self, new_strategy: str):
+        """Update the current trading strategy"""
+        if new_strategy != self.state.current_strategy:
+            old_strategy = self.state.current_strategy
+            self.state.current_strategy = new_strategy
+            
+            if self.config['debug_mode']:
+                logger.info(f"CONFIDENCE: Strategy changed from {old_strategy} to {new_strategy}")
+
     def _apply_recovery_adjustments(self, confidence: float) -> Tuple[float, List[str]]:
         """Apply time-based and success-based recovery adjustments"""
         adjusted = confidence

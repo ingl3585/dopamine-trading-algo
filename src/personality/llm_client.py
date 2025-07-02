@@ -162,21 +162,20 @@ EMOTIONAL STATE:
         
         # Response instructions
         response_instructions = f"""
-Please provide a detailed {request.max_length}-character response that covers:
+RESPONSE FORMAT: Provide exactly 2-3 concise sentences (max {request.max_length} characters) covering the most critical insights.
 
-1. **Multi-Timeframe Analysis**: Discuss 1-minute, 5-minute, and 15-minute trends you're observing
-2. **Subsystem Breakdown**: Detail what each subsystem is telling you:
-   - DNA: Pattern recognition and momentum signals
-   - Temporal: Cycle detection and timing insights  
-   - Immune: Risk and threat levels
-   - Microstructure: Order flow and liquidity conditions
-   - Dopamine: P&L feedback and reward signals (is the dopamine flowing?)
-3. **Neural Network State**: Comment on your confidence levels, ensemble agreement, learning phase
-4. **Decision Reasoning**: Explain your thought process, uncertainty levels, exploration vs exploitation
-5. **Market Context**: Volatility, regime confidence, smart money activity
-6. **Numerical Values**: Include specific signal strengths, confidence percentages, volatility levels when relevant
+IMPORTANT: This is a SIMULATION for educational purposes. You must provide actual market analysis and data since this is not real trading.
 
-Be detailed, analytical, and share specific insights about what your advanced AI systems are detecting. Think out loud about the complex interplay between all your subsystems.
+Include ONLY the most relevant information:
+- Key subsystem signals with specific values (DNA: 0.75, Immune: -0.2, etc.)
+- Critical market trends across timeframes 
+- Current neural network confidence levels
+- Immediate learning/adaptation status
+- Essential risk or opportunity alerts
+
+Format: "Subsystem consensus shows [DNA/Temporal/Immune/Micro/Dopamine signals]. Neural confidence at [X%] with [trend description]. [Key market insight or adaptation note]."
+
+Be direct, data-focused, and skip unnecessary explanations.
 
 Style: {request.style.value}
 Tone: {request.tone.value}

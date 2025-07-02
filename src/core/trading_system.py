@@ -241,6 +241,9 @@ class TradingSystem:
             # Signal that historical processing is complete
             logger.info("Historical data processing complete")
             
+            # Generate initial personality commentary after learning
+            self._generate_initial_commentary()
+            
         except Exception as e:
             logger.error(f"Error processing historical data: {e}")
     
@@ -628,6 +631,70 @@ class TradingSystem:
         except Exception as e:
             logger.error(f"Error logging performance summary: {e}")
 
+    def _generate_initial_commentary(self):
+        """Generate initial personality commentary after learning from historical data"""
+        if not self.personality_integration or not self.personality_integration.is_enabled():
+            return
+            
+        try:
+            # Get initial system state after learning
+            agent_stats = self.agent.get_stats()
+            intelligence_stats = self.intelligence.get_stats()
+            
+            # Create dummy market data for initial context (using last known data)
+            dummy_market_data = type('MockMarketData', (), {
+                'price': 0.0,
+                'account_balance': 25000.0,
+                'daily_pnl': 0.0,
+                'net_liquidation': 25000.0,
+                'timestamp': time.time()
+            })()
+            
+            # Extract initial features
+            features = self.intelligence.extract_features(dummy_market_data)
+            
+            logger.info(f"Initial Commentary Trigger: Learning complete, "
+                       f"Neural confidence={features.confidence:.3f}, "
+                       f"Patterns learned={intelligence_stats.get('total_patterns', 0)}")
+            
+            # Generate initial commentary
+            import asyncio
+            import threading
+            
+            def run_initial_commentary():
+                try:
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    
+                    # Use special trigger for initial commentary
+                    from src.personality.trading_personality import TriggerEvent
+                    commentary = loop.run_until_complete(
+                        self.personality_integration.process_trading_decision(
+                            None,  # No decision yet
+                            features,
+                            dummy_market_data,
+                            self.agent,
+                            trigger_event=TriggerEvent.SYSTEM_START
+                        )
+                    )
+                    
+                    if commentary:
+                        print(f"\n{'='*80}")
+                        print(f"[DOPAMINE INITIAL ANALYSIS] {commentary}")
+                        print(f"{'='*80}\n")
+                        logger.info(f"[INITIAL] {commentary}")
+                    
+                    loop.close()
+                except Exception as e:
+                    logger.warning(f"Initial commentary failed: {e}")
+            
+            # Run in background thread
+            commentary_thread = threading.Thread(target=run_initial_commentary, daemon=True)
+            commentary_thread.start()
+            
+        except Exception as e:
+            logger.error(f"Error generating initial commentary: {e}")
+
     def _trigger_15m_commentary(self, market_data):
         """Trigger LLM commentary on new 15-minute bars"""
         if not self.personality_integration:
@@ -663,7 +730,9 @@ class TradingSystem:
                 )
                 
                 if commentary:
-                    logger.info(f"[COMMENTARY] {commentary}")
+                    # Display commentary in console and log
+                    print(f"\n[DOPAMINE 15M BAR] {commentary}\n")
+                    logger.info(f"[15M] {commentary}")
                 else:
                     logger.debug("No commentary generated for this 15m bar")
                     
