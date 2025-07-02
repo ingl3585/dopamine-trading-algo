@@ -57,26 +57,29 @@
 
 ```mermaid
 graph TB
-    subgraph "🧠 Intelligence Domain"
-        IE[Intelligence Engine]
+    subgraph "🧠 Intelligence Domain - 5-Timeframe Analysis"
+        IE[Intelligence Engine<br/>5-TF Multi-Analysis]
         DNA[DNA Subsystem]
         TEMP[Temporal Subsystem]
-        IMM[Immune Subsystem]
+        IMM[Immune Subsystem] 
         MICRO[Microstructure Subsystem]
-        DOPA[Dopamine Subsystem]
+        DOPA[Enhanced Dopamine<br/>Psychology System]
+        EDOPA[Dopamine Subsystem<br/>Legacy Support]
     end
     
-    subgraph "🤖 Agent Domain"
-        TA[Trading Agent]
+    subgraph "🤖 Agent Domain - Enhanced Learning"
+        TA[Trading Agent<br/>5-TF Decision Making]
         ML[Meta Learner]
         RTA[Real-Time Adaptation]
-        RE[Reward Engine]
+        RE[Unified Reward Engine]
+        CONF[Confidence Manager]
     end
     
-    subgraph "🧪 Neural Domain"
-        AN[Adaptive Network]
-        EN[Enhanced Neural]
+    subgraph "🧪 Neural Domain - Cross-Timeframe Networks"
+        AN[Self-Evolving Network]
+        EN[Enhanced Neural<br/>5-TF Attention]
         UE[Uncertainty Estimator]
+        CTA[Cross-Timeframe<br/>Attention]
     end
     
     subgraph "💰 Risk Domain"
@@ -86,72 +89,105 @@ graph TB
         RLE[Risk Learning Engine]
     end
     
-    subgraph "📊 Market Domain"
-        DP[Data Processor]
+    subgraph "📊 Market Domain - Multi-Timeframe Data"
+        DP[Data Processor<br/>5-TF Bar Builder]
         MA[Market Analysis]
         MMA[Microstructure Analyzer]
+        TF["1m|5m|15m|1h|4h<br/>Real-time Bars"]
     end
     
-    subgraph "🎭 Personality Domain"
-        TP[Trading Personality]
+    subgraph "🎭 Personality Domain - AI Commentary"
+        TP[Trading Personality<br/>Enhanced Context]
         EE[Emotional Engine]
         LC[LLM Client]
-        VS[Voice Synthesis]
+        PI[Personality Integration]
+        PM_MEM[Personality Memory]
     end
     
-    subgraph "🔧 Core Domain"
-        TS[Trading System]
+    subgraph "🔧 Core Domain - Coordinated Architecture" 
+        TS[Trading System<br/>5-TF Orchestration]
         TO[Trading Orchestrator]
         CFG[Config Manager]
+        DR[Dependency Registry]
+        SC[State Coordinator]
     end
     
-    subgraph "📡 Communication"
-        TCP[TCP Bridge]
-        NT[NinjaTrader Interface]
+    subgraph "📡 Communication - Enhanced Data Flow"
+        TCP[TCP Bridge<br/>5-TF Data Stream]
+        NT[NinjaTrader<br/>60/240m Config]
     end
     
+    %% Intelligence connections
     IE --> DNA
     IE --> TEMP
     IE --> IMM
     IE --> MICRO
     IE --> DOPA
+    IE --> EDOPA
     
+    %% Agent connections with confidence
     TA --> ML
     TA --> RTA
     TA --> RE
+    TA --> CONF
     ML --> RE
+    CONF --> TA
     
+    %% Neural network connections
     TA --> AN
     TA --> EN
     TA --> UE
+    EN --> CTA
+    CTA --> EN
     
+    %% Risk management
     TA --> RM
     RM --> ARM
     RM --> PM
     RM --> RLE
     
+    %% Market data flow with timeframes
     TA --> DP
     DP --> MA
     MA --> MMA
+    DP --> TF
+    TF --> IE
     
+    %% Personality integration
     TA --> TP
     TP --> EE
     TP --> LC
-    TP --> VS
+    TP --> PI
+    TP --> PM_MEM
     
+    %% Core system coordination
     TS --> TO
     TS --> CFG
+    TS --> DR
+    TS --> SC
     
+    %% Communication flow
     TS --> TCP
     TCP --> NT
+    NT -.->|5-TF Data| TCP
     
+    %% Reward system flows
     RE -.->|Unified Rewards| TA
     RE -.->|Dopamine Signals| DOPA
     RE -.->|Rejection Penalties| RM
     
+    %% Multi-timeframe data flows
+    TCP -.->|5-TF Market Data| DP
+    DP -.->|Processed Features| IE
+    IE -.->|Enhanced Analysis| TA
+    
+    %% Enhanced styling
     style RE fill:#ff6b6b,stroke:#d63447,stroke-width:3px
     style DOPA fill:#4ecdc4,stroke:#26d0ce,stroke-width:2px
     style TA fill:#ffe66d,stroke:#ff8b94,stroke-width:2px
+    style IE fill:#9b59b6,stroke:#8e44ad,stroke-width:2px
+    style EN fill:#3498db,stroke:#2980b9,stroke-width:2px
+    style TF fill:#e67e22,stroke:#d35400,stroke-width:2px
 ```
 
 ---
@@ -165,16 +201,18 @@ graph TB
 │   │   ├── 🎯 trading_agent.py            # Main trading agent with actor-critic
 │   │   ├── 🧬 meta_learner.py             # Meta-learning with adaptive parameters
 │   │   ├── ⚡ real_time_adaptation.py     # Real-time market adaptation engine
-│   │   └── 🏆 reward_engine.py            # UNIFIED REWARD ENGINE ⭐
-│   │       ├── UnifiedRewardEngine        # Main reward interface
-│   │       ├── CoreRewardEngine           # Core trading rewards
-│   │       ├── DopamineRewardComponent    # Real-time P&L rewards
-│   │       └── RejectionRewardEngine      # Trade rejection penalties
+│   │   ├── 🏆 reward_engine.py            # UNIFIED REWARD ENGINE ⭐
+│   │   │   ├── UnifiedRewardEngine        # Main reward interface
+│   │   │   ├── CoreRewardEngine           # Core trading rewards
+│   │   │   ├── DopamineRewardComponent    # Real-time P&L rewards
+│   │   │   └── RejectionRewardEngine      # Trade rejection penalties
+│   │   └── 🔧 confidence.py               # Enhanced confidence management
 │   │
 │   ├── 🧠 intelligence/                   # INTELLIGENCE DOMAIN - AI Systems
-│   │   ├── 🎛️ intelligence_engine.py      # Main AI orchestrator
+│   │   ├── 🎛️ intelligence_engine.py      # Main AI orchestrator with 5-timeframe analysis
 │   │   ├── 🔬 advanced_market_intelligence.py # Advanced market AI
 │   │   ├── 🦠 subsystem_evolution.py      # Subsystem evolution engine
+│   │   ├── 🔗 signal_coordinator.py       # Cross-subsystem signal coordination
 │   │   └── 📁 subsystems/                 # Specialized AI Subsystems
 │   │       ├── 🧬 dna_subsystem.py        # Genetic pattern encoding
 │   │       ├── ⏰ temporal_subsystem.py   # FFT cycle detection
@@ -230,12 +268,14 @@ graph TB
 │   │   └── 🌐 tcp_bridge.py               # TCP server interface
 │   │
 │   ├── 📊 monitoring/                     # MONITORING DOMAIN
-│   │   └── 🔍 system_monitor.py           # System health monitoring
+│   │   └── (monitoring files)             # System health monitoring components
 │   │
 │   ├── ⚙️ core/                           # CORE SYSTEM
 │   │   ├── 🎛️ trading_system.py           # Main system coordinator
 │   │   ├── 🎯 trading_system_orchestrator.py # System orchestration
-│   │   └── ⚙️ config.py                   # Configuration management
+│   │   ├── ⚙️ config.py                   # Configuration management
+│   │   ├── 🔗 dependency_registry.py      # Service dependency injection
+│   │   └── 🔄 state_coordinator.py        # Coordinated state management
 │   │
 │   └── 🔧 shared/                         # SHARED KERNEL
 │       └── 📋 types.py                    # Common data types
@@ -243,15 +283,22 @@ graph TB
 ├── 📁 config/                             # CONFIGURATION FILES
 │   ├── ⚙️ development.json                # Development settings
 │   ├── ⚙️ production.json                 # Production settings
-│   ├── 🎭 personality_config.json         # Personality configuration
-│   └── 📊 logging_config.json             # Logging configuration
+│   └── 🎭 personality_config.json         # Personality configuration
 │
-├── 🧪 tests/                              # TEST SUITE
-│   └── 🧪 test_personality_system.py      # Personality system tests
+├── 📁 data/                               # PERSISTENT DATA
+│   ├── 🧠 intelligence_memory.json        # AI subsystem memory
+│   ├── 📊 intelligence_state.json         # Intelligence engine state
+│   └── 🔄 system_state_*.json             # System state snapshots
+│
+├── 📁 logs/                               # SYSTEM LOGS
+│   └── 📝 trading.log                     # Main trading log
+│
+├── 📁 models/                             # ML MODEL STORAGE
+│   └── (neural network models)            # Saved model states
 │
 ├── 📋 requirements.txt                    # Python dependencies
 ├── 🚀 main.py                             # Main entry point
-├── 🥷 ResearchStrategy.cs                 # NinjaTrader strategy
+├── 🥷 ResearchStrategy.cs                 # NinjaTrader strategy (5-timeframe config)
 └── 📖 README.md                           # This file
 ```
 
