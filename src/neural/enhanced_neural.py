@@ -671,11 +671,11 @@ class TradingOptimizer:
         
         # Learning rate schedulers
         self.policy_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.policy_optimizer, mode='max', factor=0.8, patience=100, verbose=True
+            self.policy_optimizer, mode='max', factor=0.8, patience=100
         )
         
         self.value_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            self.value_optimizer, mode='min', factor=0.9, patience=50, verbose=True
+            self.value_optimizer, mode='min', factor=0.9, patience=50
         )
         
         # Performance tracking
