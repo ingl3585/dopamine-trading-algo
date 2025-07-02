@@ -397,12 +397,12 @@ class ConfidenceManager:
         # Get recent performance metrics
         recent_trades = list(self.state.trade_history)[-self.config['performance_window']:]
         
+        # Always define base_rate first
+        base_rate = self.config['base_recovery_rate']
+        
         if len(recent_trades) >= 5:  # Enough data for intelligent recovery
             win_rate = sum(1 for trade in recent_trades if trade.get('pnl', 0) > 0) / len(recent_trades)
             avg_profit_factor = self._calculate_profit_factor(recent_trades)
-            
-            # Adaptive recovery rate based on performance
-            base_rate = self.config['base_recovery_rate']
             
             if win_rate > 0.7 and avg_profit_factor > 1.5:
                 recovery_multiplier = 2.0  # Fast recovery when crushing it
