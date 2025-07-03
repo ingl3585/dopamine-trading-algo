@@ -143,6 +143,7 @@ class MetaLearner:
             
             # Confidence thresholds (learned)
             'confidence_threshold': MetaParameter(0.3, (0.05, 0.9)),
+            'intelligence_threshold': MetaParameter(0.25, (0.1, 0.8)),  # CRITICAL: Intelligence signal strength threshold
             
             # Risk preferences (account-aware)
             'stop_preference': MetaParameter(0.5, (0.0, 1.0)),

@@ -87,10 +87,10 @@ class EnhancedDopamineSubsystem:
             risk_tolerance_modifier=1.0, urgency_factor=0.5
         )
         
-        # Simplified adaptive parameters for neuromorphic learning
-        self.base_sensitivity = config.get('dopamine_sensitivity', 0.01)  # Much lower for adaptive discovery
+        # ENHANCED: Increased sensitivity for stronger signals
+        self.base_sensitivity = config.get('dopamine_sensitivity', 0.1)  # INCREASED from 0.01 to 0.1 for stronger signals
         self.current_sensitivity = self.base_sensitivity
-        self.momentum_factor = config.get('momentum_factor', 0.01)  # Adaptive momentum discovery
+        self.momentum_factor = config.get('momentum_factor', 0.05)  # INCREASED for better momentum detection
         self.max_signal = config.get('max_dopamine_signal', 10.0)  # Higher ceiling for discovery
         
         # Simplified psychological parameters - let AI discover psychology
@@ -214,6 +214,10 @@ class EnhancedDopamineSubsystem:
         adjusted_sensitivity = self.current_sensitivity * (1.0 - self.tolerance_level * 0.5)
         base_reward = np.tanh(pnl_change * adjusted_sensitivity)
         
+        # DEBUG: Log key calculations for troubleshooting
+        if abs(pnl_change) > 0.01 or len(self.pnl_history) < 5:  # Log significant changes or initial calls
+            logger.debug(f"DOPAMINE: PnL change={pnl_change:.2f}, sensitivity={adjusted_sensitivity:.4f}, base_reward={base_reward:.4f}")
+        
         # Enhanced momentum calculation
         momentum_multiplier = self._calculate_momentum_multiplier(pnl_change)
         
@@ -238,6 +242,10 @@ class EnhancedDopamineSubsystem:
         
         # Bound the signal
         dopamine_signal = np.clip(raw_signal, -self.max_signal, self.max_signal)
+        
+        # DEBUG: Log final signal calculation
+        if abs(dopamine_signal) > 0.01 or len(self.pnl_history) < 5:
+            logger.debug(f"DOPAMINE FINAL: raw_signal={raw_signal:.4f}, final_signal={dopamine_signal:.4f}, tolerance={self.tolerance_level:.3f}")
         
         # Determine psychological state
         psychological_state = self._determine_psychological_state(dopamine_signal)

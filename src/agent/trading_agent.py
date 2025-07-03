@@ -377,7 +377,16 @@ class TradingAgent:
         volatility_adjustment = features.volatility * 0.3
         confidence_threshold = base_threshold + regime_adjustment + volatility_adjustment
         
+        # CRITICAL FIX: Add intelligence signal strength threshold
+        intelligence_threshold = self.meta_learner.get_parameter('intelligence_threshold', 0.3)  # Default 0.3
+        intelligence_signal_strength = abs(features.overall_signal)
+        
+        # Block trades if either confidence OR intelligence signal is too weak
         if confidence < confidence_threshold and not exploration:
+            logger.info(f"Trade blocked: Low confidence {confidence:.3f} < {confidence_threshold:.3f}")
+            action_idx = 0
+        elif intelligence_signal_strength < intelligence_threshold and not exploration:
+            logger.info(f"Trade blocked: Weak intelligence signal {intelligence_signal_strength:.3f} < {intelligence_threshold:.3f}")
             action_idx = 0
         
         # Enhanced sizing and risk parameters with dopamine influence
@@ -805,6 +814,14 @@ class TradingAgent:
         frequency_limit = self.meta_learner.get_parameter('trade_frequency_base')
         time_since_last = market_data.timestamp - self.last_trade_time
         if time_since_last < (1 / frequency_limit):  # Adaptive timing, no hardcoded minimum
+            return False
+        
+        # ENHANCED: Add intelligence signal strength check to trading constraints
+        intelligence_threshold = self.meta_learner.get_parameter('intelligence_threshold', 0.3)
+        intelligence_signal_strength = abs(features.overall_signal)
+        
+        if intelligence_signal_strength < intelligence_threshold:
+            logger.info(f"Trading blocked: Intelligence signal {intelligence_signal_strength:.3f} below threshold {intelligence_threshold:.3f}")
             return False
         
         # Let AI discover regime-based constraints through economic feedback

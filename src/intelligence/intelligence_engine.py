@@ -1622,65 +1622,115 @@ class IntelligenceEngine:
                 'volatility_4h': 0.02
             }
             
-            # 1M Timeframe Analysis
-            if hasattr(data, 'prices_1m') and len(data.prices_1m) >= 20:
-                prices_1m = np.array(data.prices_1m[-20:])
+            # 1M Timeframe Analysis - REDUCED requirement from 20 to 10
+            if hasattr(data, 'prices_1m') and len(data.prices_1m) >= 10:
+                prices_1m = np.array(data.prices_1m[-min(20, len(data.prices_1m)):])
                 
                 # 1M trend strength
-                m1_short_ma = np.mean(prices_1m[-5:])
+                m1_short_ma = np.mean(prices_1m[-min(5, len(prices_1m)):])
                 m1_long_ma = np.mean(prices_1m)
                 analysis['trend_1m'] = (m1_short_ma - m1_long_ma) / m1_long_ma if m1_long_ma > 0 else 0.0
                 
                 # 1M volatility
                 analysis['volatility_1m'] = np.std(prices_1m) / np.mean(prices_1m) if np.mean(prices_1m) > 0 else 0.02
+                
+                logger.debug(f"1M trend calculated: {analysis['trend_1m']:.4f} from {len(prices_1m)} bars")
+            elif hasattr(data, 'prices_1m') and len(data.prices_1m) >= 3:
+                # Fallback with minimal data
+                prices_1m = np.array(data.prices_1m[-3:])
+                analysis['trend_1m'] = (prices_1m[-1] - prices_1m[0]) / prices_1m[0] if prices_1m[0] > 0 else 0.0
+                logger.debug(f"1M trend (fallback): {analysis['trend_1m']:.4f} from {len(prices_1m)} bars")
             
-            # 5M Timeframe Analysis
-            if hasattr(data, 'prices_5m') and len(data.prices_5m) >= 15:
-                prices_5m = np.array(data.prices_5m[-15:])
+            # 5M Timeframe Analysis - REDUCED requirement from 15 to 5
+            if hasattr(data, 'prices_5m') and len(data.prices_5m) >= 5:
+                prices_5m = np.array(data.prices_5m[-min(15, len(data.prices_5m)):])
                 
                 # 5M trend strength
-                m5_short_ma = np.mean(prices_5m[-3:])
+                m5_short_ma = np.mean(prices_5m[-min(3, len(prices_5m)):])
                 m5_long_ma = np.mean(prices_5m)
                 analysis['trend_5m'] = (m5_short_ma - m5_long_ma) / m5_long_ma if m5_long_ma > 0 else 0.0
                 
                 # 5M volatility
                 analysis['volatility_5m'] = np.std(prices_5m) / np.mean(prices_5m) if np.mean(prices_5m) > 0 else 0.02
+                
+                logger.debug(f"5M trend calculated: {analysis['trend_5m']:.4f} from {len(prices_5m)} bars")
+            elif hasattr(data, 'prices_5m') and len(data.prices_5m) >= 2:
+                # Fallback with minimal data
+                prices_5m = np.array(data.prices_5m[-2:])
+                analysis['trend_5m'] = (prices_5m[-1] - prices_5m[0]) / prices_5m[0] if prices_5m[0] > 0 else 0.0
+                logger.debug(f"5M trend (fallback): {analysis['trend_5m']:.4f} from {len(prices_5m)} bars")
             
-            # 15M Timeframe Analysis
-            if hasattr(data, 'prices_15m') and len(data.prices_15m) >= 12:
-                prices_15m = np.array(data.prices_15m[-12:])
+            # 15M Timeframe Analysis - REDUCED requirement from 12 to 4
+            if hasattr(data, 'prices_15m') and len(data.prices_15m) >= 4:
+                prices_15m = np.array(data.prices_15m[-min(12, len(data.prices_15m)):])
                 
                 # 15M trend strength
-                m15_short_ma = np.mean(prices_15m[-3:])
+                m15_short_ma = np.mean(prices_15m[-min(3, len(prices_15m)):])
                 m15_long_ma = np.mean(prices_15m)
                 analysis['trend_15m'] = (m15_short_ma - m15_long_ma) / m15_long_ma if m15_long_ma > 0 else 0.0
                 
                 # 15M volatility
                 analysis['volatility_15m'] = np.std(prices_15m) / np.mean(prices_15m) if np.mean(prices_15m) > 0 else 0.02
+                
+                logger.debug(f"15M trend calculated: {analysis['trend_15m']:.4f} from {len(prices_15m)} bars")
+            elif hasattr(data, 'prices_15m') and len(data.prices_15m) >= 2:
+                # Fallback with minimal data
+                prices_15m = np.array(data.prices_15m[-2:])
+                analysis['trend_15m'] = (prices_15m[-1] - prices_15m[0]) / prices_15m[0] if prices_15m[0] > 0 else 0.0
+                logger.debug(f"15M trend (fallback): {analysis['trend_15m']:.4f} from {len(prices_15m)} bars")
             
-            # 1H Timeframe Analysis (safe fallback if no data from NinjaTrader)
-            if hasattr(data, 'prices_1h') and len(data.prices_1h) >= 10:
-                prices_1h = np.array(data.prices_1h[-10:])
+            # 1H Timeframe Analysis - REDUCED requirement from 10 to 3
+            if hasattr(data, 'prices_1h') and len(data.prices_1h) >= 3:
+                prices_1h = np.array(data.prices_1h[-min(10, len(data.prices_1h)):])
                 
                 # 1H trend strength
-                h1_short_ma = np.mean(prices_1h[-3:])
+                h1_short_ma = np.mean(prices_1h[-min(3, len(prices_1h)):])
                 h1_long_ma = np.mean(prices_1h)
                 analysis['trend_1h'] = (h1_short_ma - h1_long_ma) / h1_long_ma if h1_long_ma > 0 else 0.0
                 
                 # 1H volatility
                 analysis['volatility_1h'] = np.std(prices_1h) / np.mean(prices_1h) if np.mean(prices_1h) > 0 else 0.02
+                
+                logger.debug(f"1H trend calculated: {analysis['trend_1h']:.4f} from {len(prices_1h)} bars")
+            elif hasattr(data, 'prices_1h') and len(data.prices_1h) >= 2:
+                # Fallback with minimal data
+                prices_1h = np.array(data.prices_1h[-2:])
+                analysis['trend_1h'] = (prices_1h[-1] - prices_1h[0]) / prices_1h[0] if prices_1h[0] > 0 else 0.0
+                logger.debug(f"1H trend (fallback): {analysis['trend_1h']:.4f} from {len(prices_1h)} bars")
+            else:
+                # Use 15M data to estimate 1H trend if no 1H data available
+                if hasattr(data, 'prices_15m') and len(data.prices_15m) >= 4:
+                    prices_15m = np.array(data.prices_15m[-4:])
+                    analysis['trend_1h'] = (np.mean(prices_15m[-2:]) - np.mean(prices_15m[:2])) / np.mean(prices_15m[:2]) if np.mean(prices_15m[:2]) > 0 else 0.0
+                    logger.debug(f"1H trend (15M estimate): {analysis['trend_1h']:.4f}")
             
-            # 4H Timeframe Analysis (safe fallback if no data from NinjaTrader)
-            if hasattr(data, 'prices_4h') and len(data.prices_4h) >= 6:
-                prices_4h = np.array(data.prices_4h[-6:])
+            # 4H Timeframe Analysis - REDUCED requirement from 6 to 2
+            if hasattr(data, 'prices_4h') and len(data.prices_4h) >= 2:
+                prices_4h = np.array(data.prices_4h[-min(6, len(data.prices_4h)):])
                 
                 # 4H trend strength
-                h4_short_ma = np.mean(prices_4h[-2:])
+                h4_short_ma = np.mean(prices_4h[-min(2, len(prices_4h)):])
                 h4_long_ma = np.mean(prices_4h)
                 analysis['trend_4h'] = (h4_short_ma - h4_long_ma) / h4_long_ma if h4_long_ma > 0 else 0.0
                 
                 # 4H volatility
                 analysis['volatility_4h'] = np.std(prices_4h) / np.mean(prices_4h) if np.mean(prices_4h) > 0 else 0.02
+                
+                logger.debug(f"4H trend calculated: {analysis['trend_4h']:.4f} from {len(prices_4h)} bars")
+            elif hasattr(data, 'prices_4h') and len(data.prices_4h) >= 1:
+                # Single bar - no trend calculation possible, keep default
+                logger.debug(f"4H trend: insufficient data ({len(data.prices_4h)} bars)")
+            else:
+                # Use 1H data to estimate 4H trend if no 4H data available
+                if hasattr(data, 'prices_1h') and len(data.prices_1h) >= 4:
+                    prices_1h = np.array(data.prices_1h[-4:])
+                    analysis['trend_4h'] = (np.mean(prices_1h[-2:]) - np.mean(prices_1h[:2])) / np.mean(prices_1h[:2]) if np.mean(prices_1h[:2]) > 0 else 0.0
+                    logger.debug(f"4H trend (1H estimate): {analysis['trend_4h']:.4f}")
+                elif hasattr(data, 'prices_15m') and len(data.prices_15m) >= 8:
+                    # Use 15M data to estimate 4H trend (rough approximation)
+                    prices_15m = np.array(data.prices_15m[-8:])
+                    analysis['trend_4h'] = (np.mean(prices_15m[-4:]) - np.mean(prices_15m[:4])) / np.mean(prices_15m[:4]) if np.mean(prices_15m[:4]) > 0 else 0.0
+                    logger.debug(f"4H trend (15M estimate): {analysis['trend_4h']:.4f}")
             
             # Multi-Timeframe Alignment
             # Calculate how well all 5 timeframes agree on direction

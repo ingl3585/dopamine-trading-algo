@@ -14,5 +14,8 @@
     "close_positions_on_shutdown": true,
     "emergency_max_margin_usage": 0.85,
     "emergency_max_drawdown": 0.15,
-    "historical_data_timeout": 60
+    "historical_data_timeout": 60,
+    "dopamine_sensitivity": 0.12,
+    "momentum_factor": 0.06,
+    "max_dopamine_signal": 1.5
 }

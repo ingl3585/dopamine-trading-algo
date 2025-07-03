@@ -117,7 +117,8 @@ class DNASubsystem:
             for stored_seq, data in self.sequences.items():
                 try:
                     similarity = self._advanced_sequence_similarity(sequence, stored_seq)
-                    if similarity > 0.7:
+                    # REDUCED threshold from 0.7 to 0.4 for better pattern matching
+                    if similarity > 0.4:
                         matches_found += 1
                         age_factor = self.age_decay_factor ** data['age']
                         adjusted_performance = data['performance'] * age_factor
@@ -135,8 +136,24 @@ class DNASubsystem:
                     continue
             
             if matches_found == 0 and len(self.sequences) > 0:
-                logger.debug("No DNA matches found, using baseline signal")
-                best_score = 0.05
+                # ENHANCED: Find best partial match instead of weak baseline
+                best_partial_similarity = 0.0
+                for stored_seq, data in self.sequences.items():
+                    try:
+                        similarity = self._advanced_sequence_similarity(sequence, stored_seq)
+                        if similarity > best_partial_similarity:
+                            best_partial_similarity = similarity
+                    except:
+                        continue
+                
+                # Use partial match with minimum strength
+                if best_partial_similarity > 0.2:
+                    best_score = best_partial_similarity * 0.3  # Scale partial matches
+                    logger.debug(f"DNA partial match: similarity={best_partial_similarity:.3f}, score={best_score:.3f}")
+                else:
+                    # INCREASED baseline from 0.05 to 0.2 for stronger signals
+                    best_score = 0.2
+                    logger.debug("No significant DNA matches found, using enhanced baseline signal")
             
             if len(best_matches) >= 2 and len(self.sequences) % self.breeding_frequency == 0:
                 try:
@@ -148,8 +165,12 @@ class DNASubsystem:
                 logger.warning("DNA analysis returned invalid score, using 0.0")
                 return 0.0
             
-            logger.debug(f"DNA analysis result: {best_score:.4f} (matches: {matches_found})")
-            return best_score
+            # ENHANCED: Scale DNA signals to be competitive with temporal signals
+            amplified_score = best_score * 2.5  # Boost DNA signals for better competition
+            final_score = np.clip(amplified_score, -10.0, 10.0)
+            
+            logger.debug(f"DNA analysis result: raw={best_score:.4f}, amplified={final_score:.4f} (matches: {matches_found})")
+            return final_score
             
         except Exception as e:
             logger.error(f"Error in DNA sequence analysis: {e}")
