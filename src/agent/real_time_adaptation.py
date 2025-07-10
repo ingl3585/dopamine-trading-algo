@@ -604,6 +604,41 @@ class RealTimeAdaptationEngine:
         # Update prediction history for uncertainty calibration
         self.uncertainty_quantifier.update_prediction_history(prediction, outcome)
     
+    def process_regime_change(self, regime_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Process regime change events and adapt strategies accordingly"""
+        
+        # Create high-urgency regime change event
+        regime_event = AdaptationEvent(
+            timestamp=time.time(),
+            event_type='regime_change',
+            data=regime_data,
+            urgency=0.9  # High urgency for regime changes
+        )
+        
+        # Process immediately due to high urgency
+        self._process_urgent_event(regime_event)
+        
+        # Return adaptation decision based on new regime
+        market_context = {
+            'volatility': self._regime_to_numeric(regime_data.get('volatility_regime', 'medium')),
+            'trend_strength': self._regime_to_numeric(regime_data.get('trend_regime', 'ranging')),
+            'volume_regime': regime_data.get('confidence', 0.5),
+            'time_of_day': 0.5
+        }
+        
+        # Get updated strategy selection
+        selected_strategy = self.strategy_selector.select_strategy(market_context)
+        
+        logger.info(f"Regime change processed: {regime_data.get('new_regime', 'unknown')} -> Strategy: {selected_strategy}")
+        
+        return {
+            'new_strategy': selected_strategy,
+            'strategy_name': self.strategy_selector.strategies[selected_strategy],
+            'regime_context': market_context,
+            'urgency_level': regime_event.urgency,
+            'adaptation_triggered': True
+        }
+    
     def get_comprehensive_stats(self) -> Dict:
         """Get comprehensive adaptation statistics"""
         return {

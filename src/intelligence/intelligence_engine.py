@@ -1626,7 +1626,7 @@ class IntelligenceEngine:
             if hasattr(data, 'prices_1m') and len(data.prices_1m) >= 10:
                 prices_1m = np.array(data.prices_1m[-min(20, len(data.prices_1m)):])
                 
-                # 1M trend strength
+                # 1M trend strength (percentage change)
                 m1_short_ma = np.mean(prices_1m[-min(5, len(prices_1m)):])
                 m1_long_ma = np.mean(prices_1m)
                 analysis['trend_1m'] = (m1_short_ma - m1_long_ma) / m1_long_ma if m1_long_ma > 0 else 0.0
@@ -1742,8 +1742,8 @@ class IntelligenceEngine:
             
             # All timeframes for comprehensive alignment
             trends = [trend_1m, trend_5m, trend_15m, trend_1h, trend_4h]
-            positive_trends = sum(1 for t in trends if t > 0.001)
-            negative_trends = sum(1 for t in trends if t < -0.001)
+            positive_trends = sum(1 for t in trends if t > 0.0005)  # 0.05% threshold
+            negative_trends = sum(1 for t in trends if t < -0.0005)  # -0.05% threshold
             
             # Enhanced alignment scoring with all 5 timeframes
             if positive_trends >= 4 and negative_trends == 0:

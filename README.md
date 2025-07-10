@@ -248,7 +248,6 @@ graph TB
 │   │   ├── 🤖 trading_personality.py      # Main personality system
 │   │   ├── 💭 emotional_engine.py         # Emotional state engine
 │   │   ├── 🗣️ llm_client.py               # LLM integration
-│   │   ├── 🔊 voice_synthesis.py          # Voice synthesis
 │   │   ├── 🧠 personality_memory.py       # Personality memory
 │   │   ├── 🔧 config_manager.py           # Personality configuration
 │   │   └── 🔗 personality_integration.py  # System integration

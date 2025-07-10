@@ -208,8 +208,10 @@ class MetaLearner:
             
             self.last_account_balance = account_balance
     
-    def get_parameter(self, name: str) -> float:
-        return self.parameters[name].value
+    def get_parameter(self, name: str, default_value: float = None) -> float:
+        if name in self.parameters:
+            return self.parameters[name].value
+        return default_value if default_value is not None else 0.0
     
     def get_subsystem_weights(self) -> torch.Tensor:
         return self.subsystem_weights()
@@ -322,6 +324,48 @@ class MetaLearner:
             'last_account_balance': self.last_account_balance,
             'account_adaptation_count': self.account_adaptation_count
         }, filepath)
+    
+    def update_regime_parameters(self, regime_data: Dict[str, Any]):
+        """Update meta-learner parameters based on regime changes"""
+        
+        # Extract regime information
+        volatility_regime = regime_data.get('volatility_regime', 'medium')
+        trend_regime = regime_data.get('trend_regime', 'ranging')
+        confidence = regime_data.get('confidence', 0.5)
+        
+        # Adjust parameters based on regime
+        if volatility_regime == 'high':
+            # High volatility: reduce position sizes, increase stop distance
+            self.parameters['position_size_factor'].value *= 0.8
+            self.parameters['stop_distance_factor'].value *= 1.2
+            self.parameters['confidence_threshold'].value *= 1.1
+            
+        elif volatility_regime == 'low':
+            # Low volatility: can increase position sizes slightly
+            self.parameters['position_size_factor'].value *= 1.1
+            self.parameters['stop_distance_factor'].value *= 0.9
+            
+        if trend_regime == 'trending':
+            # Trending markets: increase target distance, reduce stop distance
+            self.parameters['target_distance_factor'].value *= 1.2
+            self.parameters['stop_distance_factor'].value *= 0.9
+            self.parameters['intelligence_threshold'].value *= 0.9  # Lower threshold for trending
+            
+        elif trend_regime == 'ranging':
+            # Ranging markets: tighter targets and stops
+            self.parameters['target_distance_factor'].value *= 0.8
+            self.parameters['stop_distance_factor'].value *= 0.8
+            self.parameters['intelligence_threshold'].value *= 1.1  # Higher threshold for ranging
+        
+        # Adjust based on confidence
+        confidence_factor = 0.8 + (confidence * 0.4)  # 0.8 to 1.2 range
+        self.parameters['confidence_threshold'].value *= confidence_factor
+        
+        # Ensure all parameters stay within bounds
+        for param in self.parameters.values():
+            param.value = np.clip(param.value, *param.bounds)
+        
+        logger.info(f"Regime parameters updated: vol={volatility_regime}, trend={trend_regime}, conf={confidence:.3f}")
     
     def load_state(self, filepath: str):
         try:
