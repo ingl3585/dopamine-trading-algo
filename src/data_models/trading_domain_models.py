@@ -26,6 +26,7 @@ class Trade:
     price: Optional[float] = None
     timestamp: Optional[datetime] = None
     status: TradeStatus = TradeStatus.PENDING
+    confidence: float = 0.5  # Default confidence if not provided
     
 @dataclass
 class Position:

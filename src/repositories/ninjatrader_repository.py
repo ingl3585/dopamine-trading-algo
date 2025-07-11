@@ -38,7 +38,7 @@ class NinjaTraderRepository(TradingRepository):
                 action=trade.action.value,
                 size=trade.size,
                 price=trade.price or 0.0,
-                confidence=0.8  # Default confidence
+                confidence=trade.confidence
             )
             
             logger.info(f"Sending order to TCP bridge: {order.action} {order.size} @ {order.price}")

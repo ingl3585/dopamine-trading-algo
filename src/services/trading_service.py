@@ -39,7 +39,8 @@ class TradingService:
                 id=f"trade_{datetime.now().timestamp()}",
                 action=TradeAction(decision.action),
                 size=decision.size,
-                timestamp=datetime.now()
+                timestamp=datetime.now(),
+                confidence=decision.confidence
             )
             
             # Execute through repository (NinjaTrader)
