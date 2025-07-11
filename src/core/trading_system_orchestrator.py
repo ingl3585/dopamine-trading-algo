@@ -289,9 +289,9 @@ class TradingSystemOrchestrator:
         confidence = ai_signals['overall'].confidence
         
         # Determine action based on signal strength and confidence
-        if overall_signal > 0.1 and confidence > 0.6:
+        if overall_signal > 0.1 and confidence > 0.4:
             action = "buy"
-        elif overall_signal < -0.1 and confidence > 0.6:
+        elif overall_signal < -0.1 and confidence > 0.4:
             action = "sell"
         else:
             action = "hold"
@@ -323,7 +323,7 @@ class TradingSystemOrchestrator:
             return False
         
         # Don't trade if confidence is too low
-        if decision.confidence < 0.6:
+        if decision.confidence < 0.4:
             logger.debug(f"Trade rejected: confidence too low ({decision.confidence:.2f})")
             return False
         
@@ -660,9 +660,9 @@ class TradingSystemOrchestrator:
             consensus_strength = ai_signals.get('consensus_strength', 0.0)
             
             # Determine action
-            if overall_signal > 0.1 and overall_confidence > 0.6 and consensus_strength > 0.3 and risk_level < 0.8:
+            if overall_signal > 0.1 and overall_confidence > 0.4 and consensus_strength > 0.3 and risk_level < 0.8:
                 action = "BUY"
-            elif overall_signal < -0.1 and overall_confidence > 0.6 and consensus_strength > 0.3 and risk_level < 0.8:
+            elif overall_signal < -0.1 and overall_confidence > 0.4 and consensus_strength > 0.3 and risk_level < 0.8:
                 action = "SELL"
             else:
                 action = "HOLD"

@@ -1886,27 +1886,34 @@ class IntelligenceEngine:
             immune_signal_value = self._analyze_risk_patterns_simple(current_price, volatility)
             microstructure_signal_value = max(-1.0, min(1.0, volume_momentum * 0.5 + (1.0 - volatility) * 0.5))
             
-            # Calculate overall signal as weighted combination of subsystem signals
+            # Get dopamine signal value
+            dopamine_signal_value = dopamine_signal.signal if hasattr(dopamine_signal, 'signal') else dopamine_signal
+            
+            # Calculate overall signal as weighted combination of all 5 subsystem signals
             overall_signal_value = (
-                dna_signal_value * 0.25 +           # DNA pattern recognition
-                temporal_signal_value * 0.25 +      # Temporal cycles  
-                immune_signal_value * 0.25 +        # Risk assessment
-                microstructure_signal_value * 0.25  # Market microstructure
+                dna_signal_value * 0.2 +            # DNA pattern recognition
+                temporal_signal_value * 0.2 +       # Temporal cycles  
+                immune_signal_value * 0.2 +         # Risk assessment
+                microstructure_signal_value * 0.2 + # Market microstructure
+                dopamine_signal_value * 0.2         # Dopamine reward optimization
             )
             
-            # Calculate individual confidence levels (simplified)
-            base_confidence = max(0.3, min(0.8, 1.0 - volatility * 5.0))
-            dna_confidence = max(0.3, min(0.8, base_confidence + abs(dna_signal_value) * 0.2))
-            temporal_confidence = max(0.3, min(0.8, base_confidence + abs(temporal_signal_value) * 0.3))
-            immune_confidence = max(0.3, min(0.8, base_confidence + (1.0 - abs(immune_signal_value)) * 0.2))
-            microstructure_confidence = max(0.3, min(0.8, base_confidence + abs(microstructure_signal_value) * 0.2))
+            # Calculate individual confidence levels with dynamic range
+            base_confidence = max(0.2, min(0.9, 1.0 - volatility * 4.0))
             
-            # Calculate consensus strength between subsystem signals
-            signal_values = [dna_signal_value, temporal_signal_value, immune_signal_value, microstructure_signal_value]
+            # Each subsystem contributes to confidence based on signal strength and market conditions
+            dna_confidence = max(0.15, min(0.95, base_confidence + abs(dna_signal_value) * 0.4))
+            temporal_confidence = max(0.2, min(0.9, base_confidence + abs(temporal_signal_value) * 0.35))
+            immune_confidence = max(0.25, min(0.85, base_confidence + (1.0 - abs(immune_signal_value)) * 0.3))
+            microstructure_confidence = max(0.3, min(0.9, base_confidence + abs(microstructure_signal_value) * 0.25))
+            dopamine_confidence = max(0.1, min(0.95, base_confidence + abs(dopamine_signal_value) * 0.45))
+            
+            # Calculate consensus strength between all 5 subsystem signals
+            signal_values = [dna_signal_value, temporal_signal_value, immune_signal_value, microstructure_signal_value, dopamine_signal_value]
             consensus_strength = self._calculate_consensus_strength(signal_values)
             
-            # Overall confidence as simple average
-            overall_confidence = (dna_confidence + temporal_confidence + immune_confidence + microstructure_confidence) / 4.0
+            # Overall confidence as average of all 5 subsystems
+            overall_confidence = (dna_confidence + temporal_confidence + immune_confidence + microstructure_confidence + dopamine_confidence) / 5.0
             
             # Create signal objects with value and confidence (expected format)
             class SignalObject:
@@ -1922,6 +1929,7 @@ class IntelligenceEngine:
                 'temporal': SignalObject(temporal_signal_value, temporal_confidence),
                 'immune': SignalObject(immune_signal_value, immune_confidence),
                 'microstructure': SignalObject(microstructure_signal_value, microstructure_confidence),
+                'dopamine': SignalObject(dopamine_signal_value, dopamine_confidence),
                 
                 # Critical: Add consensus_strength to fix 0.000 issue
                 'consensus_strength': consensus_strength,
@@ -1934,6 +1942,7 @@ class IntelligenceEngine:
                 'temporal_signal': temporal_signal_value,
                 'immune_signal': immune_signal_value,
                 'microstructure_signal': microstructure_signal_value,
+                'dopamine_signal': dopamine_signal_value,
                 'regime_adjusted_signal': self._adjust_signal_for_regime(price_momentum, volatility),
                 'adaptation_quality': 0.8,
                 'pattern_score': abs(price_momentum) * 0.5 + (1.0 - volatility) * 0.5,
@@ -1962,6 +1971,7 @@ class IntelligenceEngine:
                 'temporal': SignalObject(0.0, 0.5),
                 'immune': SignalObject(0.0, 0.5),
                 'microstructure': SignalObject(0.0, 0.5),
+                'dopamine': SignalObject(0.0, 0.5),
                 
                 # Critical: Add consensus_strength for error case
                 'consensus_strength': 0.5,
@@ -1974,6 +1984,7 @@ class IntelligenceEngine:
                 'temporal_signal': 0.0,
                 'immune_signal': 0.0,
                 'microstructure_signal': 0.0,
+                'dopamine_signal': 0.0,
                 'regime_adjusted_signal': 0.0,
                 'adaptation_quality': 0.5,
                 'pattern_score': 0.0,
