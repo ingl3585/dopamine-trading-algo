@@ -60,10 +60,8 @@ class PersonalityConfigManager(ConfigurationManager):
         """
         
         try:
-            # Use base class to load configuration
-            success = super().load_config()
-            
-            if success and self.settings:
+            # The base class loads configuration in __init__, so we can use self.settings
+            if self.settings:
                 # Parse the loaded data into personality configuration
                 self.config = self._parse_config_data(self.settings)
                 logger.info(f"Loaded personality configuration from {self.config_file}")

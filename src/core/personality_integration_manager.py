@@ -5,7 +5,7 @@ import time
 from typing import Dict, Any, Optional, Callable
 from dataclasses import dataclass
 
-from src.data_models.trading_domain_models import MarketData
+from src.market_analysis.data_processor import MarketData
 
 logger = logging.getLogger(__name__)
 

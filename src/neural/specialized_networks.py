@@ -388,8 +388,13 @@ class PositionSizingNetwork(nn.Module):
 class SpecializedNetworkEnsemble(nn.Module):
     """Ensemble of specialized networks for different trading tasks"""
     
-    def __init__(self, input_dim: int = 64, shared_dim: int = 64):
+    def __init__(self, config: Dict[str, Any] = None, input_dim: int = 64, shared_dim: int = 64):
         super().__init__()
+        
+        # Handle config parameter
+        if config is not None:
+            input_dim = config.get('ensemble_input_dim', input_dim)
+            shared_dim = config.get('ensemble_shared_dim', shared_dim)
         
         # Shared feature backbone
         self.shared_backbone = SharedFeatureBackbone(input_dim, 128, shared_dim)

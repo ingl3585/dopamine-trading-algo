@@ -178,10 +178,19 @@ class NeuralArchitectureSearch:
     """Neural Architecture Search for trading networks"""
     
     def __init__(self, 
+                 config: Dict[str, Any] = None,
                  input_size: int = 64,
                  mutation_rate: float = 0.1,
                  population_size: int = 5,
                  elite_ratio: float = 0.3):
+        
+        # Handle config parameter
+        if config is not None:
+            input_size = config.get('nas_input_size', input_size)
+            mutation_rate = config.get('nas_mutation_rate', mutation_rate)
+            population_size = config.get('nas_population_size', population_size)
+            elite_ratio = config.get('nas_elite_ratio', elite_ratio)
+            
         self.input_size = input_size
         self.mutation_rate = mutation_rate
         self.population_size = population_size

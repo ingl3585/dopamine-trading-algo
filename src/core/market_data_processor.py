@@ -5,8 +5,7 @@ import time
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 
-from src.market_analysis.data_processor import DataProcessor
-from src.data_models.trading_domain_models import MarketData
+from src.market_analysis.data_processor import DataProcessor, MarketData
 
 logger = logging.getLogger(__name__)
 

@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from collections import deque
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 import logging
 
@@ -114,9 +114,14 @@ class DeepEnsemble(nn.Module):
         return total_distance / count if count > 0 else 0.0
 
 class UncertaintyEstimator(nn.Module):
-    def __init__(self, input_dim: int = 64, hidden_dim: int = 32, 
+    def __init__(self, config: Dict[str, Any] = None, input_dim: int = 64, hidden_dim: int = 32, 
                  ensemble_models: Optional[List[nn.Module]] = None):
         super().__init__()
+        
+        # Handle config parameter
+        if config is not None:
+            input_dim = config.get('uncertainty_input_dim', input_dim)
+            hidden_dim = config.get('uncertainty_hidden_dim', hidden_dim)
         
         # Epistemic uncertainty network (model uncertainty)
         self.epistemic_net = nn.Sequential(
