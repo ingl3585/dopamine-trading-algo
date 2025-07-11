@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .trading_personality import PersonalityConfig
 from .personality_integration import PersonalityIntegrationConfig
+from src.core.configuration_manager import ConfigurationManager
 
 logger = logging.getLogger(__name__)
 
@@ -36,34 +37,35 @@ class PersonalitySystemConfig:
     # Available personality presets
     personality_presets: Dict[str, Dict[str, Any]]
 
-class PersonalityConfigManager:
+class PersonalityConfigManager(ConfigurationManager):
     """
     Manages configuration for the AI Trading Personality system
+    Extends ConfigurationManager to avoid duplicate configuration loading logic
     """
     
     def __init__(self, config_file: str = "config/personality_config.json"):
-        self.config_file = config_file
+        super().__init__(config_file)
         self.config: Optional[PersonalitySystemConfig] = None
         self.default_config_loaded = False
         
-        # Load configuration
-        self.load_config()
+        # Load personality-specific configuration
+        self._load_personality_config()
     
-    def load_config(self) -> bool:
+    def _load_personality_config(self) -> bool:
         """
-        Load configuration from file with fallback to defaults
+        Load personality-specific configuration using base class functionality
         
         Returns:
             bool: Success status
         """
         
         try:
-            # Try to load from file
-            if os.path.exists(self.config_file):
-                with open(self.config_file, 'r') as f:
-                    config_data = json.load(f)
-                
-                self.config = self._parse_config_data(config_data)
+            # Use base class to load configuration
+            success = super().load_config()
+            
+            if success and self.settings:
+                # Parse the loaded data into personality configuration
+                self.config = self._parse_config_data(self.settings)
                 logger.info(f"Loaded personality configuration from {self.config_file}")
                 return True
             else:

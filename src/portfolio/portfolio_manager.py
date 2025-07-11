@@ -8,6 +8,7 @@ import time
 from typing import Dict, List
 from datetime import datetime, timedelta
 from collections import deque
+from src.portfolio.performance_analyzer import PerformanceAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,7 @@ class PortfolioManager:
         self.trade_history = deque(maxlen=1000)
         self.performance_history = deque(maxlen=500)
         self.daily_returns = deque(maxlen=252)  # One year of daily returns
+        self.performance_analyzer = PerformanceAnalyzer()
         
     def track_positions(self, positions_data: Dict) -> Dict:
         """Track and analyze current positions"""
@@ -126,7 +128,7 @@ class PortfolioManager:
                 'risk': risk_metrics,
                 'trades': trade_analytics,
                 'positions': position_analytics,
-                'performance_score': self._calculate_performance_score(returns_metrics, risk_metrics)
+                'performance_score': self.performance_analyzer.calculate_performance_score(returns_metrics, risk_metrics)
             }
             
         except Exception as e:
@@ -468,34 +470,6 @@ class PortfolioManager:
             logger.error(f"Error calculating position analytics: {e}")
             return {}
     
-    def _calculate_performance_score(self, returns_metrics: Dict, risk_metrics: Dict) -> float:
-        """Calculate overall performance score"""
-        try:
-            # Weighted scoring based on multiple factors
-            sharpe_ratio = returns_metrics.get('sharpe_ratio', 0)
-            win_rate = returns_metrics.get('win_rate', 0)
-            profit_factor = min(returns_metrics.get('profit_factor', 1), 5)  # Cap at 5
-            max_drawdown = risk_metrics.get('max_drawdown', 0)
-            
-            # Normalize metrics to 0-100 scale
-            sharpe_score = min(100, max(0, sharpe_ratio * 50 + 50))
-            win_rate_score = win_rate * 100
-            profit_factor_score = min(100, profit_factor * 20)
-            drawdown_score = max(0, 100 - abs(max_drawdown) * 10)
-            
-            # Weighted average
-            performance_score = (
-                sharpe_score * 0.3 +
-                win_rate_score * 0.25 +
-                profit_factor_score * 0.25 +
-                drawdown_score * 0.2
-            )
-            
-            return performance_score
-            
-        except Exception as e:
-            logger.error(f"Error calculating performance score: {e}")
-            return 50.0  # Neutral score
     
     def get_summary(self) -> Dict:
         """Get portfolio summary compatible with existing system interface"""

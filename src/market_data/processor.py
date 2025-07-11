@@ -9,6 +9,7 @@ from collections import deque
 from datetime import datetime
 
 from src.market_analysis.data_processor import MarketData
+from src.shared.constants import DEFAULT_BUFFER_SIZE_LARGE
 
 logger = logging.getLogger(__name__)
 
@@ -19,9 +20,9 @@ class MarketDataProcessor:
     
     def __init__(self, config):
         self.config = config
-        self.price_history = deque(maxlen=1000)
-        self.volume_history = deque(maxlen=1000)
-        self.timestamp_history = deque(maxlen=1000)
+        self.price_history = deque(maxlen=DEFAULT_BUFFER_SIZE_LARGE)
+        self.volume_history = deque(maxlen=DEFAULT_BUFFER_SIZE_LARGE)
+        self.timestamp_history = deque(maxlen=DEFAULT_BUFFER_SIZE_LARGE)
         
     def process_data(self, raw_data: Dict) -> MarketData:
         """Process raw market data into standardized format"""

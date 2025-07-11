@@ -1,5 +1,9 @@
-from .trading_system_orchestrator import main
+# Core module - removing conflicting imports that cause dependency issues
 from .config import Config
-from .trading_system import TradingSystem
 
-__all__ = ['main', 'Config', 'TradingSystem']
+# Modernized components available via direct imports
+# from .system_integration_orchestrator import SystemIntegrationOrchestrator
+# from .component_integrator import ComponentIntegrator
+# from .event_bus import EventBus
+
+__all__ = ['Config']
