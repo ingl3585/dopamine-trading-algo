@@ -62,20 +62,45 @@ class NeuralNetworkManager:
     """
     
     def __init__(self, 
-                 meta_learner: MetaLearner,
-                 device: torch.device,
-                 config: Optional[NetworkConfiguration] = None):
+                 config: Dict[str, Any],
+                 nas_system: Optional[Any] = None,
+                 uncertainty_estimator: Optional[Any] = None,
+                 pruning_manager: Optional[Any] = None,
+                 specialized_networks: Optional[Any] = None,
+                 meta_learner: Optional[Any] = None,
+                 device: Optional[torch.device] = None):
         """
         Initialize the neural network manager
         
         Args:
-            meta_learner: Meta-learning component for architecture decisions
-            device: PyTorch device for computations
-            config: Network configuration (uses defaults if None)
+            config: Configuration dictionary
+            nas_system: Neural Architecture Search system
+            uncertainty_estimator: Uncertainty estimation component
+            pruning_manager: Dynamic pruning manager
+            specialized_networks: Specialized network ensemble
+            meta_learner: Meta-learning component (optional)
+            device: PyTorch device for computations (auto-detected if None)
         """
+        # Store injected components
+        self.nas_system = nas_system
+        self.uncertainty_estimator = uncertainty_estimator
+        self.pruning_manager = pruning_manager
+        self.specialized_networks = specialized_networks
         self.meta_learner = meta_learner
-        self.device = device
-        self.config = config or NetworkConfiguration()
+        
+        # Handle device
+        self.device = device or (torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
+        
+        # Handle config
+        if isinstance(config, dict):
+            # Extract network configuration from dict
+            network_config = NetworkConfiguration()
+            network_config.input_size = config.get('input_size', 64)
+            network_config.feature_dim = config.get('feature_dim', 64)
+            network_config.learning_rate = config.get('learning_rate', 0.001)
+            self.config = network_config
+        else:
+            self.config = config or NetworkConfiguration()
         
         # Initialize networks
         self._initialize_networks()
@@ -109,8 +134,12 @@ class NeuralNetworkManager:
     def _initialize_networks(self):
         """Initialize all neural networks"""
         try:
-            # Get initial architecture sizes from meta-learner
-            initial_sizes = self.meta_learner.architecture_evolver.current_sizes
+            # Get initial architecture sizes from meta-learner or use defaults
+            if self.meta_learner and hasattr(self.meta_learner, 'architecture_evolver'):
+                initial_sizes = self.meta_learner.architecture_evolver.current_sizes
+            else:
+                # Use default architecture sizes
+                initial_sizes = [128, 64, 32]
             
             # Main enhanced network
             self.main_network = create_enhanced_network(
@@ -176,12 +205,21 @@ class NeuralNetworkManager:
             )
             
             # Legacy optimizer for compatibility
-            self.unified_optimizer = optim.AdamW(
+            optimizer_params = (
                 list(self.main_network.parameters()) + 
                 list(self.feature_learner.parameters()) + 
-                list(self.few_shot_learner.parameters()) +
-                list(self.meta_learner.subsystem_weights.parameters()) +
-                list(self.meta_learner.exploration_strategy.parameters()),
+                list(self.few_shot_learner.parameters())
+            )
+            
+            # Add meta-learner parameters if available
+            if self.meta_learner:
+                if hasattr(self.meta_learner, 'subsystem_weights'):
+                    optimizer_params += list(self.meta_learner.subsystem_weights.parameters())
+                if hasattr(self.meta_learner, 'exploration_strategy'):
+                    optimizer_params += list(self.meta_learner.exploration_strategy.parameters())
+            
+            self.unified_optimizer = optim.AdamW(
+                optimizer_params,
                 lr=self.config.learning_rate,
                 weight_decay=self.config.weight_decay
             )
@@ -466,8 +504,17 @@ class NeuralNetworkManager:
             current_performance = self._calculate_current_performance()
             
             # Get new architecture from NAS system
-            new_architecture = self.nas_system.suggest_mutation(current_performance)
-            current_sizes = self.meta_learner.architecture_evolver.current_sizes
+            if self.nas_system:
+                new_architecture = self.nas_system.suggest_mutation(current_performance)
+            else:
+                logger.warning("NAS system not available, skipping architecture evolution")
+                return False
+                
+            # Get current sizes from meta-learner or use defaults
+            if self.meta_learner and hasattr(self.meta_learner, 'architecture_evolver'):
+                current_sizes = self.meta_learner.architecture_evolver.current_sizes
+            else:
+                current_sizes = [128, 64, 32]
             
             if new_architecture.layer_sizes == current_sizes:
                 logger.debug("No architecture change needed")
@@ -498,12 +545,22 @@ class NeuralNetworkManager:
         try:
             current_lr = self.unified_optimizer.param_groups[0]['lr']
             
-            self.unified_optimizer = optim.AdamW(
+            # Build optimizer parameter list
+            optimizer_params = (
                 list(self.main_network.parameters()) +
                 list(self.feature_learner.parameters()) +
-                list(self.few_shot_learner.parameters()) +
-                list(self.meta_learner.subsystem_weights.parameters()) +
-                list(self.meta_learner.exploration_strategy.parameters()),
+                list(self.few_shot_learner.parameters())
+            )
+            
+            # Add meta-learner parameters if available
+            if self.meta_learner:
+                if hasattr(self.meta_learner, 'subsystem_weights'):
+                    optimizer_params += list(self.meta_learner.subsystem_weights.parameters())
+                if hasattr(self.meta_learner, 'exploration_strategy'):
+                    optimizer_params += list(self.meta_learner.exploration_strategy.parameters())
+            
+            self.unified_optimizer = optim.AdamW(
+                optimizer_params,
                 lr=current_lr,
                 weight_decay=self.config.weight_decay
             )
@@ -729,8 +786,10 @@ class NeuralNetworkManager:
         return {
             'generations': self.evolution_stats['generations'],
             'improvements': self.evolution_stats['improvements'],
-            'current_architecture': getattr(
-                self.meta_learner.architecture_evolver, 'current_sizes', 'unknown'
+            'current_architecture': (
+                self.meta_learner.architecture_evolver.current_sizes 
+                if self.meta_learner and hasattr(self.meta_learner, 'architecture_evolver') 
+                else [128, 64, 32]
             ),
             'last_evolution_step': self.last_evolution_step,
             'steps_since_evolution': self.training_steps - self.last_evolution_step,
@@ -758,8 +817,9 @@ class NeuralNetworkManager:
             # Store current network state
             old_state = self.main_network.state_dict()
             
-            # Update meta-learner with new architecture
-            self.meta_learner.architecture_evolver.current_sizes = new_architecture.layer_sizes
+            # Update meta-learner with new architecture if available
+            if self.meta_learner and hasattr(self.meta_learner, 'architecture_evolver'):
+                self.meta_learner.architecture_evolver.current_sizes = new_architecture.layer_sizes
             
             # Evolve networks
             self.main_network.evolve_architecture(new_architecture.layer_sizes)

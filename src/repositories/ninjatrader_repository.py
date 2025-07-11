@@ -27,7 +27,10 @@ class NinjaTraderRepository(TradingRepository):
     def execute_trade(self, trade: Trade) -> ExecutionResult:
         """Execute trade via NinjaTrader TCP bridge"""
         try:
+            logger.info(f"Attempting to execute trade: {trade.action.value} {trade.size} @ {trade.price}")
+            
             if not self.tcp_server:
+                logger.error("TCP server not available for trade execution")
                 return ExecutionResult(success=False, error="TCP server not available")
             
             # Create Order for TCP server
@@ -38,10 +41,13 @@ class NinjaTraderRepository(TradingRepository):
                 confidence=0.8  # Default confidence
             )
             
+            logger.info(f"Sending order to TCP bridge: {order.action} {order.size} @ {order.price}")
+            
             # Send signal via TCP server
             success = self.tcp_server.send_signal(order)
             
             if success:
+                logger.info(f"Trade successfully sent to NinjaTrader: {trade.action.value} {trade.size}")
                 return ExecutionResult(
                     success=True,
                     execution_price=trade.price or 0.0,
@@ -49,6 +55,7 @@ class NinjaTraderRepository(TradingRepository):
                     duration=0.0
                 )
             else:
+                logger.error(f"Failed to send trade signal to NinjaTrader: {trade.action.value} {trade.size}")
                 return ExecutionResult(
                     success=False,
                     error="Failed to send signal to NinjaTrader"

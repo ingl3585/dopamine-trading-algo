@@ -151,7 +151,7 @@ class StateEncoder:
         features = []
         
         # Price movement features
-        if len(market_data.prices_1m) >= self.price_window:
+        if market_data.prices_1m and len(market_data.prices_1m) >= self.price_window:
             prices = np.array(market_data.prices_1m[-self.price_window:])
             
             # Returns
@@ -179,7 +179,7 @@ class StateEncoder:
             features.extend([0.0] * 8)
         
         # Volume features
-        if len(market_data.volumes_1m) >= self.volume_window:
+        if market_data.volumes_1m and len(market_data.volumes_1m) >= self.volume_window:
             volumes = np.array(market_data.volumes_1m[-self.volume_window:])
             
             # Volume momentum
@@ -196,7 +196,7 @@ class StateEncoder:
         
         # Multi-timeframe features
         for timeframe_prices in [market_data.prices_5m, market_data.prices_15m]:
-            if len(timeframe_prices) >= 3:
+            if timeframe_prices and len(timeframe_prices) >= 3:
                 tf_prices = np.array(timeframe_prices[-3:])
                 tf_momentum = (tf_prices[-1] - tf_prices[0]) / tf_prices[0]
                 features.append(tf_momentum)

@@ -251,20 +251,28 @@ class TradingStateManager:
     """
     
     def __init__(self,
-                 confidence_manager: ConfidenceManager,
-                 meta_learner: MetaLearner,
-                 device: torch.device):
+                 config: Dict[str, Any],
+                 confidence_manager: Optional[ConfidenceManager] = None,
+                 meta_learner: Optional[MetaLearner] = None,
+                 device: Optional[torch.device] = None):
         """
         Initialize the trading state manager
         
         Args:
-            confidence_manager: Confidence calculation and recovery
-            meta_learner: Meta-learning component
-            device: PyTorch device for tensor operations
+            config: Configuration dictionary
+            confidence_manager: Confidence calculation and recovery (created if None)
+            meta_learner: Meta-learning component (optional)
+            device: PyTorch device for tensor operations (auto-detected if None)
         """
-        self.confidence_manager = confidence_manager
+        # Handle device
+        self.device = device or (torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
+        
+        # Create or use provided components
+        self.confidence_manager = confidence_manager or ConfidenceManager()
         self.meta_learner = meta_learner
-        self.device = device
+        
+        # Store config
+        self.config = config
         
         # Initialize components
         self.state_builder = StateBuilder(device)

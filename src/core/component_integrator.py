@@ -28,7 +28,7 @@ from src.agent.multi_objective_optimizer import MultiObjectiveOptimizer
 from src.core.trading_system_orchestrator import TradingSystemOrchestrator
 from src.core.market_data_processor import MarketDataProcessor
 from src.core.system_state_manager import SystemStateManager
-from src.core.analysis_trigger_manager import AnalysisTriggerManager
+from src.core.analysis_trigger_manager import AnalysisTriggerManager, AnalysisType
 from src.core.personality_integration_manager import PersonalityIntegrationManager
 from src.core.configuration_manager import ConfigurationManager
 
@@ -56,7 +56,10 @@ class ComponentRegistry:
     dynamic_pruning_manager: Optional[DynamicPruningManager] = None
     specialized_networks: Optional[SpecializedNetworkEnsemble] = None
     
-    # Phase 3 - Reward Components
+    # Phase 3 - Intelligence Components
+    intelligence_engine: Optional[Any] = None  # Master coordinator for 5 AI subsystems
+    
+    # Phase 4 - Reward Components
     neuromorphic_reward_engine: Optional[NeuromorphicRewardEngine] = None
     temporal_reward_memory: Optional[TemporalRewardMemory] = None
     surprise_detector: Optional[SurpriseDetector] = None
@@ -121,22 +124,27 @@ class ComponentIntegrator:
                 logger.error("Failed to initialize neural components")
                 return False
             
-            # Phase 3: Initialize reward components
+            # Phase 3: Initialize intelligence components  
+            if not self._initialize_intelligence_components():
+                logger.error("Failed to initialize intelligence components")
+                return False
+            
+            # Phase 4: Initialize reward components
             if not self._initialize_reward_components():
                 logger.error("Failed to initialize reward components")
                 return False
             
-            # Phase 4: Initialize agent components
+            # Phase 5: Initialize agent components
             if not self._initialize_agent_components():
                 logger.error("Failed to initialize agent components")
                 return False
             
-            # Phase 5: Initialize portfolio components
+            # Phase 6: Initialize portfolio components
             if not self._initialize_portfolio_components():
                 logger.error("Failed to initialize portfolio components")
                 return False
             
-            # Phase 6: Connect all components
+            # Phase 7: Connect all components
             if not self._connect_components():
                 logger.error("Failed to connect components")
                 return False
@@ -200,6 +208,24 @@ class ComponentIntegrator:
             logger.error(f"Error initializing neural components: {e}")
             return False
     
+    def _initialize_intelligence_components(self) -> bool:
+        """Initialize intelligence and AI subsystem components"""
+        try:
+            logger.info("Initializing intelligence components...")
+            
+            # Import intelligence factory
+            from src.intelligence import create_intelligence_engine
+            
+            # Intelligence Engine (master coordinator for 5 AI subsystems)
+            self.components.intelligence_engine = create_intelligence_engine(self.config)
+            
+            logger.info("Intelligence components initialized")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error initializing intelligence components: {e}")
+            return False
+    
     def _initialize_reward_components(self) -> bool:
         """Initialize reward system components"""
         try:
@@ -253,11 +279,11 @@ class ComponentIntegrator:
                 reward_engine=self.components.neuromorphic_reward_engine
             )
             
-            # Trading Decision Engine (depends on neural and state components)
+            # Trading Decision Engine (depends on neural and intelligence components)
             self.components.trading_decision_engine = TradingDecisionEngine(
                 self.config,
                 neural_manager=self.components.neural_network_manager,
-                state_manager=self.components.trading_state_manager
+                intelligence_engine=self.components.intelligence_engine
             )
             
             logger.info("Agent components initialized")
@@ -335,7 +361,7 @@ class ComponentIntegrator:
             # 15-minute analysis trigger
             analysis_mgr.register_trigger(
                 'market_analysis_15m',
-                analysis_mgr.AnalysisType.REGIME_ANALYSIS,
+                AnalysisType.REGIME_ANALYSIS,
                 '15m',
                 lambda data: self._trigger_market_analysis(data, '15m')
             )
@@ -343,7 +369,7 @@ class ComponentIntegrator:
             # 1-hour analysis trigger
             analysis_mgr.register_trigger(
                 'trend_analysis_1h',
-                analysis_mgr.AnalysisType.TREND_ANALYSIS,
+                AnalysisType.TREND_ANALYSIS,
                 '1h',
                 lambda data: self._trigger_market_analysis(data, '1h')
             )
@@ -351,7 +377,7 @@ class ComponentIntegrator:
             # 4-hour analysis trigger
             analysis_mgr.register_trigger(
                 'major_trend_4h',
-                analysis_mgr.AnalysisType.TREND_ANALYSIS,
+                AnalysisType.TREND_ANALYSIS,
                 '4h',
                 lambda data: self._trigger_market_analysis(data, '4h')
             )

@@ -75,21 +75,38 @@ class TradingDecisionEngine:
     without concerns about network training, experience storage, or other responsibilities.
     """
     
-    def __init__(self, 
-                 confidence_manager: ConfidenceManager,
-                 meta_learner: MetaLearner,
-                 device: torch.device):
+    def __init__(self,
+                 config: Dict[str, Any],
+                 confidence_manager: Optional[ConfidenceManager] = None,
+                 meta_learner: Optional[MetaLearner] = None,
+                 neural_manager: Optional[Any] = None,
+                 intelligence_engine: Optional[Any] = None,
+                 device: Optional[torch.device] = None):
         """
         Initialize the decision engine
         
         Args:
-            confidence_manager: Manages confidence calculation and recovery
-            meta_learner: Provides adaptive parameters and exploration strategy
-            device: PyTorch device for tensor operations
+            config: Configuration dictionary
+            confidence_manager: Manages confidence calculation and recovery (optional)
+            meta_learner: Provides adaptive parameters and exploration strategy (optional)
+            neural_manager: Neural network manager (optional, passed but not used)
+            device: PyTorch device for tensor operations (auto-detected if None)
         """
-        self.confidence_manager = confidence_manager
+        # Store config
+        self.config = config
+        
+        # Handle device
+        self.device = device or (torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
+        
+        # Initialize or use provided components
+        self.confidence_manager = confidence_manager or ConfidenceManager()
         self.meta_learner = meta_learner
-        self.device = device
+        
+        # Store neural manager reference (not used currently but passed by integrator)
+        self.neural_manager = neural_manager
+        
+        # Store intelligence engine for real-time subsystem consultation
+        self.intelligence_engine = intelligence_engine
         
         # Decision tracking
         self.total_decisions = 0
@@ -124,8 +141,8 @@ class TradingDecisionEngine:
         self.total_decisions += 1
         
         try:
-            # Build decision context
-            context = self._build_decision_context(
+            # Build decision context with live subsystem consultation
+            context = self._build_decision_context_with_tools(
                 features, market_data, dopamine_anticipation, 
                 learned_state, adaptation_decision
             )
@@ -214,6 +231,138 @@ class TradingDecisionEngine:
             subsystem_signals=subsystem_signals,
             subsystem_weights=subsystem_weights
         )
+    
+    def _build_decision_context_with_tools(self,
+                                         features: Features,
+                                         market_data: MarketData, 
+                                         dopamine_anticipation: Any,
+                                         learned_state: torch.Tensor,
+                                         adaptation_decision: Dict[str, Any]) -> DecisionContext:
+        """Build decision context by actively consulting AI subsystems as tools"""
+        
+        # If we have an intelligence engine, use subsystems as real-time tools
+        if self.intelligence_engine:
+            # Consult the 5 AI subsystems in real-time for this specific decision
+            tool_consultations = self._consult_ai_subsystem_tools(market_data, features)
+            
+            # Build subsystem signals from live tool consultation
+            subsystem_signals = torch.tensor([
+                tool_consultations['dna_recommendation'],
+                tool_consultations['temporal_recommendation'], 
+                tool_consultations['immune_recommendation'],
+                tool_consultations['microstructure_recommendation'],
+                tool_consultations['dopamine_recommendation'],
+                float(features.regime_adjusted_signal)  # Keep existing regime signal
+            ], dtype=torch.float64, device=self.device)
+            
+            # Weight subsystems based on their confidence in current market conditions
+            subsystem_weights = torch.tensor([
+                tool_consultations['dna_confidence'],
+                tool_consultations['temporal_confidence'],
+                tool_consultations['immune_confidence'], 
+                tool_consultations['microstructure_confidence'],
+                tool_consultations['dopamine_confidence'],
+                0.5  # Default regime weight
+            ], dtype=torch.float64, device=self.device)
+            
+        else:
+            # Fallback to original method if no intelligence engine available
+            return self._build_decision_context(features, market_data, dopamine_anticipation, learned_state, adaptation_decision)
+        
+        # Build meta context for learning and adaptation
+        meta_context = self._build_meta_context(features, adaptation_decision)
+        
+        return DecisionContext(
+            features=features,
+            market_data=market_data,
+            meta_context=meta_context,
+            dopamine_anticipation=dopamine_anticipation,
+            learned_state=learned_state,
+            subsystem_signals=subsystem_signals,
+            subsystem_weights=subsystem_weights
+        )
+    
+    def _consult_ai_subsystem_tools(self, market_data: MarketData, features: Features) -> Dict[str, float]:
+        """
+        Actively consult each AI subsystem as an intelligent tool for decision-making
+        
+        This is the core method that makes subsystems true tools rather than signal generators
+        """
+        try:
+            # Prepare market context for subsystem consultation
+            market_context = {
+                'prices': getattr(market_data, 'prices_1m', [market_data.close]),
+                'volumes': getattr(market_data, 'volumes_1m', [market_data.volume]),
+                'timestamps': getattr(market_data, 'timestamps', [market_data.timestamp]),
+                'current_price': market_data.close,
+                'current_volume': market_data.volume,
+                'volatility': features.volatility,
+                'price_momentum': features.price_momentum,
+                'volume_momentum': features.volume_momentum
+            }
+            
+            # Get comprehensive intelligence analysis
+            intelligence_signals = self.intelligence_engine.analyze_market(
+                historical_context={
+                    'prices': market_context['prices'],
+                    'volumes': market_context['volumes'], 
+                    'timestamps': market_context['timestamps']
+                },
+                market_features={
+                    'volatility': market_context['volatility'],
+                    'price_momentum': market_context['price_momentum'],
+                    'volume_momentum': market_context['volume_momentum']
+                }
+            )
+            
+            # Extract tool recommendations and confidence levels
+            consultations = {
+                # DNA Subsystem Tool: Pattern recognition and sequence analysis
+                'dna_recommendation': intelligence_signals['dna'].value,
+                'dna_confidence': intelligence_signals['dna'].confidence,
+                
+                # Temporal Subsystem Tool: Cycle detection and timing analysis  
+                'temporal_recommendation': intelligence_signals['temporal'].value,
+                'temporal_confidence': intelligence_signals['temporal'].confidence,
+                
+                # Immune Subsystem Tool: Risk assessment and threat detection
+                'immune_recommendation': intelligence_signals['immune'].value, 
+                'immune_confidence': intelligence_signals['immune'].confidence,
+                
+                # Microstructure Subsystem Tool: Market regime and liquidity analysis
+                'microstructure_recommendation': intelligence_signals['microstructure'].value,
+                'microstructure_confidence': intelligence_signals['microstructure'].confidence,
+                
+                # Dopamine Subsystem Tool: Reward optimization and trading psychology
+                'dopamine_recommendation': getattr(intelligence_signals.get('dopamine', None), 'value', features.dopamine_signal),
+                'dopamine_confidence': getattr(intelligence_signals.get('dopamine', None), 'confidence', 0.5)
+            }
+            
+            # Log tool consultation for transparency
+            logger.debug(f"AI Subsystem Tool Consultation: "
+                        f"DNA: {consultations['dna_recommendation']:.3f}({consultations['dna_confidence']:.2f}), "
+                        f"Temporal: {consultations['temporal_recommendation']:.3f}({consultations['temporal_confidence']:.2f}), "
+                        f"Immune: {consultations['immune_recommendation']:.3f}({consultations['immune_confidence']:.2f}), "
+                        f"Micro: {consultations['microstructure_recommendation']:.3f}({consultations['microstructure_confidence']:.2f}), "
+                        f"Dopamine: {consultations['dopamine_recommendation']:.3f}({consultations['dopamine_confidence']:.2f})")
+            
+            return consultations
+            
+        except Exception as e:
+            logger.error(f"Error consulting AI subsystem tools: {e}")
+            # Fallback to feature-based signals
+            return {
+                'dna_recommendation': float(features.dna_signal),
+                'dna_confidence': 0.5,
+                'temporal_recommendation': float(features.temporal_signal),
+                'temporal_confidence': 0.5,
+                'immune_recommendation': float(features.immune_signal),
+                'immune_confidence': 0.5,
+                'microstructure_recommendation': float(features.microstructure_signal),
+                'microstructure_confidence': 0.5,
+                'dopamine_recommendation': float(features.dopamine_signal),
+                'dopamine_confidence': 0.5
+            }
     
     def _process_confidence(self, 
                            context: DecisionContext,

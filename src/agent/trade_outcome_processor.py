@@ -202,21 +202,28 @@ class TradeOutcomeProcessor:
     """
     
     def __init__(self,
-                 meta_learner: MetaLearner,
-                 adaptation_engine: RealTimeAdaptationEngine,
-                 experience_manager: ExperienceManager,
-                 network_manager: NeuralNetworkManager,
-                 intelligence_engine: Any):  # Type hint as Any to avoid circular imports
+                 config: Dict[str, Any],
+                 reward_engine: Optional[Any] = None,
+                 meta_learner: Optional[MetaLearner] = None,
+                 adaptation_engine: Optional[RealTimeAdaptationEngine] = None,
+                 experience_manager: Optional[ExperienceManager] = None,
+                 network_manager: Optional[NeuralNetworkManager] = None,
+                 intelligence_engine: Optional[Any] = None):
         """
         Initialize the trade outcome processor
         
         Args:
-            meta_learner: Meta-learning component
-            adaptation_engine: Real-time adaptation engine
-            experience_manager: Experience storage and sampling
-            network_manager: Neural network management
-            intelligence_engine: Intelligence subsystems
+            config: Configuration dictionary
+            reward_engine: Reward calculation engine (optional)
+            meta_learner: Meta-learning component (optional)
+            adaptation_engine: Real-time adaptation engine (optional)
+            experience_manager: Experience storage and sampling (optional)
+            network_manager: Neural network management (optional)
+            intelligence_engine: Intelligence subsystems (optional)
         """
+        # Store injected components
+        self.config = config
+        self.reward_engine = reward_engine
         self.meta_learner = meta_learner
         self.adaptation_engine = adaptation_engine
         self.experience_manager = experience_manager

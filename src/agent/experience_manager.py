@@ -205,17 +205,30 @@ class ExperienceManager:
     """
     
     def __init__(self, 
-                 experience_maxsize: int = 20000,
+                 config_or_maxsize = None,
                  priority_maxsize: int = 5000,
                  previous_task_maxsize: int = 1000):
         """
         Initialize the experience manager
         
         Args:
-            experience_maxsize: Maximum size of regular experience buffer
+            config_or_maxsize: Either config dict or experience maxsize int for backward compatibility
             priority_maxsize: Maximum size of priority experience buffer  
             previous_task_maxsize: Maximum size of previous task buffer
         """
+        # Handle config or maxsize parameter
+        if isinstance(config_or_maxsize, dict):
+            # Config dict passed - extract buffer sizes
+            experience_maxsize = config_or_maxsize.get('experience_buffer_size', 20000)
+            priority_maxsize = config_or_maxsize.get('priority_buffer_size', priority_maxsize)
+            previous_task_maxsize = config_or_maxsize.get('previous_task_buffer_size', previous_task_maxsize)
+        elif config_or_maxsize is not None:
+            # Integer maxsize passed for backward compatibility
+            experience_maxsize = config_or_maxsize
+        else:
+            # Default values
+            experience_maxsize = 20000
+        
         # Initialize buffers
         self.experience_buffer = ExperienceBuffer(experience_maxsize, "experience")
         self.priority_buffer = ExperienceBuffer(priority_maxsize, "priority")
