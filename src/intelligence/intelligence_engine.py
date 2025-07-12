@@ -1885,6 +1885,7 @@ class IntelligenceEngine:
             temporal_signal_value = self._analyze_temporal_patterns_simple(current_timestamp)
             immune_signal_value = self._analyze_risk_patterns_simple(current_price, volatility)
             microstructure_signal_value = max(-1.0, min(1.0, volume_momentum * 0.5 + (1.0 - volatility) * 0.5))
+            dopamine_signal = self.dopamine_subsystem.get_simple_signal(market_features)
             
             # Get dopamine signal value
             dopamine_signal_value = dopamine_signal.signal if hasattr(dopamine_signal, 'signal') else dopamine_signal
