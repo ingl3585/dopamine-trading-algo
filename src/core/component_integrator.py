@@ -29,7 +29,7 @@ from src.core.trading_system_orchestrator import TradingSystemOrchestrator
 from src.core.market_data_processor import MarketDataProcessor
 from src.core.system_state_manager import SystemStateManager
 from src.core.analysis_trigger_manager import AnalysisTriggerManager, AnalysisType
-from src.core.personality_integration_manager import PersonalityIntegrationManager
+# from src.core.personality_integration_manager import PersonalityIntegrationManager  # Removed - file deleted
 from src.core.configuration_manager import ConfigurationManager
 
 # Portfolio Components
@@ -71,7 +71,7 @@ class ComponentRegistry:
     market_data_processor: Optional[MarketDataProcessor] = None
     system_state_manager: Optional[SystemStateManager] = None
     analysis_trigger_manager: Optional[AnalysisTriggerManager] = None
-    personality_integration_manager: Optional[PersonalityIntegrationManager] = None
+    # personality_integration_manager: Optional[PersonalityIntegrationManager] = None  # Removed - file deleted
     configuration_manager: Optional[ConfigurationManager] = None
     
     # Portfolio Components
@@ -171,8 +171,8 @@ class ComponentIntegrator:
             # Analysis Trigger Manager
             self.components.analysis_trigger_manager = AnalysisTriggerManager(self.config)
             
-            # Personality Integration Manager
-            self.components.personality_integration_manager = PersonalityIntegrationManager(self.config)
+            # Personality Integration Manager - Removed (file deleted)
+            # self.components.personality_integration_manager = PersonalityIntegrationManager(self.config)
             
             # Trading System Orchestrator (depends on other components)
             self.components.trading_system_orchestrator = TradingSystemOrchestrator(self.config)
@@ -342,8 +342,8 @@ class ComponentIntegrator:
             # Connect portfolio components
             self._connect_portfolio_system()
             
-            # Connect personality system
-            self._connect_personality_system()
+            # Connect personality system - Removed (file deleted)
+            # self._connect_personality_system()
             
             logger.info("Components connected successfully")
             return True
@@ -467,9 +467,10 @@ class ComponentIntegrator:
         """Trigger market analysis based on timeframe"""
         try:
             if timeframe == '15m':
-                # Generate personality commentary
-                if self.components.personality_integration_manager:
-                    self.components.personality_integration_manager.generate_15m_commentary(market_data)
+                # Generate personality commentary - Removed (file deleted)
+                # if self.components.personality_integration_manager:
+                #     self.components.personality_integration_manager.generate_15m_commentary(market_data)
+                logger.info("15m market analysis triggered")
             
             elif timeframe == '1h':
                 # Trigger enhanced regime analysis
@@ -549,8 +550,9 @@ class ComponentIntegrator:
             if self.components.system_state_manager:
                 self.components.system_state_manager.shutdown()
             
-            if self.components.personality_integration_manager:
-                self.components.personality_integration_manager.shutdown()
+            # Personality integration manager removed - file deleted
+            # if self.components.personality_integration_manager:
+            #     self.components.personality_integration_manager.shutdown()
             
             # Reset integration state
             self.integration_complete = False
