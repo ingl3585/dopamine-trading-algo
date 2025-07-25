@@ -11,33 +11,40 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class MarketData:
+    # Core market data (required)
     timestamp: float
     price: float
     volume: float
-    prices_1m: List[float]
-    prices_5m: List[float] 
-    prices_15m: List[float]
-    prices_1h: List[float]
-    prices_4h: List[float]
-    volumes_1m: List[float]
-    volumes_5m: List[float]
-    volumes_15m: List[float]
-    volumes_1h: List[float]
-    volumes_4h: List[float]
-    # Enhanced account data
-    account_balance: float
-    buying_power: float
-    daily_pnl: float
-    unrealized_pnl: float
-    net_liquidation: float
-    margin_used: float
-    available_margin: float
-    open_positions: int
-    total_position_size: int
-    # Computed ratios from TCP bridge
-    margin_utilization: float
-    buying_power_ratio: float
-    daily_pnl_pct: float
+    # Enhanced account data (required for live data, None for historical)
+    account_balance: Optional[float] = None
+    buying_power: Optional[float] = None
+    daily_pnl: Optional[float] = None
+    unrealized_pnl: Optional[float] = None
+    net_liquidation: Optional[float] = None
+    margin_used: Optional[float] = None
+    available_margin: Optional[float] = None
+    open_positions: Optional[int] = None
+    total_position_size: Optional[int] = None
+    # Computed ratios from TCP bridge (required for live data, None for historical)
+    margin_utilization: Optional[float] = None
+    buying_power_ratio: Optional[float] = None
+    daily_pnl_pct: Optional[float] = None
+    # OHLC data from NinjaTrader (optional)
+    open: Optional[float] = None
+    high: Optional[float] = None
+    low: Optional[float] = None
+    close: Optional[float] = None
+    # Historical price data (optional)
+    prices_1m: Optional[List[float]] = None
+    prices_5m: Optional[List[float]] = None
+    prices_15m: Optional[List[float]] = None
+    prices_1h: Optional[List[float]] = None
+    prices_4h: Optional[List[float]] = None
+    volumes_1m: Optional[List[float]] = None
+    volumes_5m: Optional[List[float]] = None
+    volumes_15m: Optional[List[float]] = None
+    volumes_1h: Optional[List[float]] = None
+    volumes_4h: Optional[List[float]] = None
 
 
 class DataProcessor:
@@ -111,20 +118,11 @@ class DataProcessor:
         self._build_higher_timeframes(raw_data)
         
         return MarketData(
+            # Core market data (required)
             timestamp=raw_data.get('timestamp', time.time()),
             price=self.prices_1m[-1],
             volume=self.volumes_1m[-1] if self.volumes_1m else 1000,
-            prices_1m=list(self.prices_1m),
-            prices_5m=list(self.prices_5m),
-            prices_15m=list(self.prices_15m),
-            prices_1h=list(self.prices_1h) if self.prices_1h else [],
-            prices_4h=list(self.prices_4h) if self.prices_4h else [],
-            volumes_1m=list(self.volumes_1m),
-            volumes_5m=list(self.volumes_5m),
-            volumes_15m=list(self.volumes_15m),
-            volumes_1h=list(self.volumes_1h) if self.volumes_1h else [],
-            volumes_4h=list(self.volumes_4h) if self.volumes_4h else [],
-            # Enhanced account data from NinjaTrader
+            # Enhanced account data (required)
             account_balance=raw_data.get('account_balance', 25000),
             buying_power=raw_data.get('buying_power', 25000),
             daily_pnl=raw_data.get('daily_pnl', 0),
@@ -134,10 +132,26 @@ class DataProcessor:
             available_margin=raw_data.get('available_margin', 25000),
             open_positions=raw_data.get('open_positions', 0),
             total_position_size=raw_data.get('total_position_size', 0.0),
-            # Computed ratios from TCP bridge
+            # Computed ratios (required)
             margin_utilization=raw_data.get('margin_utilization', 0.0),
             buying_power_ratio=raw_data.get('buying_power_ratio', 1.0),
-            daily_pnl_pct=raw_data.get('daily_pnl_pct', 0.0)
+            daily_pnl_pct=raw_data.get('daily_pnl_pct', 0.0),
+            # OHLC data from NinjaTrader (optional)
+            open=raw_data.get('open'),
+            high=raw_data.get('high'),
+            low=raw_data.get('low'),
+            close=raw_data.get('close'),
+            # Historical price data (optional)
+            prices_1m=list(self.prices_1m) if self.prices_1m else None,
+            prices_5m=list(self.prices_5m) if self.prices_5m else None,
+            prices_15m=list(self.prices_15m) if self.prices_15m else None,
+            prices_1h=list(self.prices_1h) if self.prices_1h else None,
+            prices_4h=list(self.prices_4h) if self.prices_4h else None,
+            volumes_1m=list(self.volumes_1m) if self.volumes_1m else None,
+            volumes_5m=list(self.volumes_5m) if self.volumes_5m else None,
+            volumes_15m=list(self.volumes_15m) if self.volumes_15m else None,
+            volumes_1h=list(self.volumes_1h) if self.volumes_1h else None,
+            volumes_4h=list(self.volumes_4h) if self.volumes_4h else None
         )
     
     def check_and_reset_15m_bar_flag(self) -> bool:

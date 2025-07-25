@@ -873,82 +873,140 @@ class IntelligenceEngine:
         
         return directional_consensus * 0.7 + magnitude_consensus * 0.3
     
-    def learn_from_outcome(self, trade):
+    def learn_from_outcome(self, outcome, learning_context=None):
         """Enhanced learning with all four subsystems"""
-        outcome = trade.pnl / abs(trade.entry_price * 0.01) if trade.entry_price != 0 else 0
-        
         try:
-            # Enhanced learning context with all subsystems
-            learning_context = {
-                'dna_sequence': '',
-                'cycles_info': [],
-                'market_state': {},
-                'microstructure_signal': 0.0
-            }
-            
-            # Extract intelligence data if available
-            if hasattr(trade, 'intelligence_data') and trade.intelligence_data:
-                intelligence_data = trade.intelligence_data
-                
-                # DNA sequence
-                if 'subsystem_outputs' in intelligence_data:
-                    subsystem_outputs = intelligence_data['subsystem_outputs']
-                    if isinstance(subsystem_outputs, dict):
-                        learning_context['microstructure_signal'] = subsystem_outputs.get('microstructure', 0.0)
-                
-                # Market state for immune system
-                if 'regime_context' in intelligence_data:
-                    learning_context['market_state'] = intelligence_data['regime_context']
-                
-                # Temporal cycles
-                if 'temporal_cycles' in intelligence_data:
-                    learning_context['cycles_info'] = intelligence_data['temporal_cycles']
-            
-            # Fallback market state from trade features
-            if not learning_context['market_state'] and hasattr(trade, 'features'):
-                learning_context['market_state'] = {
-                    'volatility': getattr(trade.features, 'volatility', 0.02),
-                    'price_momentum': getattr(trade.features, 'price_momentum', 0.0),
-                    'volume_momentum': getattr(trade.features, 'volume_momentum', 0.0),
-                    'regime_confidence': getattr(trade.features, 'regime_confidence', 0.5)
+            # Use provided context or create default with consistent structure
+            if learning_context is None:
+                learning_context = {
+                    'dna_sequence': 'DEFAULT_DNA_SEQUENCE',
+                    'cycles_info': [{
+                        'frequency': 1.0/60.0,
+                        'amplitude': 0.1,
+                        'phase': 0.0,
+                        'period': 60,
+                        'window_size': 64
+                    }],
+                    'market_state': {
+                        'volatility': 0.02,
+                        'price_momentum': 0.0,
+                        'volume_momentum': 0.0,
+                        'regime': 'ranging',
+                        'regime_confidence': 0.5
+                    },
+                    'microstructure_signal': 0.0,
+                    'is_bootstrap': False
                 }
             
+            # Extract intelligence data from learning context if available
+            dna_sequence = learning_context.get('dna_sequence', '')
+            cycles_info = learning_context.get('cycles_info', [])
+            market_state = learning_context.get('market_state', {})
+            microstructure_signal = learning_context.get('microstructure_signal', 0.0)
+            is_bootstrap = learning_context.get('is_bootstrap', False)
+            
+            # Ensure consistent market state structure
+            if not market_state:
+                market_state = {
+                    'volatility': 0.02,
+                    'price_momentum': 0.0,
+                    'volume_momentum': 0.0,
+                    'regime': 'ranging',
+                    'regime_confidence': 0.5,
+                    'time_of_day': 0.5,
+                    'market_session': 'regular'
+                }
+            else:
+                # Ensure all required keys exist
+                required_keys = {
+                    'volatility': 0.02,
+                    'price_momentum': 0.0,
+                    'volume_momentum': 0.0,
+                    'regime': 'ranging',
+                    'regime_confidence': 0.5,
+                    'time_of_day': 0.5,
+                    'market_session': 'regular'
+                }
+                for key, default_value in required_keys.items():
+                    if key not in market_state:
+                        market_state[key] = default_value
+            
             # Learn in all subsystems
-            self.orchestrator.learn_from_outcome(outcome, learning_context)
+            try:
+                self.orchestrator.learn_from_outcome(outcome, learning_context)
+            except Exception as e:
+                logger.warning(f"Error in orchestrator learning: {e}")
             
             # Learn in microstructure engine
-            self.microstructure_engine.learn_from_outcome(outcome)
+            try:
+                if hasattr(self.microstructure_engine, 'learn_from_outcome'):
+                    self.microstructure_engine.learn_from_outcome(outcome)
+            except Exception as e:
+                logger.warning(f"Error in microstructure learning: {e}")
             
-            # Learn in enhanced dopamine subsystem
-            self.dopamine_subsystem.learn_from_outcome(outcome, {'trade_data': trade})
+            # Learn in enhanced dopamine subsystem with consistent context
+            try:
+                dopamine_context = {
+                    'outcome': outcome,
+                    'market_state': market_state,
+                    'is_bootstrap': is_bootstrap,
+                    'trade_data': None,  # Will be populated if available
+                    'prediction_error': abs(outcome) if outcome != 0 else 0.1,
+                    'confidence': learning_context.get('confidence', 0.5)
+                }
+                self.dopamine_subsystem.learn_from_outcome(outcome, dopamine_context)
+            except Exception as e:
+                logger.warning(f"Error in dopamine learning: {e}")
             
             # Update adaptation engine
-            adaptation_context = {
-                'volatility': learning_context['market_state'].get('volatility', 0.02),
-                'predicted_confidence': getattr(trade, 'confidence', 0.5)
-            }
-            self._get_adaptation_engine().update_from_outcome(outcome, adaptation_context)
-            
-            # Process adaptation event
-            urgency = min(1.0, abs(outcome) * 2.0)
-            self._get_adaptation_engine().process_market_event(
-                'trade_outcome',
-                {'pnl': outcome, 'trade_data': trade},
+            try:
+                adaptation_context = {
+                    'volatility': market_state.get('volatility', 0.02),
+                    'predicted_confidence': 0.5  # Default confidence
+                }
+                self._get_adaptation_engine().update_from_outcome(outcome, adaptation_context)
+                
+                # Process adaptation event
+                urgency = min(1.0, abs(outcome) * 2.0)
+                self._get_adaptation_engine().process_market_event(
+                    'trade_outcome',
+                    {'pnl': outcome, 'learning_context': learning_context},
                 urgency=urgency
-            )
+            ) 
+            except Exception as e:
+                logger.warning(f"Error in adaptation engine learning: {e}")
             
             # Pattern learning
-            if hasattr(trade, 'features'):
-                pattern_id = self._create_pattern_id(trade.features)
+            try:
+                pattern_id = self._create_pattern_id_from_context(learning_context, market_state)
                 self.patterns[pattern_id].append(outcome)
                 
                 if len(self.patterns[pattern_id]) > 20:
                     self.patterns[pattern_id] = self.patterns[pattern_id][-20:]
+            except Exception as e:
+                logger.warning(f"Error in pattern learning: {e}")
             
             self.recent_outcomes.append(outcome)
             
         except Exception as e:
             logger.error(f"Error in enhanced learning from outcome: {e}")
+    
+    def _create_pattern_id_from_context(self, learning_context: Dict, market_state: Dict) -> str:
+        """Create pattern ID from learning context and market state"""
+        try:
+            volatility = market_state.get('volatility', 0.02)
+            price_momentum = market_state.get('price_momentum', 0.0)
+            microstructure_signal = learning_context.get('microstructure_signal', 0.0)
+            
+            # Create simple pattern ID
+            vol_bucket = int(volatility * 100) // 5  # Group volatility into buckets
+            momentum_bucket = int(price_momentum * 100) // 10  # Group momentum into buckets
+            micro_bucket = int(microstructure_signal * 100) // 10  # Group microstructure into buckets
+            
+            return f"pattern_v{vol_bucket}_m{momentum_bucket}_s{micro_bucket}"
+        except Exception as e:
+            logger.warning(f"Error creating pattern ID: {e}")
+            return "pattern_default"
     
     def _create_feature_tensor(self, market_features: Dict, orchestrator_result: Dict,
                              microstructure_result: Dict):
@@ -1622,65 +1680,115 @@ class IntelligenceEngine:
                 'volatility_4h': 0.02
             }
             
-            # 1M Timeframe Analysis
-            if hasattr(data, 'prices_1m') and len(data.prices_1m) >= 20:
-                prices_1m = np.array(data.prices_1m[-20:])
+            # 1M Timeframe Analysis - REDUCED requirement from 20 to 10
+            if hasattr(data, 'prices_1m') and len(data.prices_1m) >= 10:
+                prices_1m = np.array(data.prices_1m[-min(20, len(data.prices_1m)):])
                 
-                # 1M trend strength
-                m1_short_ma = np.mean(prices_1m[-5:])
+                # 1M trend strength (percentage change)
+                m1_short_ma = np.mean(prices_1m[-min(5, len(prices_1m)):])
                 m1_long_ma = np.mean(prices_1m)
                 analysis['trend_1m'] = (m1_short_ma - m1_long_ma) / m1_long_ma if m1_long_ma > 0 else 0.0
                 
                 # 1M volatility
                 analysis['volatility_1m'] = np.std(prices_1m) / np.mean(prices_1m) if np.mean(prices_1m) > 0 else 0.02
+                
+                logger.debug(f"1M trend calculated: {analysis['trend_1m']:.4f} from {len(prices_1m)} bars")
+            elif hasattr(data, 'prices_1m') and len(data.prices_1m) >= 3:
+                # Fallback with minimal data
+                prices_1m = np.array(data.prices_1m[-3:])
+                analysis['trend_1m'] = (prices_1m[-1] - prices_1m[0]) / prices_1m[0] if prices_1m[0] > 0 else 0.0
+                logger.debug(f"1M trend (fallback): {analysis['trend_1m']:.4f} from {len(prices_1m)} bars")
             
-            # 5M Timeframe Analysis
-            if hasattr(data, 'prices_5m') and len(data.prices_5m) >= 15:
-                prices_5m = np.array(data.prices_5m[-15:])
+            # 5M Timeframe Analysis - REDUCED requirement from 15 to 5
+            if hasattr(data, 'prices_5m') and len(data.prices_5m) >= 5:
+                prices_5m = np.array(data.prices_5m[-min(15, len(data.prices_5m)):])
                 
                 # 5M trend strength
-                m5_short_ma = np.mean(prices_5m[-3:])
+                m5_short_ma = np.mean(prices_5m[-min(3, len(prices_5m)):])
                 m5_long_ma = np.mean(prices_5m)
                 analysis['trend_5m'] = (m5_short_ma - m5_long_ma) / m5_long_ma if m5_long_ma > 0 else 0.0
                 
                 # 5M volatility
                 analysis['volatility_5m'] = np.std(prices_5m) / np.mean(prices_5m) if np.mean(prices_5m) > 0 else 0.02
+                
+                logger.debug(f"5M trend calculated: {analysis['trend_5m']:.4f} from {len(prices_5m)} bars")
+            elif hasattr(data, 'prices_5m') and len(data.prices_5m) >= 2:
+                # Fallback with minimal data
+                prices_5m = np.array(data.prices_5m[-2:])
+                analysis['trend_5m'] = (prices_5m[-1] - prices_5m[0]) / prices_5m[0] if prices_5m[0] > 0 else 0.0
+                logger.debug(f"5M trend (fallback): {analysis['trend_5m']:.4f} from {len(prices_5m)} bars")
             
-            # 15M Timeframe Analysis
-            if hasattr(data, 'prices_15m') and len(data.prices_15m) >= 12:
-                prices_15m = np.array(data.prices_15m[-12:])
+            # 15M Timeframe Analysis - REDUCED requirement from 12 to 4
+            if hasattr(data, 'prices_15m') and len(data.prices_15m) >= 4:
+                prices_15m = np.array(data.prices_15m[-min(12, len(data.prices_15m)):])
                 
                 # 15M trend strength
-                m15_short_ma = np.mean(prices_15m[-3:])
+                m15_short_ma = np.mean(prices_15m[-min(3, len(prices_15m)):])
                 m15_long_ma = np.mean(prices_15m)
                 analysis['trend_15m'] = (m15_short_ma - m15_long_ma) / m15_long_ma if m15_long_ma > 0 else 0.0
                 
                 # 15M volatility
                 analysis['volatility_15m'] = np.std(prices_15m) / np.mean(prices_15m) if np.mean(prices_15m) > 0 else 0.02
+                
+                logger.debug(f"15M trend calculated: {analysis['trend_15m']:.4f} from {len(prices_15m)} bars")
+            elif hasattr(data, 'prices_15m') and len(data.prices_15m) >= 2:
+                # Fallback with minimal data
+                prices_15m = np.array(data.prices_15m[-2:])
+                analysis['trend_15m'] = (prices_15m[-1] - prices_15m[0]) / prices_15m[0] if prices_15m[0] > 0 else 0.0
+                logger.debug(f"15M trend (fallback): {analysis['trend_15m']:.4f} from {len(prices_15m)} bars")
             
-            # 1H Timeframe Analysis (safe fallback if no data from NinjaTrader)
-            if hasattr(data, 'prices_1h') and len(data.prices_1h) >= 10:
-                prices_1h = np.array(data.prices_1h[-10:])
+            # 1H Timeframe Analysis - REDUCED requirement from 10 to 3
+            if hasattr(data, 'prices_1h') and len(data.prices_1h) >= 3:
+                prices_1h = np.array(data.prices_1h[-min(10, len(data.prices_1h)):])
                 
                 # 1H trend strength
-                h1_short_ma = np.mean(prices_1h[-3:])
+                h1_short_ma = np.mean(prices_1h[-min(3, len(prices_1h)):])
                 h1_long_ma = np.mean(prices_1h)
                 analysis['trend_1h'] = (h1_short_ma - h1_long_ma) / h1_long_ma if h1_long_ma > 0 else 0.0
                 
                 # 1H volatility
                 analysis['volatility_1h'] = np.std(prices_1h) / np.mean(prices_1h) if np.mean(prices_1h) > 0 else 0.02
+                
+                logger.debug(f"1H trend calculated: {analysis['trend_1h']:.4f} from {len(prices_1h)} bars")
+            elif hasattr(data, 'prices_1h') and len(data.prices_1h) >= 2:
+                # Fallback with minimal data
+                prices_1h = np.array(data.prices_1h[-2:])
+                analysis['trend_1h'] = (prices_1h[-1] - prices_1h[0]) / prices_1h[0] if prices_1h[0] > 0 else 0.0
+                logger.debug(f"1H trend (fallback): {analysis['trend_1h']:.4f} from {len(prices_1h)} bars")
+            else:
+                # Use 15M data to estimate 1H trend if no 1H data available
+                if hasattr(data, 'prices_15m') and len(data.prices_15m) >= 4:
+                    prices_15m = np.array(data.prices_15m[-4:])
+                    analysis['trend_1h'] = (np.mean(prices_15m[-2:]) - np.mean(prices_15m[:2])) / np.mean(prices_15m[:2]) if np.mean(prices_15m[:2]) > 0 else 0.0
+                    logger.debug(f"1H trend (15M estimate): {analysis['trend_1h']:.4f}")
             
-            # 4H Timeframe Analysis (safe fallback if no data from NinjaTrader)
-            if hasattr(data, 'prices_4h') and len(data.prices_4h) >= 6:
-                prices_4h = np.array(data.prices_4h[-6:])
+            # 4H Timeframe Analysis - REDUCED requirement from 6 to 2
+            if hasattr(data, 'prices_4h') and len(data.prices_4h) >= 2:
+                prices_4h = np.array(data.prices_4h[-min(6, len(data.prices_4h)):])
                 
                 # 4H trend strength
-                h4_short_ma = np.mean(prices_4h[-2:])
+                h4_short_ma = np.mean(prices_4h[-min(2, len(prices_4h)):])
                 h4_long_ma = np.mean(prices_4h)
                 analysis['trend_4h'] = (h4_short_ma - h4_long_ma) / h4_long_ma if h4_long_ma > 0 else 0.0
                 
                 # 4H volatility
                 analysis['volatility_4h'] = np.std(prices_4h) / np.mean(prices_4h) if np.mean(prices_4h) > 0 else 0.02
+                
+                logger.debug(f"4H trend calculated: {analysis['trend_4h']:.4f} from {len(prices_4h)} bars")
+            elif hasattr(data, 'prices_4h') and len(data.prices_4h) >= 1:
+                # Single bar - no trend calculation possible, keep default
+                logger.debug(f"4H trend: insufficient data ({len(data.prices_4h)} bars)")
+            else:
+                # Use 1H data to estimate 4H trend if no 4H data available
+                if hasattr(data, 'prices_1h') and len(data.prices_1h) >= 4:
+                    prices_1h = np.array(data.prices_1h[-4:])
+                    analysis['trend_4h'] = (np.mean(prices_1h[-2:]) - np.mean(prices_1h[:2])) / np.mean(prices_1h[:2]) if np.mean(prices_1h[:2]) > 0 else 0.0
+                    logger.debug(f"4H trend (1H estimate): {analysis['trend_4h']:.4f}")
+                elif hasattr(data, 'prices_15m') and len(data.prices_15m) >= 8:
+                    # Use 15M data to estimate 4H trend (rough approximation)
+                    prices_15m = np.array(data.prices_15m[-8:])
+                    analysis['trend_4h'] = (np.mean(prices_15m[-4:]) - np.mean(prices_15m[:4])) / np.mean(prices_15m[:4]) if np.mean(prices_15m[:4]) > 0 else 0.0
+                    logger.debug(f"4H trend (15M estimate): {analysis['trend_4h']:.4f}")
             
             # Multi-Timeframe Alignment
             # Calculate how well all 5 timeframes agree on direction
@@ -1692,8 +1800,8 @@ class IntelligenceEngine:
             
             # All timeframes for comprehensive alignment
             trends = [trend_1m, trend_5m, trend_15m, trend_1h, trend_4h]
-            positive_trends = sum(1 for t in trends if t > 0.001)
-            negative_trends = sum(1 for t in trends if t < -0.001)
+            positive_trends = sum(1 for t in trends if t > 0.0005)  # 0.05% threshold
+            negative_trends = sum(1 for t in trends if t < -0.0005)  # -0.05% threshold
             
             # Enhanced alignment scoring with all 5 timeframes
             if positive_trends >= 4 and negative_trends == 0:
@@ -1741,3 +1849,451 @@ class IntelligenceEngine:
                 'volatility_1h': 0.02,
                 'volatility_4h': 0.02
             }
+    
+    def analyze_market(self, historical_context, market_features):
+        """
+        Analyze market data and return comprehensive intelligence signals
+        
+        Args:
+            market_data: Current market data
+            features: Extracted market features
+            
+        Returns:
+            Dictionary containing intelligence analysis results
+        """
+        try:
+            # Extract price data from historical context
+            prices = historical_context.get('prices', [])
+            volumes = historical_context.get('volumes', [])
+            timestamps = historical_context.get('timestamps', [])
+            
+            current_price = prices[-1] if prices else 0.0
+            current_volume = volumes[-1] if volumes else 0.0
+            current_timestamp = timestamps[-1] if timestamps else 0.0
+            prices_1m = prices or [current_price]
+            
+            # Basic market analysis
+            price_momentum = market_features.get('price_momentum', 0.0)
+            volatility = market_features.get('volatility', 0.02)
+            volume_momentum = market_features.get('volume_momentum', 0.0)
+            
+            # Multi-timeframe analysis
+            multi_tf_analysis = self._analyze_multi_timeframe_simple(prices, price_momentum)
+            
+            # Calculate individual subsystem signals (simplified for reliability)
+            dna_signal_value = self._analyze_price_patterns(prices_1m)
+            temporal_signal_value = self._analyze_temporal_patterns_simple(current_timestamp)
+            immune_signal_value = self._analyze_risk_patterns_simple(current_price, volatility)
+            microstructure_signal_value = max(-1.0, min(1.0, volume_momentum * 0.5 + (1.0 - volatility) * 0.5))
+            dopamine_signal = self.dopamine_subsystem.get_simple_signal(market_features)
+            
+            # Get dopamine signal value
+            dopamine_signal_value = dopamine_signal.signal if hasattr(dopamine_signal, 'signal') else dopamine_signal
+            
+            # Calculate overall signal as weighted combination of all 5 subsystem signals
+            overall_signal_value = (
+                dna_signal_value * 0.2 +            # DNA pattern recognition
+                temporal_signal_value * 0.2 +       # Temporal cycles  
+                immune_signal_value * 0.2 +         # Risk assessment
+                microstructure_signal_value * 0.2 + # Market microstructure
+                dopamine_signal_value * 0.2         # Dopamine reward optimization
+            )
+            
+            # Calculate individual confidence levels with dynamic range
+            base_confidence = max(0.2, min(0.9, 1.0 - volatility * 4.0))
+            
+            # Each subsystem contributes to confidence based on signal strength and market conditions
+            dna_confidence = max(0.15, min(0.95, base_confidence + abs(dna_signal_value) * 0.4))
+            temporal_confidence = max(0.2, min(0.9, base_confidence + abs(temporal_signal_value) * 0.35))
+            immune_confidence = max(0.25, min(0.85, base_confidence + (1.0 - abs(immune_signal_value)) * 0.3))
+            microstructure_confidence = max(0.3, min(0.9, base_confidence + abs(microstructure_signal_value) * 0.25))
+            dopamine_confidence = max(0.1, min(0.95, base_confidence + abs(dopamine_signal_value) * 0.45))
+            
+            # Calculate consensus strength between all 5 subsystem signals
+            signal_values = [dna_signal_value, temporal_signal_value, immune_signal_value, microstructure_signal_value, dopamine_signal_value]
+            consensus_strength = self._calculate_consensus_strength(signal_values)
+            
+            # Overall confidence as average of all 5 subsystems
+            overall_confidence = (dna_confidence + temporal_confidence + immune_confidence + microstructure_confidence + dopamine_confidence) / 5.0
+            
+            # Create signal objects with value and confidence (expected format)
+            class SignalObject:
+                def __init__(self, value, confidence=0.5):
+                    self.value = value
+                    self.confidence = confidence
+            
+            # Generate comprehensive signals in expected format
+            intelligence_signals = {
+                # Core signals with expected .value and .confidence attributes
+                'overall': SignalObject(overall_signal_value, overall_confidence),
+                'dna': SignalObject(dna_signal_value, dna_confidence),
+                'temporal': SignalObject(temporal_signal_value, temporal_confidence),
+                'immune': SignalObject(immune_signal_value, immune_confidence),
+                'microstructure': SignalObject(microstructure_signal_value, microstructure_confidence),
+                'dopamine': SignalObject(dopamine_signal_value, dopamine_confidence),
+                
+                # Critical: Add consensus_strength to fix 0.000 issue
+                'consensus_strength': consensus_strength,
+                
+                # Backward compatibility - also include flat values
+                'overall_signal': overall_signal_value,
+                'confidence': overall_confidence,
+                'regime_confidence': multi_tf_analysis.get('trend_alignment', 0.5),
+                'dna_signal': dna_signal_value,
+                'temporal_signal': temporal_signal_value,
+                'immune_signal': immune_signal_value,
+                'microstructure_signal': microstructure_signal_value,
+                'dopamine_signal': dopamine_signal_value,
+                'regime_adjusted_signal': self._adjust_signal_for_regime(price_momentum, volatility),
+                'adaptation_quality': 0.8,
+                'pattern_score': abs(price_momentum) * 0.5 + (1.0 - volatility) * 0.5,
+                'smart_money_flow': volume_momentum,
+                'liquidity_depth': min(1.0, current_volume / 10000.0) if current_volume > 0 else 0.5,
+                'multi_timeframe_analysis': multi_tf_analysis
+            }
+            
+            return intelligence_signals
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in market analysis: {e}")
+            
+            # Return safe default signals with proper SignalObject format
+            class SignalObject:
+                def __init__(self, value, confidence=0.5):
+                    self.value = value
+                    self.confidence = confidence
+            
+            return {
+                # Core signals with expected .value and .confidence attributes
+                'overall': SignalObject(0.0, 0.5),
+                'dna': SignalObject(0.0, 0.5),
+                'temporal': SignalObject(0.0, 0.5),
+                'immune': SignalObject(0.0, 0.5),
+                'microstructure': SignalObject(0.0, 0.5),
+                'dopamine': SignalObject(0.0, 0.5),
+                
+                # Critical: Add consensus_strength for error case
+                'consensus_strength': 0.5,
+                
+                # Backward compatibility - also include flat values
+                'overall_signal': 0.0,
+                'confidence': 0.5,
+                'regime_confidence': 0.5,
+                'dna_signal': 0.0,
+                'temporal_signal': 0.0,
+                'immune_signal': 0.0,
+                'microstructure_signal': 0.0,
+                'dopamine_signal': 0.0,
+                'regime_adjusted_signal': 0.0,
+                'adaptation_quality': 0.5,
+                'pattern_score': 0.0,
+                'smart_money_flow': 0.0,
+                'liquidity_depth': 0.5,
+                'multi_timeframe_analysis': {'trend_alignment': 0.0}
+            }
+    
+    def _calculate_consensus_strength(self, signal_values):
+        """Calculate consensus strength between subsystem signals"""
+        try:
+            if len(signal_values) < 2:
+                return 1.0
+            
+            import numpy as np
+            
+            # Remove any invalid values
+            valid_signals = [s for s in signal_values if not (np.isnan(s) or np.isinf(s))]
+            
+            if len(valid_signals) < 2:
+                return 0.5
+            
+            # Calculate standard deviation and range
+            signal_std = np.std(valid_signals)
+            signal_range = max(valid_signals) - min(valid_signals) if len(valid_signals) > 1 else 1.0
+            
+            # Consensus is higher when signals are closer together
+            if signal_range > 0:
+                # Normalize standard deviation by range
+                consensus = 1.0 - min(signal_std / (signal_range + 0.01), 1.0)
+            else:
+                consensus = 1.0  # Perfect consensus when all signals identical
+            
+            # Additional consensus check: count signals in same direction
+            positive_signals = sum(1 for s in valid_signals if s > 0.05)
+            negative_signals = sum(1 for s in valid_signals if s < -0.05)
+            neutral_signals = len(valid_signals) - positive_signals - negative_signals
+            
+            # Directional consensus bonus
+            max_direction = max(positive_signals, negative_signals, neutral_signals)
+            directional_consensus = max_direction / len(valid_signals)
+            
+            # Combine statistical and directional consensus
+            final_consensus = (consensus * 0.6) + (directional_consensus * 0.4)
+            
+            return float(np.clip(final_consensus, 0.0, 1.0))
+            
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error calculating consensus strength: {e}")
+            return 0.5
+    
+    def _analyze_multi_timeframe_simple(self, prices, price_momentum):
+        """Simple multi-timeframe analysis using price history"""
+        try:
+            if len(prices) < 10:
+                return {'trend_alignment': 0.0}
+            
+            # Calculate trend alignment from price momentum
+            trend_alignment = max(-1.0, min(1.0, price_momentum * 2.0))
+            return {'trend_alignment': trend_alignment}
+        except Exception as e:
+            logger.warning(f"Error in multi-timeframe analysis: {e}")
+            return {'trend_alignment': 0.0}
+    
+    def _analyze_temporal_patterns_simple(self, timestamp):
+        """Simple temporal pattern analysis using timestamp"""
+        try:
+            import time
+            
+            # Validate timestamp range (Unix timestamp should be positive and reasonable)
+            if timestamp <= 0 or timestamp > 2147483647:  # Max 32-bit Unix timestamp
+                timestamp = time.time()
+            
+            # Convert timestamp to datetime safely
+            try:
+                current_hour = time.localtime(timestamp).tm_hour
+            except (OSError, ValueError) as e:
+                logger.warning(f"Invalid timestamp {timestamp}, using current time: {e}")
+                current_hour = time.localtime(time.time()).tm_hour
+            
+            # Market hours bias (9 AM - 4 PM typically active)
+            if 9 <= current_hour <= 16:
+                return 0.1  # Slight positive bias during market hours
+            else:
+                return -0.05  # Slight negative bias outside market hours
+        except Exception as e:
+            logger.warning(f"Error in temporal pattern analysis: {e}")
+            return 0.0
+    
+    def _analyze_risk_patterns_simple(self, current_price, volatility):
+        """Simple risk pattern analysis"""
+        try:
+            # Higher volatility = higher risk = negative signal
+            risk_signal = max(-1.0, min(1.0, -volatility * 5.0))
+            return risk_signal
+        except Exception as e:
+            logger.warning(f"Error in risk pattern analysis: {e}")
+            return 0.0
+    
+    def _analyze_price_patterns_enhanced(self, prices):
+        """Enhanced DNA-style price pattern analysis"""
+        if len(prices) < 5:
+            return 0.0
+        
+        try:
+            import numpy as np
+            
+            # Convert to numpy array for analysis
+            price_array = np.array(prices)
+            
+            # Multiple pattern detection
+            signals = []
+            
+            # 1. Short-term momentum (last 3 bars)
+            if len(prices) >= 3:
+                short_momentum = (prices[-1] - prices[-3]) / prices[-3] if prices[-3] != 0 else 0.0
+                signals.append(short_momentum * 15)  # Amplify small changes
+            
+            # 2. Medium-term trend (last 5-10 bars)
+            if len(prices) >= 5:
+                recent_prices = price_array[-5:]
+                trend_slope = np.polyfit(range(len(recent_prices)), recent_prices, 1)[0]
+                trend_signal = trend_slope / np.mean(recent_prices) * 1000  # Normalize by price level
+                signals.append(trend_signal)
+            
+            # 3. Volatility-adjusted momentum
+            if len(prices) >= 5:
+                returns = np.diff(price_array[-5:]) / price_array[-5:-1]
+                if len(returns) > 0:
+                    volatility = np.std(returns)
+                    momentum = np.mean(returns)
+                    vol_adj_momentum = momentum / (volatility + 0.0001) * 0.1  # Risk-adjusted momentum
+                    signals.append(vol_adj_momentum)
+            
+            # Combine signals
+            if signals:
+                combined_signal = np.mean(signals)
+                return float(np.clip(combined_signal, -1.0, 1.0))
+            else:
+                return 0.0
+                
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in enhanced price pattern analysis: {e}")
+            return 0.0
+    
+    def _analyze_temporal_patterns_enhanced(self, timestamp, prices):
+        """Enhanced temporal pattern analysis"""
+        try:
+            import time
+            import numpy as np
+            
+            signals = []
+            
+            # 1. Market hours effect (existing logic but refined)
+            try:
+                current_hour = time.localtime(timestamp).tm_hour if timestamp > 0 else time.localtime().tm_hour
+            except (OSError, ValueError):
+                current_hour = time.localtime().tm_hour
+            
+            # More nuanced market hours signal
+            if 9 <= current_hour <= 16:
+                # Peak hours: 10-11 AM and 2-3 PM
+                if current_hour in [10, 11, 14, 15]:
+                    hour_signal = 0.15
+                else:
+                    hour_signal = 0.05
+            elif 4 <= current_hour <= 9:  # Pre-market
+                hour_signal = -0.02
+            elif 16 <= current_hour <= 20:  # After hours
+                hour_signal = -0.05
+            else:  # Overnight
+                hour_signal = -0.10
+            
+            signals.append(hour_signal)
+            
+            # 2. Price cycle analysis (if enough data)
+            if len(prices) >= 10:
+                recent_prices = np.array(prices[-10:])
+                # Simple cycle detection using autocorrelation
+                returns = np.diff(recent_prices) / recent_prices[:-1]
+                if len(returns) >= 3:
+                    # Check for oscillating pattern
+                    oscillation = 0.0
+                    for i in range(1, len(returns)):
+                        if returns[i] * returns[i-1] < 0:  # Sign change
+                            oscillation += abs(returns[i])
+                    
+                    cycle_signal = min(0.2, oscillation * 2)  # Oscillation strength
+                    signals.append(cycle_signal)
+            
+            # Combine temporal signals
+            return float(np.clip(np.mean(signals), -0.5, 0.5))
+            
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in enhanced temporal analysis: {e}")
+            return 0.0
+    
+    def _analyze_risk_patterns_enhanced(self, current_price, volatility, volume_momentum):
+        """Enhanced immune system risk analysis"""
+        try:
+            import numpy as np
+            
+            signals = []
+            
+            # 1. Volatility risk signal (refined)
+            vol_risk = -volatility * 8.0  # Stronger volatility penalty
+            signals.append(vol_risk)
+            
+            # 2. Volume divergence risk
+            if abs(volume_momentum) > 0.1:
+                # High volume activity can signal risk
+                volume_risk = -abs(volume_momentum) * 0.5
+                signals.append(volume_risk)
+            
+            # 3. Price level risk (extreme prices)
+            if current_price > 0:
+                # Simple risk assessment based on recent price action
+                price_risk = 0.0
+                if current_price > 25000:  # High Bitcoin price territory
+                    price_risk = -0.05
+                elif current_price < 20000:  # Low Bitcoin price territory  
+                    price_risk = -0.03
+                signals.append(price_risk)
+            
+            # Combine risk signals
+            combined_risk = np.mean(signals) if signals else 0.0
+            return float(np.clip(combined_risk, -1.0, 0.2))  # Mostly negative (risk), small positive allowed
+            
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in enhanced risk analysis: {e}")
+            return 0.0
+    
+    def _analyze_microstructure_enhanced(self, volume_momentum, volatility, prices):
+        """Enhanced microstructure analysis"""
+        try:
+            import numpy as np
+            
+            signals = []
+            
+            # 1. Volume-price relationship
+            vol_signal = volume_momentum * 0.6  # Volume momentum base
+            signals.append(vol_signal)
+            
+            # 2. Volatility regime signal
+            if volatility < 0.01:  # Low volatility - potential breakout setup
+                regime_signal = 0.1
+            elif volatility > 0.05:  # High volatility - unstable
+                regime_signal = -0.2
+            else:  # Normal volatility
+                regime_signal = 0.05
+            signals.append(regime_signal)
+            
+            # 3. Price action quality
+            if len(prices) >= 5:
+                recent_prices = np.array(prices[-5:])
+                price_changes = np.diff(recent_prices)
+                
+                # Smooth price action is positive
+                price_smoothness = 1.0 - (np.std(price_changes) / (np.mean(np.abs(price_changes)) + 0.01))
+                smoothness_signal = price_smoothness * 0.15
+                signals.append(smoothness_signal)
+            
+            # Combine microstructure signals
+            combined_signal = np.mean(signals) if signals else 0.0
+            return float(np.clip(combined_signal, -1.0, 1.0))
+            
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in enhanced microstructure analysis: {e}")
+            return 0.0
+    
+    def _analyze_price_patterns(self, prices):
+        """Basic price pattern analysis - kept for backward compatibility"""
+        if len(prices) < 3:
+            return 0.0
+        
+        # Simple momentum pattern
+        recent_change = (prices[-1] - prices[-3]) / prices[-3] if prices[-3] != 0 else 0.0
+        return max(-1.0, min(1.0, recent_change * 10))
+    
+    def _analyze_temporal_patterns(self, market_data):
+        """Basic temporal pattern analysis"""
+        import time
+        
+        # Time-of-day effects
+        current_hour = time.localtime(market_data.timestamp).tm_hour
+        
+        # Market hours bias (9 AM - 4 PM typically active)
+        if 9 <= current_hour <= 16:
+            return 0.1  # Slight positive bias during market hours
+        else:
+            return -0.05  # Slight negative bias during off hours
+    
+    def _analyze_risk_patterns(self, market_data, volatility):
+        """Basic risk pattern analysis"""
+        # High volatility = higher risk signal
+        risk_signal = -volatility * 2.0  # Negative signal for high risk
+        return max(-1.0, min(1.0, risk_signal))
+    
+    def _adjust_signal_for_regime(self, signal, volatility):
+        """Adjust signal based on market regime"""
+        if volatility > 0.05:  # High volatility regime
+            return signal * 0.5  # Reduce signal strength
+        elif volatility < 0.01:  # Low volatility regime
+            return signal * 1.2  # Increase signal strength
+        else:
+            return signal  # Normal regime

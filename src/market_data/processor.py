@@ -9,6 +9,7 @@ from collections import deque
 from datetime import datetime
 
 from src.market_analysis.data_processor import MarketData
+from src.shared.constants import DEFAULT_BUFFER_SIZE_LARGE
 
 logger = logging.getLogger(__name__)
 
@@ -19,29 +20,105 @@ class MarketDataProcessor:
     
     def __init__(self, config):
         self.config = config
-        self.price_history = deque(maxlen=1000)
-        self.volume_history = deque(maxlen=1000)
-        self.timestamp_history = deque(maxlen=1000)
+        self.price_history = deque(maxlen=DEFAULT_BUFFER_SIZE_LARGE)
+        self.volume_history = deque(maxlen=DEFAULT_BUFFER_SIZE_LARGE)
+        self.timestamp_history = deque(maxlen=DEFAULT_BUFFER_SIZE_LARGE)
         
-    def process_data(self, raw_data: Dict) -> MarketData:
-        """Process raw market data into standardized format"""
+    def process_data(self, raw_data: Dict, is_historical: bool = False) -> MarketData:
+        """
+        Process raw market data into standardized format
+        
+        Args:
+            raw_data: Raw data from NinjaTrader
+            is_historical: True for historical bootstrap data (no account fields), False for live data
+        """
         try:
+            # STRICT: All market data must come from NinjaTrader - no defaults allowed
+            required_fields = ['timestamp', 'close', 'volume']
+            for field in required_fields:
+                if field not in raw_data:
+                    raise ValueError(f"Missing required market data field '{field}' from NinjaTrader")
+            
             # Extract and validate raw data
-            timestamp = raw_data.get('timestamp', datetime.now().timestamp())
-            open_price = float(raw_data.get('open', 0.0))
-            high_price = float(raw_data.get('high', 0.0))
-            low_price = float(raw_data.get('low', 0.0))
-            close_price = float(raw_data.get('close', 0.0))
-            volume = float(raw_data.get('volume', 0.0))
+            timestamp = float(raw_data['timestamp'])
+            open_price = float(raw_data.get('open', raw_data['close']))  # Use close if OHLC not available
+            high_price = float(raw_data.get('high', raw_data['close']))
+            low_price = float(raw_data.get('low', raw_data['close']))
+            close_price = float(raw_data['close'])
+            volume = float(raw_data['volume'])
+            
+            # Handle account data based on data type
+            if is_historical:
+                # Historical data doesn't include account fields - use None values
+                account_balance = None
+                buying_power = None
+                daily_pnl = None
+                unrealized_pnl = None
+                net_liquidation = None
+                margin_used = None
+                available_margin = None
+                open_positions = None
+                total_position_size = None
+                margin_utilization = None
+                buying_power_ratio = None
+                daily_pnl_pct = None
+            else:
+                # STRICT: Live data must include all account fields from NinjaTrader
+                required_account_fields = [
+                    'account_balance', 'buying_power', 'daily_pnl', 'unrealized_pnl',
+                    'net_liquidation', 'margin_used', 'available_margin', 
+                    'open_positions', 'total_position_size'
+                ]
+                
+                missing_account_fields = []
+                for field in required_account_fields:
+                    if field not in raw_data:
+                        missing_account_fields.append(field)
+                
+                if missing_account_fields:
+                    raise ValueError(f"Missing required account data fields from NinjaTrader: {missing_account_fields}")
+                
+                # Extract all account data from NinjaTrader (no defaults!)
+                account_balance = float(raw_data['account_balance'])
+                buying_power = float(raw_data['buying_power'])
+                daily_pnl = float(raw_data['daily_pnl'])
+                unrealized_pnl = float(raw_data['unrealized_pnl'])
+                net_liquidation = float(raw_data['net_liquidation'])
+                margin_used = float(raw_data['margin_used'])
+                available_margin = float(raw_data['available_margin'])
+                open_positions = int(raw_data['open_positions'])
+                total_position_size = int(raw_data['total_position_size'])
+                
+                # Calculate computed ratios from real NinjaTrader data
+                margin_utilization = (margin_used / net_liquidation) if net_liquidation > 0 else 0.0
+                buying_power_ratio = (buying_power / account_balance) if account_balance > 0 else 0.0
+                daily_pnl_pct = (daily_pnl / account_balance) if account_balance > 0 else 0.0
             
             # Create market data object
             market_data = MarketData(
+                # Core market data (required from NinjaTrader)
                 timestamp=timestamp,
+                price=close_price,
+                volume=volume,
+                # Account data (ALL from NinjaTrader - no defaults)
+                account_balance=account_balance,
+                buying_power=buying_power,
+                daily_pnl=daily_pnl,
+                unrealized_pnl=unrealized_pnl,
+                net_liquidation=net_liquidation,
+                margin_used=margin_used,
+                available_margin=available_margin,
+                open_positions=open_positions,
+                total_position_size=total_position_size,
+                # Computed ratios (calculated from real data)
+                margin_utilization=margin_utilization,
+                buying_power_ratio=buying_power_ratio,
+                daily_pnl_pct=daily_pnl_pct,
+                # OHLC data from NinjaTrader
                 open=open_price,
                 high=high_price,
                 low=low_price,
-                close=close_price,
-                volume=volume
+                close=close_price
             )
             
             # Store in history
@@ -52,12 +129,11 @@ class MarketDataProcessor:
             return market_data
             
         except Exception as e:
-            logger.error(f"Error processing market data: {e}")
-            # Return default market data
-            return MarketData(
-                timestamp=datetime.now().timestamp(),
-                open=0.0, high=0.0, low=0.0, close=0.0, volume=0.0
-            )
+            logger.error(f"CRITICAL ERROR: Failed to process market data from NinjaTrader: {e}")
+            logger.error("All portfolio data must come from NinjaTrader - no defaults allowed!")
+            logger.error("System will stop - fix NinjaTrader data feed.")
+            # Re-raise the exception to stop the system
+            raise RuntimeError(f"Market data processing failed - missing required NinjaTrader data: {e}") from e
     
     def extract_features(self, market_data: MarketData) -> Dict:
         """Extract trading features from market data"""
@@ -87,8 +163,21 @@ class MarketDataProcessor:
                 
                 # Volatility
                 if len(prices) >= 10:
-                    recent_prices = prices[-10:]
-                    features['volatility'] = np.std(recent_prices) / np.mean(recent_prices) if np.mean(recent_prices) != 0 else 0.0
+                    try:
+                        recent_prices = prices[-10:]
+                        # Ensure all prices are valid numbers
+                        valid_prices = [p for p in recent_prices if isinstance(p, (int, float)) and not np.isnan(p) and not np.isinf(p)]
+                        if len(valid_prices) >= 2:
+                            mean_price = np.mean(valid_prices)
+                            if mean_price != 0:
+                                features['volatility'] = np.std(valid_prices) / mean_price
+                            else:
+                                features['volatility'] = 0.01
+                        else:
+                            features['volatility'] = 0.01
+                    except Exception as e:
+                        logger.warning(f"Error calculating volatility: {e}")
+                        features['volatility'] = 0.01
                 else:
                     features['volatility'] = 0.01
             
@@ -98,16 +187,38 @@ class MarketDataProcessor:
                 
                 # Volume momentum
                 if len(volumes) >= 5:
-                    recent_vol = np.mean(volumes[-3:])
-                    previous_vol = np.mean(volumes[-8:-3]) if len(volumes) >= 8 else recent_vol
-                    features['volume_momentum'] = (recent_vol - previous_vol) / previous_vol if previous_vol != 0 else 0.0
+                    try:
+                        # Validate volume data
+                        valid_volumes = [v for v in volumes if isinstance(v, (int, float)) and not np.isnan(v) and not np.isinf(v) and v >= 0]
+                        if len(valid_volumes) >= 5:
+                            recent_vol = np.mean(valid_volumes[-3:])
+                            previous_vol = np.mean(valid_volumes[-8:-3]) if len(valid_volumes) >= 8 else recent_vol
+                            features['volume_momentum'] = (recent_vol - previous_vol) / previous_vol if previous_vol != 0 else 0.0
+                        else:
+                            features['volume_momentum'] = 0.0
+                    except Exception as e:
+                        logger.warning(f"Error calculating volume momentum: {e}")
+                        features['volume_momentum'] = 0.0
                 else:
                     features['volume_momentum'] = 0.0
             
             # Time-based features
             if len(self.timestamp_history) >= 1:
-                current_time = datetime.fromtimestamp(self.timestamp_history[-1])
-                features['time_of_day'] = (current_time.hour * 60 + current_time.minute) / (24 * 60)
+                try:
+                    timestamp = self.timestamp_history[-1]
+                    # Validate timestamp is reasonable (not negative, not too far in future)
+                    if 0 < timestamp < 2147483647:  # Valid Unix timestamp range
+                        current_time = datetime.fromtimestamp(timestamp)
+                        features['time_of_day'] = (current_time.hour * 60 + current_time.minute) / (24 * 60)
+                    else:
+                        # Use current time as fallback
+                        current_time = datetime.now()
+                        features['time_of_day'] = (current_time.hour * 60 + current_time.minute) / (24 * 60)
+                except (ValueError, OSError) as e:
+                    logger.warning(f"Invalid timestamp {self.timestamp_history[-1]}: {e}")
+                    # Use current time as fallback
+                    current_time = datetime.now()
+                    features['time_of_day'] = (current_time.hour * 60 + current_time.minute) / (24 * 60)
             else:
                 features['time_of_day'] = 0.5
             

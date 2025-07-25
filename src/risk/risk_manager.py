@@ -268,7 +268,7 @@ class RiskManager:
         if decision.confidence > 0.7:
             # Exponential scaling for high confidence
             confidence_multiplier = (decision.confidence ** 1.5) * 2.0
-        elif decision.confidence > 0.6:
+        elif decision.confidence > 0.4:
             # Moderate scaling for good confidence  
             confidence_multiplier = (decision.confidence ** 1.2) * 1.5
         else:

@@ -12,6 +12,7 @@ from src.portfolio.portfolio import Portfolio
 from src.core.config import Config
 from src.core.dependency_registry import registry, register_service
 from src.core.state_coordinator import state_coordinator, register_state_component
+from src.core.market_data_processor import MarketDataProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ class TradingSystem:
         self.config = Config()
         self.portfolio = Portfolio()
         self.data_processor = DataProcessor()
+        self.market_data_processor = MarketDataProcessor()
         self.intelligence = IntelligenceEngine(self.config)
         self.agent = TradingAgent(self.intelligence, self.portfolio)
         self.risk_manager = RiskManager(self.portfolio, self.agent.meta_learner, self.agent)
@@ -227,7 +229,7 @@ class TradingSystem:
             logger.info("Processing historical data for pattern learning...")
             
             # Validate historical data quality
-            if not self._validate_historical_data(historical_data):
+            if not self.market_data_processor.validate_historical_data(historical_data):
                 logger.error("Historical data validation failed - system not ready for trading")
                 return
             
@@ -247,70 +249,6 @@ class TradingSystem:
         except Exception as e:
             logger.error(f"Error processing historical data: {e}")
     
-    def _validate_historical_data(self, historical_data):
-        """Validate historical data quality and completeness"""
-        try:
-            if not historical_data:
-                logger.error("Historical data is empty")
-                return False
-            
-            # Check for required data structures
-            required_fields = ['bars_4h', 'bars_1h', 'bars_15m', 'bars_5m', 'bars_1m']
-            for field in required_fields:
-                if field not in historical_data:
-                    logger.error(f"Missing required field: {field}")
-                    return False
-                
-                bars = historical_data[field]
-                if not isinstance(bars, list) or len(bars) < 10:
-                    logger.error(f"Insufficient data in {field}: {len(bars) if isinstance(bars, list) else 'invalid'} bars")
-                    return False
-            
-            # Validate data quality
-            for timeframe, bars in [(k, v) for k, v in historical_data.items() if k.startswith('bars_')]:
-                if not self._validate_bars_quality(bars, timeframe):
-                    return False
-            
-            logger.info(f"Historical data validation passed: "
-                       f"4h={len(historical_data.get('bars_4h', []))}, "
-                       f"1h={len(historical_data.get('bars_1h', []))}, "
-                       f"15m={len(historical_data.get('bars_15m', []))}, "
-                       f"5m={len(historical_data.get('bars_5m', []))}, "
-                       f"1m={len(historical_data.get('bars_1m', []))} bars")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error validating historical data: {e}")
-            return False
-    
-    def _validate_bars_quality(self, bars, timeframe):
-        """Validate individual bars for data quality"""
-        try:
-            if not bars or len(bars) < 5:
-                logger.error(f"Insufficient bars for {timeframe}: {len(bars)}")
-                return False
-            
-            # Check for valid price data
-            valid_bars = 0
-            for bar in bars:
-                if isinstance(bar, dict):
-                    required_fields = ['open', 'high', 'low', 'close', 'volume']
-                    if all(field in bar and isinstance(bar[field], (int, float)) and bar[field] > 0 
-                           for field in required_fields[:4]):  # OHLC must be positive
-                        if bar['high'] >= bar['low'] and bar['high'] >= max(bar['open'], bar['close']):
-                            valid_bars += 1
-            
-            quality_ratio = valid_bars / len(bars)
-            if quality_ratio < 0.9:  # 90% quality threshold
-                logger.error(f"Poor data quality for {timeframe}: {quality_ratio:.1%} valid bars")
-                return False
-            
-            logger.info(f"{timeframe} data quality: {quality_ratio:.1%} ({valid_bars}/{len(bars)} valid bars)")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error validating bars quality for {timeframe}: {e}")
-            return False
 
     def _process_market_data(self, raw_data):
         # Only process live market data if we're ready for trading

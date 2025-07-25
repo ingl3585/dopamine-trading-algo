@@ -7,12 +7,15 @@
     "trading_interval_seconds": 60,
     "min_trade_interval_seconds": 300,
     "max_position_size": 0.10,
-    "max_daily_loss": 0.50,
+    "max_daily_loss": 0.05,
     "kelly_lookback": 200,
     "max_hold_time_hours": 12,
     "max_daily_trades": 8,
     "close_positions_on_shutdown": true,
     "emergency_max_margin_usage": 0.85,
     "emergency_max_drawdown": 0.15,
-    "historical_data_timeout": 60
+    "historical_data_timeout": 60,
+    "dopamine_sensitivity": 0.12,
+    "momentum_factor": 0.06,
+    "max_dopamine_signal": 1.5
 }

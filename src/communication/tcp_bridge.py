@@ -201,7 +201,11 @@ class TCPServer:
         raise TypeError
 
     def send_signal(self, order: Order) -> bool:
-        if not self.running or not self.signal_socket:
+        if not self.running:
+            logger.warning("TCP server not running - cannot send signal")
+            return False
+        if not self.signal_socket:
+            logger.warning("Signal socket not connected - cannot send signal")
             return False
         try:
             signal = {

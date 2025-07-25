@@ -1491,6 +1491,13 @@ class EnhancedIntelligenceOrchestrator:
         self.orchestrator_progress = None
         self.bootstrap_complete = False
         
+        # Subsystem learning counters
+        self.temporal_learning_count = 0
+        self.immune_learning_count = 0
+        self.microstructure_learning_count = 0
+        self.dopamine_learning_count = 0
+        self.total_learning_events = 0
+        
     def process_market_data(self, prices: List[float], volumes: List[float],
                            market_features: Dict, timestamps: Optional[List[float]] = None) -> Dict[str, float]:
         
@@ -1716,6 +1723,114 @@ class EnhancedIntelligenceOrchestrator:
         total_weight = sum(weights.values())
         return {tool: weight / total_weight for tool, weight in weights.items()}
     
+    def _validate_learning_inputs(self, outcome: float, context: Dict) -> bool:
+        """Comprehensive validation of learning inputs"""
+        try:
+            # Validate outcome
+            if not isinstance(outcome, (int, float)):
+                logger.error(f"Outcome is not numeric: type={type(outcome)}, value={outcome}")
+                return False
+            
+            if np.isnan(outcome) or np.isinf(outcome):
+                logger.error(f"Outcome is invalid: {outcome}")
+                return False
+            
+            # Validate context
+            if not isinstance(context, dict):
+                logger.error(f"Context is not a dictionary: type={type(context)}, content={str(context)[:200]}")
+                return False
+            
+            # Validate required context keys
+            required_keys = ['dna_sequence', 'cycles_info', 'market_state', 'microstructure_signal']
+            for key in required_keys:
+                if key not in context:
+                    logger.warning(f"Missing required context key: {key}")
+                    # Don't fail validation, just warn - we'll provide defaults
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error validating learning inputs: {e}")
+            return False
+    
+    def _extract_validated_context(self, context: Dict) -> tuple:
+        """Extract and validate context components"""
+        try:
+            # Extract DNA sequence with validation
+            dna_sequence = context.get('dna_sequence', '')
+            if not isinstance(dna_sequence, str):
+                logger.error(f"DNA sequence is not a string: type={type(dna_sequence)}, content={str(dna_sequence)[:100]}")
+                dna_sequence = str(dna_sequence) if dna_sequence else 'FALLBACK_DNA_SEQUENCE'
+            
+            # Ensure minimum DNA sequence length
+            if len(dna_sequence) < 3:
+                dna_sequence = f"MINIMAL_DNA_{hash(str(context)) % 1000}"
+            
+            # Extract cycles info with validation
+            cycles_info = context.get('cycles_info', [])
+            if not isinstance(cycles_info, list):
+                logger.error(f"Cycles info is not a list: type={type(cycles_info)}, content={str(cycles_info)[:100]}")
+                cycles_info = []
+            
+            # Validate cycles info structure
+            validated_cycles = []
+            for cycle in cycles_info:
+                if isinstance(cycle, dict) and 'frequency' in cycle:
+                    validated_cycles.append(cycle)
+                else:
+                    logger.warning(f"Invalid cycle format: {cycle}")
+            
+            # If no valid cycles, create a default one
+            if not validated_cycles:
+                validated_cycles = [{
+                    'frequency': 1.0/60.0,  # 1-hour cycle
+                    'amplitude': 0.1,
+                    'phase': 0.0,
+                    'period': 60,
+                    'window_size': 64
+                }]
+            
+            # Extract market state with validation
+            market_state = context.get('market_state', {})
+            if not isinstance(market_state, dict):
+                logger.error(f"Market state is not a dict: type={type(market_state)}, content={str(market_state)[:100]}")
+                market_state = {}
+            
+            # Ensure required market state keys
+            required_market_keys = ['volatility', 'price_momentum', 'volume_momentum', 'regime']
+            for key in required_market_keys:
+                if key not in market_state:
+                    default_values = {
+                        'volatility': 0.02,
+                        'price_momentum': 0.0,
+                        'volume_momentum': 0.0,
+                        'regime': 'ranging'
+                    }
+                    market_state[key] = default_values[key]
+                    logger.debug(f"Added default value for market_state.{key}: {default_values[key]}")
+            
+            # Extract microstructure signal with validation
+            microstructure_signal = context.get('microstructure_signal', 0.0)
+            if not isinstance(microstructure_signal, (int, float)):
+                logger.error(f"Microstructure signal is not numeric: type={type(microstructure_signal)}, content={str(microstructure_signal)[:100]}")
+                microstructure_signal = 0.0
+            
+            if np.isnan(microstructure_signal) or np.isinf(microstructure_signal):
+                logger.warning(f"Invalid microstructure signal: {microstructure_signal}, using 0.0")
+                microstructure_signal = 0.0
+            
+            return dna_sequence, validated_cycles, market_state, microstructure_signal
+            
+        except Exception as e:
+            logger.error(f"Error extracting validated context: {e}")
+            # Return safe defaults
+            return (
+                'ERROR_FALLBACK_DNA',
+                [{'frequency': 1.0/60.0, 'amplitude': 0.1, 'phase': 0.0, 'period': 60, 'window_size': 64}],
+                {'volatility': 0.02, 'price_momentum': 0.0, 'volume_momentum': 0.0, 'regime': 'ranging'},
+                0.0
+            )
+    
     def _attempt_tool_breeding(self, votes: Dict[str, float], market_features: Dict):
         """Attempt to create hybrid tools from successful combinations"""
         # Find tools with complementary signals
@@ -1750,9 +1865,9 @@ class EnhancedIntelligenceOrchestrator:
     
     def learn_from_outcome(self, outcome: float, context: Dict):
         """Enhanced learning with tool evolution and performance attribution"""
-        # Debug and validate context
-        if not isinstance(context, dict):
-            logger.error(f"Context is not a dictionary: type={type(context)}, content={str(context)[:200]}")
+        # Comprehensive data validation
+        if not self._validate_learning_inputs(outcome, context):
+            logger.error("Learning inputs validation failed, skipping learning")
             return
         
         # Initialize orchestrator progress task if needed
@@ -1770,26 +1885,8 @@ class EnhancedIntelligenceOrchestrator:
                 logger.error(f"Error initializing orchestrator progress task: {e}")
                 self.orchestrator_progress = None
         
-        # Extract context with additional validation
-        dna_sequence = context.get('dna_sequence', '')
-        if not isinstance(dna_sequence, str):
-            logger.error(f"DNA sequence is not a string: type={type(dna_sequence)}, content={str(dna_sequence)[:100]}")
-            dna_sequence = str(dna_sequence) if dna_sequence else ''
-        
-        cycles_info = context.get('cycles_info', [])
-        if not isinstance(cycles_info, list):
-            logger.error(f"Cycles info is not a list: type={type(cycles_info)}, content={str(cycles_info)[:100]}")
-            cycles_info = []
-        
-        market_state = context.get('market_state', {})
-        if not isinstance(market_state, dict):
-            logger.error(f"Market state is not a dict: type={type(market_state)}, content={str(market_state)[:100]}")
-            market_state = {}
-        
-        microstructure_signal = context.get('microstructure_signal', 0.0)
-        if not isinstance(microstructure_signal, (int, float)):
-            logger.error(f"Microstructure signal is not numeric: type={type(microstructure_signal)}, content={str(microstructure_signal)[:100]}")
-            microstructure_signal = 0.0
+        # Extract validated context
+        dna_sequence, cycles_info, market_state, microstructure_signal = self._extract_validated_context(context)
         
         # Each subsystem learns with additional error handling
         if dna_sequence:
@@ -1808,24 +1905,72 @@ class EnhancedIntelligenceOrchestrator:
             logger.error(f"Error extracting recent cycles: {e}")
             recent_cycles = []
         
+        # Temporal learning (cycles and timing)
         if recent_cycles or cycles_info:
             try:
                 cycles_to_learn = cycles_info if cycles_info else recent_cycles
                 self.temporal_subsystem.learn_from_outcome(cycles_to_learn, outcome)
+                self.temporal_learning_count += 1
+                if self.temporal_learning_count % 25 == 0:  # Log every 25 patterns
+                    logger.info(f"Temporal Learning: {self.temporal_learning_count} patterns learned")
             except Exception as e:
                 logger.error(f"Error in temporal subsystem learning: {e}")
                 logger.error(f"Cycles to learn type: {type(cycles_to_learn)}, content: {str(cycles_to_learn)[:100]}")
         
+        # Immune learning (threat detection)
         if market_state:
             try:
-                self.immune_subsystem.learn_threat(market_state, outcome)
+                # Pass is_bootstrap parameter to immune subsystem
+                is_bootstrap = context.get('is_bootstrap', False)
+                self.immune_subsystem.learn_threat(market_state, outcome, is_bootstrap=is_bootstrap)
+                self.immune_learning_count += 1
+                if self.immune_learning_count % 25 == 0:  # Log every 25 patterns
+                    logger.info(f"Immune Learning: {self.immune_learning_count} threats learned")
             except Exception as e:
                 logger.error(f"Error in immune subsystem learning: {e}")
                 logger.error(f"Market state type: {type(market_state)}, content: {str(market_state)[:100]}")
         
-        # Track microstructure learning
-        if microstructure_signal != 0.0:
+        # Microstructure learning (order flow patterns)
+        try:
+            # Always try microstructure learning, not just when signal != 0
+            microstructure_context = {
+                'microstructure_signal': microstructure_signal,
+                'market_state': market_state,
+                'outcome': outcome,
+                'is_bootstrap': context.get('is_bootstrap', False)
+            }
+            
+            # Track microstructure performance
             self.tool_lifecycle['microstructure']['performance_history'].append(microstructure_signal)
+            self.microstructure_learning_count += 1
+            if self.microstructure_learning_count % 25 == 0:  # Log every 25 patterns
+                logger.info(f"Microstructure Learning: {self.microstructure_learning_count} patterns learned")
+                
+        except Exception as e:
+            logger.error(f"Error in microstructure learning: {e}")
+        
+        # Dopamine learning (reward patterns) - during bootstrap
+        if context.get('is_bootstrap', False):
+            try:
+                dopamine_context = {
+                    'outcome': outcome,
+                    'market_state': market_state,
+                    'microstructure_signal': microstructure_signal,
+                    'dna_sequence': dna_sequence,
+                    'cycles_info': cycles_info,
+                    'is_bootstrap': True
+                }
+                
+                # Always track dopamine learning during bootstrap
+                self.dopamine_learning_count += 1
+                if self.dopamine_learning_count % 25 == 0:  # Log every 25 patterns
+                    logger.info(f"Dopamine Learning: {self.dopamine_learning_count} reward patterns learned")
+                    
+            except Exception as e:
+                logger.error(f"Error in dopamine learning: {e}")
+        
+        # Track total learning events across all subsystems
+        self.total_learning_events += 1
         
         # Performance attribution with error handling
         try:

@@ -46,6 +46,9 @@ class TradingSystemOrchestrator:
         self.trade_count = 0
         self.last_decision_time = None
         
+        # Component registry for integration
+        self.registered_components = {}
+        
         # TCP Bridge for NinjaTrader
         self.tcp_server = TCPServer(
             data_port=config.get('tcp_data_port', 5556),
@@ -64,6 +67,46 @@ class TradingSystemOrchestrator:
             self.trading_service.repository.set_tcp_server(self.tcp_server)
         
         logger.info("Trading system orchestrator initialized successfully")
+    
+    def register_component(self, name: str, component, startup_callback=None, shutdown_callback=None):
+        """Register a component with the orchestrator for integration"""
+        try:
+            self.registered_components[name] = {
+                'component': component,
+                'startup_callback': startup_callback,
+                'shutdown_callback': shutdown_callback
+            }
+            logger.info(f"Registered component: {name}")
+            
+            # Execute startup callback if provided
+            if startup_callback:
+                startup_callback()
+                
+        except Exception as e:
+            logger.error(f"Error registering component {name}: {e}")
+    
+    def start_system(self) -> bool:
+        """Start the trading system (synchronous wrapper for async start)"""
+        try:
+            import asyncio
+            
+            # Check if we're already in an event loop
+            try:
+                loop = asyncio.get_running_loop()
+                # We're in an async context, create a task instead
+                logger.info("Creating async task for system start...")
+                task = loop.create_task(self.start())
+                logger.info("Trading system start task created successfully")
+                return True
+            except RuntimeError:
+                # No running loop, we can run directly
+                logger.info("Starting trading system...")
+                asyncio.run(self.start())
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error starting trading system: {e}")
+            return False
     
     async def start(self):
         """Start the complete trading system"""
@@ -104,8 +147,8 @@ class TradingSystemOrchestrator:
             bootstrap_count = 0
             for data_point in historical_data:
                 try:
-                    # Process market data
-                    market_data = self.market_processor.process_data(data_point)
+                    # Process historical market data (no account fields expected)
+                    market_data = self.market_processor.process_data(data_point, is_historical=True)
                     market_features = self.market_processor.extract_features(market_data)
                     
                     # Get historical prices and volumes for AI analysis
@@ -117,11 +160,13 @@ class TradingSystemOrchestrator:
                     # Simulate trading decision for learning
                     overall_signal = ai_signals['overall'].value
                     
-                    # Create learning context for subsystems
+                    # Create learning context for subsystems with standardized market_state
+                    standardized_market_state = self._create_standardized_market_state(market_features, historical_context)
+                    
                     learning_context = {
                         'dna_sequence': self._extract_dna_sequence(historical_context, market_features),
                         'cycles_info': self._extract_cycles_info(ai_signals),
-                        'market_state': market_features,
+                        'market_state': standardized_market_state,
                         'microstructure_signal': ai_signals['microstructure'].value,
                         'is_bootstrap': True
                     }
@@ -165,7 +210,11 @@ class TradingSystemOrchestrator:
                 market_data = self.market_processor.process_data(market_data_raw)
                 market_features = self.market_processor.extract_features(market_data)
                 
-                # Get account information
+                # Update trading service with latest account data from NinjaTrader
+                if hasattr(self.trading_service, 'update_account_data'):
+                    self.trading_service.update_account_data(market_data)
+                
+                # Get account information (now from real NinjaTrader data)
                 account_info = self.trading_service.get_account_info()
                 
                 # Get historical context for AI analysis
@@ -196,11 +245,13 @@ class TradingSystemOrchestrator:
                             trade_outcome.pnl, trade_outcome.duration
                         )
                         
-                        # Learn from trade outcome
+                        # Learn from trade outcome with standardized market_state
+                        standardized_market_state = self._create_standardized_market_state(market_features, historical_context)
+                        
                         learning_context = {
                             'dna_sequence': self._extract_dna_sequence(historical_context, market_features),
                             'cycles_info': self._extract_cycles_info(ai_signals),
-                            'market_state': market_features,
+                            'market_state': standardized_market_state,
                             'microstructure_signal': ai_signals['microstructure'].value,
                             'is_bootstrap': False
                         }
@@ -217,9 +268,8 @@ class TradingSystemOrchestrator:
                 positions = self.trading_service.manage_positions()
                 portfolio_analytics = self.risk_manager.get_risk_metrics()
                 
-                # Log system status periodically
-                if self.trade_count % 10 == 0 or datetime.now().minute % 15 == 0:
-                    self._log_system_status(ai_signals, risk_level, account_info, positions)
+                # Log trading decision on each bar
+                self._log_trading_decision(ai_signals, risk_level, market_data)
                 
                 # Wait before next iteration
                 await asyncio.sleep(self.config.get('trading_interval_seconds', 60))
@@ -239,9 +289,9 @@ class TradingSystemOrchestrator:
         confidence = ai_signals['overall'].confidence
         
         # Determine action based on signal strength and confidence
-        if overall_signal > 0.1 and confidence > 0.6:
+        if overall_signal > 0.1 and confidence > 0.4:
             action = "buy"
-        elif overall_signal < -0.1 and confidence > 0.6:
+        elif overall_signal < -0.1 and confidence > 0.4:
             action = "sell"
         else:
             action = "hold"
@@ -273,7 +323,7 @@ class TradingSystemOrchestrator:
             return False
         
         # Don't trade if confidence is too low
-        if decision.confidence < 0.5:
+        if decision.confidence < 0.4:
             logger.debug(f"Trade rejected: confidence too low ({decision.confidence:.2f})")
             return False
         
@@ -295,30 +345,138 @@ class TradingSystemOrchestrator:
         return True
     
     def _extract_dna_sequence(self, historical_context: Dict, market_features: Dict) -> str:
-        """Extract DNA sequence for learning"""
+        """Extract DNA sequence for learning - ensures valid string format"""
         try:
             prices = historical_context.get('prices', [])
             volumes = historical_context.get('volumes', [])
             
             if len(prices) < 20 or len(volumes) < 20:
-                return ""
+                # Return a minimal valid sequence instead of empty string
+                vol = market_features.get('volatility', 0.02)
+                momentum = market_features.get('price_momentum', 0.0)
+                return f"MINIMAL_ABCD_{vol:.3f}_{momentum:.3f}"
             
-            # Use DNA subsystem to encode current market state
-            return self.intelligence_engine.dna_subsystem.encode_market_state(
-                prices[-20:], volumes[-20:],
-                market_features.get('volatility', 0.02),
-                market_features.get('price_momentum', 0.0)
-            )
+            # Use orchestrator DNA subsystem to encode current market state
+            if hasattr(self.intelligence_engine, 'orchestrator') and hasattr(self.intelligence_engine.orchestrator, 'dna_subsystem'):
+                dna_sequence = self.intelligence_engine.orchestrator.dna_subsystem.encode_market_state(
+                    prices[-20:], volumes[-20:],
+                    market_features.get('volatility', 0.02),
+                    market_features.get('price_momentum', 0.0)
+                )
+                # Ensure we have a valid sequence
+                if not dna_sequence or len(dna_sequence) < 3:
+                    vol = market_features.get('volatility', 0.02)
+                    momentum = market_features.get('price_momentum', 0.0)
+                    return f"FALLBACK_ABCD_{vol:.3f}_{momentum:.3f}"
+                return dna_sequence
+            else:
+                # Simple DNA encoding fallback
+                vol = market_features.get('volatility', 0.02)
+                momentum = market_features.get('price_momentum', 0.0)
+                return f"PATTERN_{len(prices)}_VOL_{vol:.3f}_MOM_{momentum:.3f}"
         except Exception as e:
             logger.error(f"Error extracting DNA sequence: {e}")
-            return ""
+            # Return a valid fallback sequence instead of empty string
+            return f"ERROR_FALLBACK_{hash(str(e)) % 10000}"
+    
+    def _create_standardized_market_state(self, market_features: Dict, historical_context: Dict) -> Dict:
+        """Create standardized market state structure for all subsystems"""
+        try:
+            # Extract core market data
+            volatility = market_features.get('volatility', 0.02)
+            price_momentum = market_features.get('price_momentum', 0.0)
+            volume_momentum = market_features.get('volume_momentum', 0.0)
+            
+            # Calculate time-based features
+            current_time = datetime.now()
+            time_of_day = (current_time.hour * 60 + current_time.minute) / (24 * 60)  # Normalized 0-1
+            
+            # Determine market regime based on volatility and momentum
+            if volatility > 0.05:
+                regime = "high_volatility"
+            elif volatility < 0.01:
+                regime = "low_volatility"
+            elif abs(price_momentum) > 0.03:
+                regime = "trending"
+            else:
+                regime = "ranging"
+            
+            # Create standardized structure
+            standardized_state = {
+                'volatility': volatility,
+                'price_momentum': price_momentum,
+                'volume_momentum': volume_momentum,
+                'time_of_day': time_of_day,
+                'regime': regime,
+                'regime_confidence': market_features.get('regime_confidence', 0.5),
+                # Additional fields for immune system
+                'market_session': self._get_market_session(current_time),
+                'volatility_percentile': min(1.0, volatility / 0.1),  # Normalized volatility
+                'momentum_strength': abs(price_momentum),
+                'volume_activity': abs(volume_momentum)
+            }
+            
+            return standardized_state
+            
+        except Exception as e:
+            logger.error(f"Error creating standardized market state: {e}")
+            # Return minimal valid structure
+            return {
+                'volatility': 0.02,
+                'price_momentum': 0.0,
+                'volume_momentum': 0.0,
+                'time_of_day': 0.5,
+                'regime': 'ranging',
+                'regime_confidence': 0.5,
+                'market_session': 'regular',
+                'volatility_percentile': 0.2,
+                'momentum_strength': 0.0,
+                'volume_activity': 0.0
+            }
+    
+    def _get_market_session(self, current_time: datetime) -> str:
+        """Determine market session based on time"""
+        hour = current_time.hour
+        if 9 <= hour <= 16:
+            return "regular"
+        elif 4 <= hour <= 9:
+            return "premarket"
+        elif 16 <= hour <= 20:
+            return "afterhours"
+        else:
+            return "overnight"
     
     def _extract_cycles_info(self, ai_signals: Dict) -> list:
-        """Extract cycles info for learning"""
+        """Extract cycles info for learning - ensures List[Dict] format"""
         try:
-            # Get recent cycles from temporal subsystem
-            if len(self.intelligence_engine.temporal_subsystem.dominant_cycles) > 0:
-                return list(self.intelligence_engine.temporal_subsystem.dominant_cycles)[-1]
+            # Get recent cycles from temporal subsystem via orchestrator
+            if (hasattr(self.intelligence_engine, 'orchestrator') and 
+                hasattr(self.intelligence_engine.orchestrator, 'temporal_subsystem') and
+                hasattr(self.intelligence_engine.orchestrator.temporal_subsystem, 'dominant_cycles')):
+                
+                cycles = self.intelligence_engine.orchestrator.temporal_subsystem.dominant_cycles
+                if len(cycles) > 0:
+                    recent_cycle = list(cycles)[-1]
+                    # Ensure we return List[Dict] format
+                    if isinstance(recent_cycle, list):
+                        return recent_cycle  # Already a list of dicts
+                    elif isinstance(recent_cycle, dict):
+                        return [recent_cycle]  # Wrap single dict in list
+                    else:
+                        logger.warning(f"Unexpected cycle format: {type(recent_cycle)}")
+            
+            # Fallback - create cycle dict from AI signals if available
+            if 'temporal' in ai_signals and hasattr(ai_signals['temporal'], 'value'):
+                # Temporal subsystem expects List[Dict], not List[float]
+                cycle_dict = {
+                    'frequency': 1.0/60.0,  # Default 1-hour cycle frequency
+                    'amplitude': abs(ai_signals['temporal'].value),
+                    'phase': 0.0,
+                    'period': 60,  # Default 1-hour cycle
+                    'window_size': 64  # Default window size
+                }
+                return [cycle_dict]
+            
             return []
         except Exception as e:
             logger.error(f"Error extracting cycles info: {e}")
@@ -361,18 +519,37 @@ class TradingSystemOrchestrator:
         """Get historical data for bootstrap from NinjaTrader"""
         try:
             logger.info("Waiting for historical data from NinjaTrader...")
+            logger.info("ResearchStrategy.cs sends historical data on next full 1-minute bar - please wait...")
             
             # Wait for historical data to be received via TCP
-            timeout_seconds = self.config.get('historical_data_timeout', 30)
+            timeout_seconds = self.config.get('historical_data_timeout', 120)
             start_time = datetime.now()
+            last_data_count = 0
             
-            while not self.tcp_server.is_ready_for_live_trading():
-                if (datetime.now() - start_time).total_seconds() > timeout_seconds:
+            while True:
+                # Check if we have received historical data
+                current_data_count = len(self.historical_data_cache)
+                if current_data_count > 0 and current_data_count != last_data_count:
+                    logger.info(f"Historical data arriving: {current_data_count} data points received")
+                    last_data_count = current_data_count
+                    
+                    # Wait a bit more to ensure all data is received
+                    await asyncio.sleep(2)
+                    if len(self.historical_data_cache) == current_data_count:
+                        # Data count stabilized, we're done
+                        break
+                
+                # Check timeout
+                elapsed = (datetime.now() - start_time).total_seconds()
+                if elapsed > timeout_seconds:
                     logger.warning(f"Historical data timeout after {timeout_seconds}s")
                     break
                 
+                # Log progress every 15 seconds
+                if int(elapsed) % 15 == 0 and elapsed > 0:
+                    logger.info(f"Still waiting for historical data... ({elapsed:.0f}s elapsed)")
+                
                 await asyncio.sleep(1)
-                logger.debug("Still waiting for historical data...")
             
             if self.historical_data_cache:
                 logger.info(f"Historical data received: {len(self.historical_data_cache)} data points")
@@ -389,80 +566,135 @@ class TradingSystemOrchestrator:
         """Get current market data from NinjaTrader"""
         try:
             if not self.current_market_data:
-                # Return sample data if no live data available yet
-                logger.debug("No live market data available, using sample data")
-                return {
-                    'timestamp': datetime.now().timestamp(),
-                    'open': 15000.0,
-                    'high': 15010.0,
-                    'low': 14995.0,
-                    'close': 15005.0,
-                    'volume': 1000.0
-                }
+                return None
             
             # Extract OHLCV from TCP data
             tcp_data = self.current_market_data.copy()
             
-            # Use 1-minute price data if available
-            prices_1m = tcp_data.get('price_1m', [])
-            volumes_1m = tcp_data.get('volume_1m', [])
+            # Log what data we have for debugging
+            logger.debug(f"Current market data keys: {list(tcp_data.keys())}")
             
-            if prices_1m and len(prices_1m) >= 4:
-                # Use last 4 prices as OHLC
-                recent_prices = prices_1m[-4:]
-                return {
-                    'timestamp': datetime.now().timestamp(),
-                    'open': recent_prices[0],
-                    'high': max(recent_prices),
-                    'low': min(recent_prices),
-                    'close': recent_prices[-1],
-                    'volume': volumes_1m[-1] if volumes_1m else 1000.0,
-                    'account_info': {
-                        'balance': tcp_data.get('account_balance', 25000.0),
-                        'buying_power': tcp_data.get('buying_power', 25000.0),
+            # Check if this is live data format from ResearchStrategy.cs
+            data_type = tcp_data.get('type', 'unknown')
+            
+            if data_type == 'live_data' or ('price_1m' in tcp_data and 'account_balance' in tcp_data):
+                # Use 1-minute price data if available
+                prices_1m = tcp_data.get('price_1m', [])
+                volumes_1m = tcp_data.get('volume_1m', [])
+                
+                logger.debug(f"Live data processing: {len(prices_1m)} prices, {len(volumes_1m)} volumes")
+                
+                if prices_1m and len(prices_1m) >= 4:
+                    # Use last 4 prices as OHLC
+                    recent_prices = prices_1m[-4:]
+                    current_volume = volumes_1m[-1] if volumes_1m else 1000.0
+                    
+                    result = {
+                        'timestamp': tcp_data.get('timestamp', datetime.now().timestamp()),
+                        'open': recent_prices[0],
+                        'high': max(recent_prices),
+                        'low': min(recent_prices),
+                        'close': recent_prices[-1],
+                        'volume': current_volume,
+                        # All required account data from NinjaTrader
+                        'account_balance': tcp_data.get('account_balance', 0.0),
+                        'buying_power': tcp_data.get('buying_power', 0.0),
                         'daily_pnl': tcp_data.get('daily_pnl', 0.0),
-                        'margin_used': tcp_data.get('margin_used', 0.0)
+                        'unrealized_pnl': tcp_data.get('unrealized_pnl', 0.0),
+                        'net_liquidation': tcp_data.get('net_liquidation', tcp_data.get('account_balance', 0.0)),
+                        'margin_used': tcp_data.get('margin_used', 0.0),
+                        'available_margin': tcp_data.get('available_margin', tcp_data.get('buying_power', 0.0)),
+                        'open_positions': tcp_data.get('open_positions', 0),
+                        'total_position_size': tcp_data.get('total_position_size', 0)
                     }
-                }
+                    
+                    logger.info(f"Live market data processed: Price={result['close']:.2f}, Volume={result['volume']:.0f}, Account=${result['account_balance']:.2f}")
+                    return result
+                    
+                elif prices_1m and len(prices_1m) >= 1:
+                    # Limited price data, use what we have
+                    current_price = prices_1m[-1]
+                    current_volume = volumes_1m[-1] if volumes_1m else 1000.0
+                    
+                    result = {
+                        'timestamp': tcp_data.get('timestamp', datetime.now().timestamp()),
+                        'open': current_price,
+                        'high': current_price,
+                        'low': current_price,
+                        'close': current_price,
+                        'volume': current_volume,
+                        # All required account data from NinjaTrader
+                        'account_balance': tcp_data.get('account_balance', 0.0),
+                        'buying_power': tcp_data.get('buying_power', 0.0),
+                        'daily_pnl': tcp_data.get('daily_pnl', 0.0),
+                        'unrealized_pnl': tcp_data.get('unrealized_pnl', 0.0),
+                        'net_liquidation': tcp_data.get('net_liquidation', tcp_data.get('account_balance', 0.0)),
+                        'margin_used': tcp_data.get('margin_used', 0.0),
+                        'available_margin': tcp_data.get('available_margin', tcp_data.get('buying_power', 0.0)),
+                        'open_positions': tcp_data.get('open_positions', 0),
+                        'total_position_size': tcp_data.get('total_position_size', 0)
+                    }
+                    
+                    logger.info(f"Limited live market data processed: Price={result['close']:.2f}, Account=${result['account_balance']:.2f}")
+                    return result
+                else:
+                    # No price data yet
+                    logger.warning(f"Live data format detected but no price data: {list(tcp_data.keys())}")
+                    return None
             else:
-                # Fallback to sample data
-                logger.debug("Insufficient price data, using sample data")
-                return {
-                    'timestamp': datetime.now().timestamp(),
-                    'open': 15000.0,
-                    'high': 15010.0,
-                    'low': 14995.0,
-                    'close': 15005.0,
-                    'volume': 1000.0
-                }
+                # Unknown format or insufficient data
+                logger.warning(f"Unrecognized market data format. Type: {data_type}, Keys: {list(tcp_data.keys())}")
+                return None
                 
         except Exception as e:
             logger.error(f"Error getting current market data: {e}")
-            return {}
+            return None
     
-    def _log_system_status(self, ai_signals: Dict, risk_level: float, 
-                          account_info, positions: Dict):
-        """Log comprehensive system status"""
+    def _log_trading_decision(self, ai_signals: Dict, risk_level: float, market_data):
+        """Log simple trading decision on each bar"""
         try:
-            logger.info("=== SYSTEM STATUS ===")
-            logger.info(f"Trades executed: {self.trade_count}")
-            logger.info(f"Account value: ${account_info.buying_power:.2f}")
-            logger.info(f"Current risk level: {risk_level:.2f}")
-            logger.info(f"AI Signals - Overall: {ai_signals['overall'].value:.3f}, "
-                       f"DNA: {ai_signals['dna'].value:.3f}, "
-                       f"Temporal: {ai_signals['temporal'].value:.3f}, "
-                       f"Immune: {ai_signals['immune'].value:.3f}")
-            logger.info(f"Open positions: {positions.get('position_count', 0)}")
-            logger.info(f"Unrealized PnL: ${positions.get('total_unrealized_pnl', 0):.2f}")
-            logger.info("==================")
+            # Extract key values (market_data is MarketData object, not Dict)
+            price = market_data.close
+            overall_signal = ai_signals['overall'].value
+            overall_confidence = ai_signals['overall'].confidence
+            consensus_strength = ai_signals.get('consensus_strength', 0.0)
+            
+            # Determine action
+            if overall_signal > 0.1 and overall_confidence > 0.4 and consensus_strength > 0.3 and risk_level < 0.8:
+                action = "BUY"
+            elif overall_signal < -0.1 and overall_confidence > 0.4 and consensus_strength > 0.3 and risk_level < 0.8:
+                action = "SELL"
+            else:
+                action = "HOLD"
+            
+            # Log simple one-line decision
+            logger.info(f"Price: ${price:.2f} | Signal: {overall_signal:.3f} | Conf: {overall_confidence:.2f} | Consensus: {consensus_strength:.2f} | Risk: {risk_level:.2f} | Action: {action}")
+            
         except Exception as e:
-            logger.error(f"Error logging system status: {e}")
+            logger.error(f"Error logging trading decision: {e}")
     
     def _handle_market_data(self, data: Dict):
         """Handle incoming market data from NinjaTrader"""
         try:
             self.current_market_data = data
-            logger.debug(f"Market data updated: {len(data.get('price_1m', []))} 1m prices")
+            
+            # Detect live data type and log appropriately
+            data_type = data.get('type', 'unknown')
+            if data_type == 'live_data':
+                logger.info(f"Live market data received: {len(data.get('price_1m', []))} 1m prices, account_balance: {data.get('account_balance', 'N/A')}")
+            elif data_type == 'historical_data':
+                logger.info(f"Historical data received in live handler - redirecting")
+                self._handle_historical_data(data)
+            else:
+                # Legacy format or unspecified - try to detect by fields
+                if 'price_1m' in data and 'account_balance' in data:
+                    logger.info(f"Live data detected (legacy format): {len(data.get('price_1m', []))} 1m prices")
+                elif 'bars_15m' in data or 'bars_5m' in data or 'bars_1m' in data:
+                    logger.info(f"Historical data detected in live handler - redirecting")
+                    self._handle_historical_data(data)
+                else:
+                    logger.debug(f"Market data updated: {list(data.keys())}")
+                    
         except Exception as e:
             logger.error(f"Error handling market data: {e}")
     
