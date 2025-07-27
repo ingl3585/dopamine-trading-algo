@@ -103,7 +103,8 @@ class TradingSystem:
         self.last_account_balance = 0.0
         self.account_change_threshold = 0.05
         
-        # Health monitoring (TODO: Implement SystemHealthMonitor if needed)
+        # Health monitoring (currently handled by event system)
+        # Future enhancement: dedicated SystemHealthMonitor for advanced system diagnostics
         # self.health_monitor = SystemHealthMonitor(self.event_bus)
         # self.health_data = {}
         
@@ -1148,29 +1149,4 @@ class TradingSystem:
             logger.error(f"Error in 4H analysis: {e}")
 
 
-# Legacy synchronous entry point for backward compatibility
-def main():
-    """Main entry point for backward compatibility"""
-    try:
-        # Setup logging
-        logging.basicConfig(
-            level=logging.INFO,
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
-        
-        # Create and start trading system
-        system = TradingSystem()
-        
-        # Run the trading system
-        system.start()
-        
-    except KeyboardInterrupt:
-        logger.info("Received interrupt signal, shutting down...")
-    except Exception as e:
-        logger.error(f"Critical error in main: {e}")
-        import sys
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
+# Note: Main entry point moved to /main.py for better organization and features

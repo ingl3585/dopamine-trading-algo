@@ -93,14 +93,14 @@ class StateBuilder:
                 # Cross-timeframe features (if available)
                 float(getattr(features, 'tf_5m_momentum', 0.0)),
                 float(getattr(features, 'tf_15m_momentum', 0.0))
-            ], dtype=torch.float64, device=self.device)
+            ], dtype=torch.float32, device=self.device)
             
             # Combine base state with enhanced features
             full_state = torch.cat([base_state, enhanced_features])
             
             # Pad or truncate to exactly 100 features
             if len(full_state) < 100:
-                padding = torch.zeros(100 - len(full_state), dtype=torch.float64, device=self.device)
+                padding = torch.zeros(100 - len(full_state), dtype=torch.float32, device=self.device)
                 full_state = torch.cat([full_state, padding])
             else:
                 full_state = full_state[:100]
@@ -110,7 +110,7 @@ class StateBuilder:
         except Exception as e:
             logger.error(f"Error creating enhanced state: {e}")
             # Return safe default state
-            return torch.zeros(100, dtype=torch.float64, device=self.device)
+            return torch.zeros(100, dtype=torch.float32, device=self.device)
 
 
 class MetaContextBuilder:
@@ -344,7 +344,7 @@ class TradingStateManager:
         except Exception as e:
             logger.error(f"Error creating decision state: {e}")
             # Return safe defaults
-            safe_state = torch.zeros(100, dtype=torch.float64, device=self.device)
+            safe_state = torch.zeros(100, dtype=torch.float32, device=self.device)
             safe_context = {'regime_confidence': 0.5, 'volatility_regime': 0.5}
             return safe_state, safe_context
     

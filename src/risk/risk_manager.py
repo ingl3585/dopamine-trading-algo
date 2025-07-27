@@ -72,7 +72,20 @@ class RiskManager:
             return None
         
         # Apply advanced risk management - Kelly optimization and drawdown prevention
-        intelligence_data = getattr(decision, 'intelligence_data', {})
+        # Defensive handling of intelligence_data with sensible fallbacks
+        intelligence_data = getattr(decision, 'intelligence_data', None)
+        if intelligence_data is None:
+            # Create fallback intelligence_data to prevent AttributeError
+            intelligence_data = {
+                'volatility': 0.02,
+                'price_momentum': 0.0,
+                'volume_momentum': 0.0,
+                'regime_confidence': 0.5,
+                'consensus_strength': 0.5,
+                'regime': 'normal'
+            }
+            logger.warning("Missing intelligence_data in decision, using fallback values")
+        
         kelly_optimized_size = self.advanced_risk.optimize_kelly_position_size(
             size, market_data, intelligence_data
         )
@@ -223,17 +236,21 @@ class RiskManager:
         # Learned position sizing parameters
         max_contracts = int(self.meta_learner.get_parameter('max_contracts_limit'))  # Learned, starts at 10
         
-        # Market conditions for risk learning
+        # Market conditions for risk learning with defensive null safety
+        intelligence_data = getattr(decision, 'intelligence_data', None) or {}
+        if not intelligence_data:
+            logger.debug("Using fallback intelligence_data for position sizing calculations")
+        
         market_conditions = {
-            'volatility': getattr(decision, 'intelligence_data', {}).get('volatility', 0.02),
-            'regime': getattr(decision, 'intelligence_data', {}).get('regime', 'normal'),
-            'trend_strength': abs(getattr(decision, 'intelligence_data', {}).get('price_momentum', 0))
+            'volatility': intelligence_data.get('volatility', 0.02),
+            'regime': intelligence_data.get('regime', 'normal'),
+            'trend_strength': abs(intelligence_data.get('price_momentum', 0.0))
         }
         
-        # Decision factors for risk learning
+        # Decision factors for risk learning with defensive null safety
         decision_factors = {
             'confidence': decision.confidence,
-            'consensus_strength': getattr(decision, 'intelligence_data', {}).get('consensus_strength', 0.5),
+            'consensus_strength': intelligence_data.get('consensus_strength', 0.5),
             'primary_tool': getattr(decision, 'primary_tool', 'unknown')
         }
         
@@ -360,17 +377,18 @@ class RiskManager:
     def _calculate_adaptive_levels(self, decision: Decision, market_data: MarketData) -> tuple:
         """Intelligent stop/target calculation using risk learning"""
         
-        # Market conditions for learning
+        # Market conditions for learning with defensive null safety
+        intelligence_data = getattr(decision, 'intelligence_data', None) or {}
         market_conditions = {
-            'volatility': getattr(decision, 'intelligence_data', {}).get('volatility', 0.02),
-            'regime': getattr(decision, 'intelligence_data', {}).get('regime', 'normal'),
-            'trend_strength': abs(getattr(decision, 'intelligence_data', {}).get('price_momentum', 0))
+            'volatility': intelligence_data.get('volatility', 0.02),
+            'regime': intelligence_data.get('regime', 'normal'),
+            'trend_strength': abs(intelligence_data.get('price_momentum', 0.0))
         }
         
-        # Decision factors for learning
+        # Decision factors for learning with defensive null safety
         decision_factors = {
             'confidence': decision.confidence,
-            'consensus_strength': getattr(decision, 'intelligence_data', {}).get('consensus_strength', 0.5),
+            'consensus_strength': intelligence_data.get('consensus_strength', 0.5),
             'primary_tool': getattr(decision, 'primary_tool', 'unknown')
         }
         
@@ -489,9 +507,78 @@ class RiskManager:
         
         return {**basic_summary, **advanced_summary}
     
+    def assess_risk(self, decision, account_info) -> float:
+        """
+        Backward compatibility method for simple risk assessment
+        
+        Args:
+            decision: Trading decision (Decision or TradeDecision object)
+            account_info: Account information (AccountInfo or similar)
+            
+        Returns:
+            Risk level [0.0, 1.0]
+        """
+        try:
+            # Extract values with backward compatibility
+            if hasattr(decision, 'size'):
+                position_size = abs(decision.size)
+                confidence = getattr(decision, 'confidence', 0.5)
+                action = getattr(decision, 'action', 'hold')
+            else:
+                # Handle different decision object formats
+                position_size = abs(getattr(decision, 'position_size', 1))
+                confidence = getattr(decision, 'confidence', 0.5)
+                action = getattr(decision, 'action', 'hold')
+            
+            if hasattr(account_info, 'balance'):
+                account_balance = account_info.balance
+            else:
+                # Handle different account object formats
+                account_balance = getattr(account_info, 'account_balance', 25000)
+            
+            # Calculate risk factors
+            risk_factors = []
+            
+            # 1. Position size risk (larger positions = higher risk)
+            max_position = 10  # Max reasonable position size
+            position_risk = min(position_size / max_position, 1.0)
+            risk_factors.append(position_risk * 0.4)  # 40% weight
+            
+            # 2. Confidence risk (lower confidence = higher risk)
+            confidence_risk = 1.0 - confidence
+            risk_factors.append(confidence_risk * 0.3)  # 30% weight
+            
+            # 3. Account balance risk (smaller account = higher relative risk)
+            balance_threshold = 25000  # Baseline account size
+            balance_risk = max(0.0, 1.0 - (account_balance / balance_threshold))
+            balance_risk = min(balance_risk, 1.0)
+            risk_factors.append(balance_risk * 0.2)  # 20% weight
+            
+            # 4. Action risk (hold = no risk, trade = some risk)
+            action_risk = 0.0 if action == 'hold' else 0.1
+            risk_factors.append(action_risk * 0.1)  # 10% weight
+            
+            # Combine risk factors
+            total_risk = sum(risk_factors)
+            
+            return min(total_risk, 1.0)  # Cap at 1.0
+            
+        except Exception as e:
+            logger.error(f"Error in risk assessment: {e}")
+            return 0.5  # Default moderate risk
+    
     def run_monte_carlo_analysis(self, decision: Decision, market_data: MarketData) -> Dict:
         """Run Monte Carlo analysis for position sizing"""
-        intelligence_data = getattr(decision, 'intelligence_data', {})
+        # Defensive handling of intelligence_data for Monte Carlo analysis
+        intelligence_data = getattr(decision, 'intelligence_data', None)
+        if intelligence_data is None:
+            intelligence_data = {
+                'volatility': 0.02,
+                'price_momentum': 0.0,
+                'regime_confidence': 0.5
+            }
+            logger.warning("Missing intelligence_data for Monte Carlo analysis, using fallback values")
+        
         scenarios = self.advanced_risk.run_monte_carlo_simulation(
             decision.size, market_data, intelligence_data
         )

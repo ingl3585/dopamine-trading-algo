@@ -185,8 +185,8 @@ class OnlineLearner:
         self.learning_rate = learning_rate
         
         # Simple online model for immediate updates
-        self.weights = torch.zeros(model_dim, dtype=torch.float64, requires_grad=True)
-        self.bias = torch.zeros(1, dtype=torch.float64, requires_grad=True)
+        self.weights = torch.zeros(model_dim, dtype=torch.float32, requires_grad=True)
+        self.bias = torch.zeros(1, dtype=torch.float32, requires_grad=True)
         
         # Adaptive learning rate
         self.optimizer = optim.Adam([self.weights, self.bias], lr=learning_rate)
@@ -460,7 +460,7 @@ class RealTimeAdaptationEngine:
         elif event.event_type == 'trade_outcome':
             # Immediate learning from trade results
             outcome = event.data.get('pnl', 0)
-            features = event.data.get('features', torch.zeros(self.model_dim, dtype=torch.float64))
+            features = event.data.get('features', torch.zeros(self.model_dim, dtype=torch.float32))
             
             # Quick model update
             self.online_learner.quick_update(features, outcome, event.urgency)

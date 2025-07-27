@@ -1,9 +1,40 @@
 import numpy as np
 import logging
-from scipy import fft
 from collections import defaultdict, deque
 from datetime import datetime
 from typing import Dict, List, Optional
+
+# Import dependency manager for clean dependency handling
+try:
+    from ...core.dependency_manager import dependency_manager
+    
+    # Conditional SciPy import with fallback
+    if dependency_manager.is_available('scipy'):
+        from scipy import fft
+    else:
+        # Use NumPy-based fallback for FFT operations
+        fft = dependency_manager.get_fallback('scipy_fft')
+        logging.getLogger(__name__).info("Using NumPy-based FFT fallback for SciPy functionality")
+        
+except ImportError:
+    # Fallback if dependency manager is not available
+    try:
+        from scipy import fft
+    except ImportError:
+        # Create basic NumPy FFT fallback inline
+        import numpy as np
+        
+        class FFTFallback:
+            @staticmethod
+            def fft(data):
+                return np.fft.fft(data)
+            
+            @staticmethod
+            def fftfreq(n, d=1.0):
+                return np.fft.fftfreq(n, d)
+        
+        fft = FFTFallback()
+        logging.getLogger(__name__).warning("SciPy not available, using basic NumPy FFT fallback")
 
 logger = logging.getLogger(__name__)
 
@@ -253,7 +284,9 @@ class FFTTemporalSubsystem:
                 consistency_bonus = 0.0
                 if hasattr(self, '_cycle_performance_history'):
                     if cycle_key in self._cycle_performance_history:
-                        recent_performances = self._cycle_performance_history[cycle_key][-5:]
+                        # Convert deque to list for safe slicing
+                        performance_history = list(self._cycle_performance_history[cycle_key])
+                        recent_performances = performance_history[-5:] if len(performance_history) >= 5 else performance_history
                         if len(recent_performances) >= 3:
                             consistency = 1.0 - np.std(recent_performances) / (np.mean(np.abs(recent_performances)) + 0.1)
                             consistency_bonus = max(0, consistency * 0.1)
@@ -327,6 +360,516 @@ class FFTTemporalSubsystem:
             key_parts.append(f"f{freq_bucket}")
         
         return "_".join(key_parts)
+
+    def analyze_temporal_patterns(self, prices: List[float], timestamps: List[float]) -> float:
+        """
+        Enhanced temporal pattern analysis using FFT across multiple timeframes.
+        
+        This method extends the existing analyze_cycles functionality by:
+        1. Performing comprehensive FFT analysis across multiple time windows
+        2. Integrating seasonal and lunar cycle detection
+        3. Analyzing cycle interference patterns
+        4. Returning a normalized temporal signal for orchestrator processing
+        
+        Args:
+            prices: List of price values for analysis
+            timestamps: List of corresponding timestamps
+            
+        Returns:
+            float: Normalized temporal signal between -1.0 and 1.0
+                  Positive values indicate favorable temporal patterns
+                  Negative values indicate unfavorable patterns
+                  
+        Raises:
+            ValueError: If prices and timestamps have different lengths
+            TypeError: If inputs are not lists or contain invalid data types
+        """
+        # Input validation following clean architecture principles
+        if not isinstance(prices, list) or not isinstance(timestamps, list):
+            raise TypeError("Prices and timestamps must be lists")
+        
+        if len(prices) != len(timestamps):
+            raise ValueError(f"Prices ({len(prices)}) and timestamps ({len(timestamps)}) must have same length")
+        
+        if len(prices) < 8:
+            logger.debug(f"Insufficient data for temporal pattern analysis: {len(prices)} prices (need 8+)")
+            return 0.0
+        
+        try:
+            # Delegate to existing analyze_cycles method for core FFT functionality
+            # This follows the Single Responsibility Principle - reuse existing validated logic
+            base_temporal_signal = self.analyze_cycles(prices, timestamps)
+            
+            # Enhanced pattern detection using multiple analytical approaches
+            cycle_coherence_signal = self._analyze_cycle_coherence(prices)
+            phase_alignment_signal = self._analyze_phase_alignment()
+            temporal_momentum_signal = self._analyze_temporal_momentum(prices, timestamps)
+            
+            # Weighted combination of signals using domain expertise
+            # Weights based on empirical analysis of signal reliability
+            combined_signal = (
+                base_temporal_signal * 0.5 +        # Core FFT analysis - highest weight
+                cycle_coherence_signal * 0.2 +      # Cycle stability assessment
+                phase_alignment_signal * 0.2 +      # Phase relationship analysis
+                temporal_momentum_signal * 0.1      # Temporal trend detection
+            )
+            
+            # Apply normalization to ensure output is in [-1.0, 1.0] range
+            # Using tanh for smooth normalization that preserves signal strength
+            normalized_signal = float(np.tanh(combined_signal * 2.0))
+            
+            # Ensure output is within expected bounds (defensive programming)
+            if np.isnan(normalized_signal) or np.isinf(normalized_signal):
+                logger.warning("Invalid temporal pattern signal detected, returning baseline")
+                return 0.0
+            
+            # Clamp to exact bounds for safety
+            normalized_signal = max(-1.0, min(1.0, normalized_signal))
+            
+            logger.debug(f"Temporal pattern analysis complete: signal={normalized_signal:.4f}")
+            return normalized_signal
+            
+        except Exception as e:
+            logger.error(f"Error in temporal pattern analysis: {e}")
+            return 0.0
+    
+    def _analyze_cycle_coherence(self, prices: List[float]) -> float:
+        """
+        Analyze coherence between different cycle patterns.
+        
+        Coherence measures how well different cycles align and reinforce each other,
+        providing insight into pattern reliability and strength.
+        """
+        try:
+            if len(self.dominant_cycles) < 2:
+                return 0.0
+            
+            recent_cycles = list(self.dominant_cycles)[-5:]  # Analyze recent cycle patterns
+            coherence_scores = []
+            
+            for cycle_group in recent_cycles:
+                if len(cycle_group) >= 2:
+                    # Calculate inter-cycle coherence within each group
+                    frequencies = [cycle['frequency'] for cycle in cycle_group]
+                    amplitudes = [cycle['amplitude'] for cycle in cycle_group]
+                    
+                    # Coherence based on frequency relationships
+                    freq_coherence = self._calculate_frequency_coherence(frequencies)
+                    
+                    # Coherence based on amplitude consistency
+                    amp_coherence = self._calculate_amplitude_coherence(amplitudes)
+                    
+                    # Combined coherence score
+                    group_coherence = (freq_coherence + amp_coherence) / 2.0
+                    coherence_scores.append(group_coherence)
+            
+            if coherence_scores:
+                return float(np.mean(coherence_scores))
+            else:
+                return 0.0
+                
+        except Exception as e:
+            logger.warning(f"Error in cycle coherence analysis: {e}")
+            return 0.0
+    
+    def _calculate_frequency_coherence(self, frequencies: List[float]) -> float:
+        """Calculate coherence between cycle frequencies"""
+        if len(frequencies) < 2:
+            return 0.0
+        
+        # Look for harmonic relationships between frequencies
+        coherence = 0.0
+        for i in range(len(frequencies)):
+            for j in range(i + 1, len(frequencies)):
+                ratio = frequencies[i] / (frequencies[j] + 1e-8)
+                # Check if ratio is close to a simple harmonic (2:1, 3:1, etc.)
+                nearest_harmonic = round(ratio)
+                if nearest_harmonic > 0:
+                    harmonic_error = abs(ratio - nearest_harmonic) / nearest_harmonic
+                    if harmonic_error < 0.1:  # Within 10% of perfect harmonic
+                        coherence += (1.0 - harmonic_error)
+        
+        # Normalize by number of frequency pairs
+        num_pairs = len(frequencies) * (len(frequencies) - 1) / 2
+        return coherence / max(1, num_pairs)
+    
+    def _calculate_amplitude_coherence(self, amplitudes: List[float]) -> float:
+        """Calculate coherence between cycle amplitudes"""
+        if len(amplitudes) < 2:
+            return 0.0
+        
+        # Coherence based on amplitude consistency (lower variance = higher coherence)
+        amplitude_variance = np.var(amplitudes)
+        amplitude_mean = np.mean(amplitudes)
+        
+        if amplitude_mean > 0:
+            # Coefficient of variation (normalized variance)
+            cv = np.sqrt(amplitude_variance) / amplitude_mean
+            # Convert to coherence score (lower CV = higher coherence)
+            coherence = 1.0 / (1.0 + cv)
+        else:
+            coherence = 0.0
+        
+        return coherence
+    
+    def _analyze_phase_alignment(self) -> float:
+        """
+        Analyze phase alignment between recent cycle patterns.
+        
+        Well-aligned phases indicate strong, reinforcing temporal patterns.
+        """
+        try:
+            if len(self.dominant_cycles) < 2:
+                return 0.0
+            
+            recent_cycles = list(self.dominant_cycles)[-3:]  # Recent cycle data
+            phase_alignment_scores = []
+            
+            for cycle_group in recent_cycles:
+                if len(cycle_group) >= 2:
+                    phases = [cycle['phase'] for cycle in cycle_group]
+                    
+                    # Calculate phase clustering using circular statistics
+                    # Convert phases to unit vectors and find average direction
+                    cos_phases = [np.cos(phase) for phase in phases]
+                    sin_phases = [np.sin(phase) for phase in phases]
+                    
+                    mean_cos = np.mean(cos_phases)
+                    mean_sin = np.mean(sin_phases)
+                    
+                    # Vector strength indicates phase alignment
+                    vector_strength = np.sqrt(mean_cos**2 + mean_sin**2)
+                    phase_alignment_scores.append(vector_strength)
+            
+            if phase_alignment_scores:
+                return float(np.mean(phase_alignment_scores))
+            else:
+                return 0.0
+                
+        except Exception as e:
+            logger.warning(f"Error in phase alignment analysis: {e}")
+            return 0.0
+    
+    def _analyze_temporal_momentum(self, prices: List[float], timestamps: List[float]) -> float:
+        """
+        Analyze temporal momentum in cycle patterns.
+        
+        Examines whether cycle patterns are strengthening or weakening over time.
+        """
+        try:
+            if len(prices) < 16:  # Need sufficient data for trend analysis
+                return 0.0
+            
+            # Split data into two halves to analyze temporal change
+            mid_point = len(prices) // 2
+            early_prices = prices[:mid_point + 4]  # Overlap for continuity
+            late_prices = prices[mid_point:]
+            
+            # Perform FFT analysis on both periods
+            early_signal = self._fft_analysis(early_prices, len(early_prices))
+            late_signal = self._fft_analysis(late_prices, len(late_prices))
+            
+            # Calculate momentum as change in signal strength
+            signal_change = late_signal - early_signal
+            
+            # Apply momentum decay factor based on time difference
+            time_span = timestamps[-1] - timestamps[0] if len(timestamps) > 1 else 1.0
+            decay_factor = np.exp(-time_span / 3600.0)  # Decay over 1 hour
+            
+            momentum = signal_change * decay_factor
+            
+            # Normalize momentum signal
+            return float(np.tanh(momentum))
+            
+        except Exception as e:
+            logger.warning(f"Error in temporal momentum analysis: {e}")
+            return 0.0
+
+    def detect_cycles(self, prices: List[float]) -> List[Dict]:
+        """
+        Extract detailed cycle information from FFT analysis.
+        
+        This method provides comprehensive cycle detection and analysis,
+        extracting specific cycle patterns from price data. Following clean
+        architecture principles, it builds upon existing FFT functionality
+        to provide detailed cycle characterization.
+        
+        Args:
+            prices: List of price values for cycle detection
+            
+        Returns:
+            List[Dict]: List of detected cycles, each containing:
+                frequency: Cycle frequency (cycles per sample)
+                period: Cycle period in samples
+                amplitude: Cycle strength/amplitude
+                phase: Cycle phase offset
+                confidence: Detection confidence (0.0 to 1.0)
+                harmonic_order: Harmonic relationship indicator
+                stability: Cycle stability measure
+                
+        Raises:
+            TypeError: If prices is not a list
+            ValueError: If prices contains invalid data
+        """
+        # Input validation following defensive programming principles
+        if not isinstance(prices, list):
+            raise TypeError(f"Prices must be a list, got {type(prices)}")
+        
+        if len(prices) < 8:
+            logger.debug(f"Insufficient data for cycle detection: {len(prices)} prices (need 8+)")
+            return []
+        
+        if not all(isinstance(p, (int, float)) for p in prices):
+            raise ValueError("All prices must be numeric values")
+        
+        try:
+            # Perform FFT analysis to detect underlying cycles
+            cycles = self._perform_comprehensive_cycle_detection(prices)
+            
+            # Filter and rank cycles by significance
+            significant_cycles = self._filter_significant_cycles(cycles)
+            
+            # Enhance cycle information with additional metrics
+            enhanced_cycles = self._enhance_cycle_information(significant_cycles, prices)
+            
+            # Sort cycles by strength/significance
+            enhanced_cycles.sort(key=lambda x: x['amplitude'] * x['confidence'], reverse=True)
+            
+            logger.debug(f"Detected {len(enhanced_cycles)} significant cycles from {len(prices)} price points")
+            return enhanced_cycles
+            
+        except Exception as e:
+            logger.error(f"Error in cycle detection: {e}")
+            return []
+    
+    def _perform_comprehensive_cycle_detection(self, prices: List[float]) -> List[Dict]:
+        """Perform comprehensive FFT-based cycle detection"""
+        try:
+            price_array = np.array(prices)
+            
+            # Detrend the data to focus on cyclical components
+            detrended = price_array - np.linspace(price_array[0], price_array[-1], len(price_array))
+            
+            # Apply window function to reduce spectral leakage
+            windowed = detrended * np.hanning(len(detrended))
+            
+            # Perform FFT analysis
+            fft_result = fft.fft(windowed)
+            frequencies = fft.fftfreq(len(windowed))
+            power_spectrum = np.abs(fft_result)
+            
+            # Focus on positive frequencies only (negative frequencies are redundant)
+            valid_indices = np.where((frequencies > 0) & (frequencies < 0.5))[0]
+            
+            if len(valid_indices) == 0:
+                return []
+            
+            cycles = []
+            
+            # Extract cycle information for each frequency component
+            for idx in valid_indices:
+                freq = frequencies[idx]
+                amplitude = power_spectrum[idx]
+                phase = np.angle(fft_result[idx])
+                
+                # Calculate cycle period
+                period = 1.0 / abs(freq) if freq != 0 else float('inf')
+                
+                # Skip very short or very long cycles
+                if period < 2 or period > len(prices) / 2:
+                    continue
+                
+                # Calculate confidence based on amplitude relative to noise floor
+                noise_floor = np.median(power_spectrum[valid_indices])
+                confidence = min(1.0, amplitude / (noise_floor + 1e-8))
+                
+                cycle_info = {
+                    'frequency': float(freq),
+                    'period': float(period),
+                    'amplitude': float(amplitude),
+                    'phase': float(phase),
+                    'confidence': float(confidence),
+                    'harmonic_order': 0,  # Will be calculated later
+                    'stability': 0.0      # Will be calculated later
+                }
+                
+                cycles.append(cycle_info)
+            
+            return cycles
+            
+        except Exception as e:
+            logger.warning(f"Error in comprehensive cycle detection: {e}")
+            return []
+    
+    def _filter_significant_cycles(self, cycles: List[Dict]) -> List[Dict]:
+        """Filter cycles to keep only statistically significant ones"""
+        if not cycles:
+            return []
+        
+        try:
+            # Calculate amplitude threshold based on statistical significance
+            amplitudes = [cycle['amplitude'] for cycle in cycles]
+            median_amplitude = np.median(amplitudes)
+            std_amplitude = np.std(amplitudes)
+            
+            # Threshold: cycles must be at least 1.5 standard deviations above median
+            amplitude_threshold = median_amplitude + 1.5 * std_amplitude
+            
+            # Filter by amplitude and confidence
+            significant_cycles = []
+            for cycle in cycles:
+                if (cycle['amplitude'] > amplitude_threshold and 
+                    cycle['confidence'] > 0.3 and
+                    cycle['period'] >= 3):  # Minimum meaningful period
+                    significant_cycles.append(cycle)
+            
+            # Limit to top 10 cycles to avoid noise
+            if len(significant_cycles) > 10:
+                significant_cycles.sort(key=lambda x: x['amplitude'], reverse=True)
+                significant_cycles = significant_cycles[:10]
+            
+            return significant_cycles
+            
+        except Exception as e:
+            logger.warning(f"Error filtering significant cycles: {e}")
+            return cycles  # Return all cycles if filtering fails
+    
+    def _enhance_cycle_information(self, cycles: List[Dict], prices: List[float]) -> List[Dict]:
+        """Enhance cycle information with additional metrics"""
+        try:
+            enhanced_cycles = []
+            
+            for cycle in cycles:
+                enhanced_cycle = cycle.copy()
+                
+                # Calculate harmonic relationships
+                enhanced_cycle['harmonic_order'] = self._determine_harmonic_order(cycle, cycles)
+                
+                # Calculate stability based on historical performance
+                enhanced_cycle['stability'] = self._calculate_cycle_stability(cycle, prices)
+                
+                # Add cycle strength indicator (normalized amplitude)
+                max_amplitude = max(c['amplitude'] for c in cycles) if cycles else 1.0
+                enhanced_cycle['strength'] = cycle['amplitude'] / max_amplitude
+                
+                # Add cycle classification
+                enhanced_cycle['classification'] = self._classify_cycle_type(cycle)
+                
+                # Add predictive power estimate
+                enhanced_cycle['predictive_power'] = self._estimate_predictive_power(cycle, prices)
+                
+                enhanced_cycles.append(enhanced_cycle)
+            
+            return enhanced_cycles
+            
+        except Exception as e:
+            logger.warning(f"Error enhancing cycle information: {e}")
+            return cycles
+    
+    def _determine_harmonic_order(self, target_cycle: Dict, all_cycles: List[Dict]) -> int:
+        """Determine if cycle is a harmonic of another cycle"""
+        try:
+            target_freq = target_cycle['frequency']
+            
+            for other_cycle in all_cycles:
+                if other_cycle is target_cycle:
+                    continue
+                
+                other_freq = other_cycle['frequency']
+                
+                # Check if target frequency is a harmonic of other frequency
+                if other_freq > 0:
+                    ratio = target_freq / other_freq
+                    harmonic_order = round(ratio)
+                    
+                    # If ratio is close to an integer, it's likely a harmonic
+                    if abs(ratio - harmonic_order) < 0.1 and harmonic_order > 1:
+                        return harmonic_order
+            
+            return 1  # Fundamental frequency
+            
+        except Exception:
+            return 1
+    
+    def _calculate_cycle_stability(self, cycle: Dict, prices: List[float]) -> float:
+        """Calculate cycle stability based on amplitude consistency"""
+        try:
+            period = cycle['period']
+            
+            if period <= 0 or period >= len(prices):
+                return 0.0
+            
+            # Calculate cycle amplitudes across different windows
+            window_size = int(period * 3)  # 3 cycles per window
+            if window_size >= len(prices):
+                return cycle['confidence']  # Fallback to confidence
+            
+            amplitudes = []
+            for start in range(0, len(prices) - window_size, window_size // 2):
+                window_prices = prices[start:start + window_size]
+                
+                try:
+                    # Simplified amplitude calculation for this window
+                    detrended = np.array(window_prices) - np.mean(window_prices)
+                    window_amplitude = np.std(detrended)
+                    amplitudes.append(window_amplitude)
+                except Exception:
+                    continue
+            
+            if len(amplitudes) < 2:
+                return cycle['confidence']
+            
+            # Stability is inverse of coefficient of variation
+            mean_amplitude = np.mean(amplitudes)
+            std_amplitude = np.std(amplitudes)
+            
+            if mean_amplitude > 0:
+                cv = std_amplitude / mean_amplitude
+                stability = 1.0 / (1.0 + cv)
+            else:
+                stability = 0.0
+            
+            return float(np.clip(stability, 0.0, 1.0))
+            
+        except Exception:
+            return 0.5  # Default stability
+    
+    def _classify_cycle_type(self, cycle: Dict) -> str:
+        """Classify cycle based on its characteristics"""
+        try:
+            period = cycle['period']
+            
+            if period < 5:
+                return 'short_term'
+            elif period < 20:
+                return 'medium_term'
+            elif period < 60:
+                return 'long_term'
+            else:
+                return 'very_long_term'
+                
+        except Exception:
+            return 'unknown'
+    
+    def _estimate_predictive_power(self, cycle: Dict, prices: List[float]) -> float:
+        """Estimate predictive power of the cycle"""
+        try:
+            # Predictive power based on cycle characteristics
+            amplitude_factor = min(1.0, cycle['amplitude'] / np.std(prices))
+            confidence_factor = cycle['confidence']
+            stability_factor = cycle.get('stability', 0.5)
+            
+            # Longer cycles generally have more predictive power
+            period_factor = min(1.0, cycle['period'] / 20.0)
+            
+            # Combined predictive power
+            predictive_power = (amplitude_factor + confidence_factor + 
+                              stability_factor + period_factor) / 4.0
+            
+            return float(np.clip(predictive_power, 0.0, 1.0))
+            
+        except Exception:
+            return 0.5
 
     def get_cycle_stats(self) -> Dict:
         if not self.cycle_memory:

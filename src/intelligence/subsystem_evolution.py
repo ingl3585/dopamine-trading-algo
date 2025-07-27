@@ -2,13 +2,44 @@
 
 import numpy as np
 import torch
-from scipy import fft
 from collections import defaultdict, deque
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 import logging
 import random
 import sys
+
+# Import dependency manager for clean dependency handling
+try:
+    from ..core.dependency_manager import dependency_manager
+    
+    # Conditional SciPy import with fallback
+    if dependency_manager.is_available('scipy'):
+        from scipy import fft
+    else:
+        # Use NumPy-based fallback for FFT operations
+        fft = dependency_manager.get_fallback('scipy_fft')
+        logging.getLogger(__name__).info("Using NumPy-based FFT fallback for SciPy functionality")
+        
+except ImportError:
+    # Fallback if dependency manager is not available
+    try:
+        from scipy import fft
+    except ImportError:
+        # Create basic NumPy FFT fallback inline
+        import numpy as np
+        
+        class FFTFallback:
+            @staticmethod
+            def fft(data):
+                return np.fft.fft(data)
+            
+            @staticmethod
+            def fftfreq(n, d=1.0):
+                return np.fft.fftfreq(n, d)
+        
+        fft = FFTFallback()
+        logging.getLogger(__name__).warning("SciPy not available, using basic NumPy FFT fallback")
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)  # Show progress updates via log messages

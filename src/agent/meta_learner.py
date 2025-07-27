@@ -8,7 +8,7 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Dict, Any, Tuple, List
 from src.neural.uncertainty_estimator import UncertaintyEstimator
-from src.agent.reward_engine import UnifiedRewardEngine
+from src.intelligence.subsystems.enhanced_dopamine_subsystem import ConsolidatedDopamineSubsystem
 import logging
 
 logger = logging.getLogger(__name__)
@@ -42,11 +42,11 @@ class MetaParameter:
 class AdaptiveWeights(nn.Module):
     def __init__(self, num_components: int, initial_temp: float = 1.0):
         super().__init__()
-        self.logits = nn.Parameter(torch.zeros(num_components, dtype=torch.float64))
-        self.temperature = nn.Parameter(torch.tensor(initial_temp, dtype=torch.float64))
+        self.logits = nn.Parameter(torch.zeros(num_components, dtype=torch.float32))
+        self.temperature = nn.Parameter(torch.tensor(initial_temp, dtype=torch.float32))
         
-        # Convert to double precision
-        self.double()
+        # Convert to float precision
+        self.float()
         
         self.outcomes = deque(maxlen=100)
     
@@ -71,8 +71,8 @@ class ExplorationStrategy(nn.Module):
             nn.Sigmoid()
         )
         
-        # Convert to double precision
-        self.double()
+        # Convert to float precision
+        self.float()
         
         self.recent_outcomes = deque(maxlen=20)
     
@@ -84,7 +84,7 @@ class ExplorationStrategy(nn.Module):
         ])
         
         exploration_prob = self.net(context)
-        return torch.rand(1, dtype=torch.float64) < exploration_prob
+        return torch.rand(1, dtype=torch.float32) < exploration_prob
     
     def update_from_outcome(self, was_exploration: bool, outcome: float):
         self.recent_outcomes.append((was_exploration, outcome))
@@ -168,7 +168,7 @@ class MetaLearner:
         # Adaptive components  
         self.subsystem_weights = AdaptiveWeights(6)  # DNA, Temporal, Immune, Microstructure, Dopamine, Regime
         self.exploration_strategy = ExplorationStrategy(state_dim)
-        self.reward_engine = UnifiedRewardEngine()
+        self.reward_engine = ConsolidatedDopamineSubsystem({})
         self.architecture_evolver = ArchitectureEvolver()
         
         # Learning tracking
@@ -225,11 +225,45 @@ class MetaLearner:
         )
     
     def compute_reward(self, trade_data: Dict[str, Any]) -> float:
-        return self.reward_engine.compute_trade_reward(trade_data)
+        # Convert trade_data to market_data format for consolidated dopamine system
+        market_data = {
+            'unrealized_pnl': trade_data.get('pnl', 0.0),
+            'daily_pnl': trade_data.get('pnl', 0.0),
+            'open_positions': trade_data.get('position_size', 0.0),
+            'current_price': trade_data.get('current_price', 0.0),
+            'trade_duration': trade_data.get('hold_time', 0.0)
+        }
+        
+        context = {
+            'confidence': trade_data.get('decision_confidence', 0.5),
+            'expected_outcome': trade_data.get('expected_outcome', 0.0),
+            'action': trade_data.get('action', 'unknown')
+        }
+        
+        # Use realization phase for completed trades
+        response = self.reward_engine.process_trading_event('realization', market_data, context)
+        return response.signal
     
     def compute_holding_reward(self, decision_confidence: float, market_conditions: Dict[str, Any]) -> float:
         """Compute reward for holding decisions based on context"""
-        return self.reward_engine.compute_holding_reward(decision_confidence, market_conditions)
+        # Convert to market_data format
+        market_data = {
+            'unrealized_pnl': market_conditions.get('unrealized_pnl', 0.0),
+            'daily_pnl': market_conditions.get('daily_pnl', 0.0),
+            'open_positions': market_conditions.get('open_positions', 0.0),
+            'current_price': market_conditions.get('current_price', 0.0),
+            'trade_duration': 0.0  # No duration for hold decisions
+        }
+        
+        context = {
+            'confidence': decision_confidence,
+            'expected_outcome': 0.0,  # No expected outcome for holding
+            'action': 'hold'
+        }
+        
+        # Use anticipation phase for hold decisions (considering future action)
+        response = self.reward_engine.process_trading_event('anticipation', market_data, context)
+        return response.signal * 0.1  # Scale down anticipation signal for holding
     
     def should_evolve_architecture(self) -> bool:
         return self.architecture_evolver.should_evolve()

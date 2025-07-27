@@ -179,6 +179,25 @@ class TradingDecisionEngine:
             # Return safe hold decision on error
             return Decision('hold', 0.3, 0, regime_awareness=adaptation_decision)
     
+    def _get_dopamine_value(self, dopamine_anticipation: Any, dict_key: str, attr_key: str, default_value: Any) -> Any:
+        """Helper method to safely extract values from dopamine_anticipation object or dict"""
+        if not dopamine_anticipation:
+            return default_value
+        
+        # Try dictionary access first (current implementation)
+        if isinstance(dopamine_anticipation, dict):
+            return dopamine_anticipation.get(dict_key, default_value)
+        
+        # Try object attribute access
+        if hasattr(dopamine_anticipation, attr_key):
+            attr_value = getattr(dopamine_anticipation, attr_key)
+            # Handle nested attribute access for state.value
+            if attr_key == 'state' and hasattr(attr_value, 'value'):
+                return attr_value.value
+            return attr_value
+        
+        return default_value
+
     def _build_decision_context(self,
                                features: Features,
                                market_data: MarketData, 
@@ -189,7 +208,17 @@ class TradingDecisionEngine:
         
         # Enhanced subsystem contributions with dopamine influence
         base_dopamine_signal = float(features.dopamine_signal)
-        dopamine_amplified_signal = base_dopamine_signal * dopamine_anticipation.position_size_modifier
+        # Handle both object attributes and dictionary keys
+        if dopamine_anticipation:
+            if hasattr(dopamine_anticipation, 'position_size_modifier'):
+                position_modifier = dopamine_anticipation.position_size_modifier
+            elif isinstance(dopamine_anticipation, dict):
+                position_modifier = dopamine_anticipation.get('position_size_modifier', 1.0)
+            else:
+                position_modifier = 1.0
+        else:
+            position_modifier = 1.0
+        dopamine_amplified_signal = base_dopamine_signal * position_modifier
         
         subsystem_signals = torch.tensor([
             float(features.dna_signal),
@@ -198,7 +227,7 @@ class TradingDecisionEngine:
             float(features.microstructure_signal),
             dopamine_amplified_signal,
             float(features.regime_adjusted_signal)
-        ], dtype=torch.float64, device=self.device)
+        ], dtype=torch.float32, device=self.device)
         
         subsystem_weights = self.meta_learner.get_subsystem_weights()
         
@@ -206,7 +235,7 @@ class TradingDecisionEngine:
         if len(subsystem_weights) < len(subsystem_signals):
             additional_weights = torch.ones(
                 len(subsystem_signals) - len(subsystem_weights), 
-                dtype=torch.float64, device=self.device
+                dtype=torch.float32, device=self.device
             ) * 0.1
             subsystem_weights = torch.cat([subsystem_weights, additional_weights])
         
@@ -218,8 +247,8 @@ class TradingDecisionEngine:
             'volatility_regime': min(1.0, features.volatility / 0.05),
             'liquidity_regime': features.liquidity_depth,
             'smart_money_activity': abs(features.smart_money_flow),
-            'dopamine_state': dopamine_anticipation.state.value,
-            'dopamine_urgency': dopamine_anticipation.urgency_factor
+            'dopamine_state': self._get_dopamine_value(dopamine_anticipation, 'dopamine_state', 'state', 'baseline'),
+            'dopamine_urgency': self._get_dopamine_value(dopamine_anticipation, 'urgency_factor', 'urgency_factor', 0.5)
         }
         
         return DecisionContext(
@@ -253,7 +282,7 @@ class TradingDecisionEngine:
                 tool_consultations['microstructure_recommendation'],
                 tool_consultations['dopamine_recommendation'],
                 float(features.regime_adjusted_signal)  # Keep existing regime signal
-            ], dtype=torch.float64, device=self.device)
+            ], dtype=torch.float32, device=self.device)
             
             # Weight subsystems based on their confidence in current market conditions
             subsystem_weights = torch.tensor([
@@ -263,7 +292,7 @@ class TradingDecisionEngine:
                 tool_consultations['microstructure_confidence'],
                 tool_consultations['dopamine_confidence'],
                 0.5  # Default regime weight
-            ], dtype=torch.float64, device=self.device)
+            ], dtype=torch.float32, device=self.device)
             
         else:
             # Fallback to original method if no intelligence engine available
@@ -509,9 +538,20 @@ class TradingDecisionEngine:
         raw_position_size = float(network_outputs['position_size'].detach().cpu().numpy()[0])
         base_position_size = max(0.1, abs(raw_position_size))
         
-        # Apply dopamine psychological modifiers
-        dopamine_position_modifier = dopamine_anticipation.position_size_modifier
-        dopamine_risk_modifier = dopamine_anticipation.risk_tolerance_modifier
+        # Apply dopamine psychological modifiers with null safety
+        if dopamine_anticipation:
+            if hasattr(dopamine_anticipation, 'position_size_modifier'):
+                dopamine_position_modifier = dopamine_anticipation.position_size_modifier
+                dopamine_risk_modifier = dopamine_anticipation.risk_tolerance_modifier
+            elif isinstance(dopamine_anticipation, dict):
+                dopamine_position_modifier = dopamine_anticipation.get('position_size_modifier', 1.0)
+                dopamine_risk_modifier = dopamine_anticipation.get('risk_tolerance_modifier', 1.0)
+            else:
+                dopamine_position_modifier = 1.0
+                dopamine_risk_modifier = 1.0
+        else:
+            dopamine_position_modifier = 1.0
+            dopamine_risk_modifier = 1.0
         
         # Adjust position size based on dopamine state
         position_size = base_position_size * dopamine_position_modifier
@@ -520,8 +560,9 @@ class TradingDecisionEngine:
         uncertainty_factor = 1.0 - context.meta_context.get('uncertainty', 0.5)
         position_size *= max(0.1, uncertainty_factor)
         
-        # Apply dopamine urgency factor
-        urgency_adjustment = 0.8 + (dopamine_anticipation.urgency_factor * 0.4)  # 0.8 to 1.2 range
+        # Apply dopamine urgency factor with null safety
+        dopamine_urgency = self._get_dopamine_value(dopamine_anticipation, 'urgency_factor', 'urgency_factor', 0.5)
+        urgency_adjustment = 0.8 + (dopamine_urgency * 0.4)  # 0.8 to 1.2 range
         position_size *= urgency_adjustment
         
         # Risk parameters
@@ -586,11 +627,29 @@ class TradingDecisionEngine:
         
         logger.info(f"CONFIDENCE TRACE: creating_hold_decision={confidence:.6f}")
         
+        # Create intelligence_data for hold decisions to prevent AttributeError in risk manager
+        intelligence_data = {
+            'subsystem_signals': context.subsystem_signals.detach().cpu().numpy().tolist() if hasattr(context.subsystem_signals, 'detach') else [],
+            'subsystem_weights': context.subsystem_weights.detach().cpu().numpy().tolist() if hasattr(context.subsystem_weights, 'detach') else [],
+            'weighted_signal': 0.0,  # Hold decision has neutral signal
+            'volatility': context.features.volatility,
+            'price_momentum': context.features.price_momentum,
+            'volume_momentum': getattr(context.features, 'volume_momentum', 0.0),
+            'regime_confidence': context.features.regime_confidence,
+            'consensus_strength': 0.5,  # Neutral consensus for hold
+            'regime_context': {
+                'regime_confidence': context.features.regime_confidence,
+                'volatility': context.features.volatility,
+                'trend_strength': abs(context.features.price_momentum)
+            }
+        }
+        
         decision = Decision(
             'hold', confidence, 0,
             adaptation_strategy='conservative',
             uncertainty_estimate=0.5,
             few_shot_prediction=0.0,
+            intelligence_data=intelligence_data,  # Add intelligence_data to prevent AttributeError
             regime_awareness={
                 'regime_confidence': context.features.regime_confidence,
                 'volatility': context.features.volatility,
@@ -767,6 +826,367 @@ class TradingDecisionEngine:
             primary_tool += '_smartmoney'
         
         return primary_tool
+    
+    def _build_meta_context(self, 
+                           features: Features, 
+                           adaptation_decision: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Build comprehensive meta-context for decision making and learning.
+        
+        This method extracts and processes regime, microstructure, and adaptation
+        information to create a rich context that supports intelligent decision
+        making and meta-learning. Following clean architecture principles,
+        it separates context building from decision logic.
+        
+        Args:
+            features: Processed market features containing regime and technical data
+            adaptation_decision: Real-time adaptation context from meta-learner
+            
+        Returns:
+            Dict[str, Any]: Comprehensive meta-context with normalized values
+                regime_confidence: Market regime certainty (0.0 to 1.0)
+                microstructure_strength: Order book pattern strength
+                adaptation_quality: Quality of recent adaptations
+                volatility_regime: Normalized volatility classification
+                liquidity_regime: Market liquidity assessment
+                smart_money_activity: Institutional flow detection
+                market_phase: Current market cycle phase
+                uncertainty_estimate: Overall uncertainty level
+                risk_regime: Risk environment classification
+                
+        Raises:
+            AttributeError: If required features are missing
+            ValueError: If adaptation_decision contains invalid data
+        """
+        try:
+            # Extract regime and microstructure information
+            # Following the Interface Segregation Principle - only extract what we need
+            regime_info = self._extract_regime_info(features)
+            microstructure_info = self._extract_microstructure_info(features)
+            adaptation_metrics = self._process_adaptation_metrics(adaptation_decision)
+            
+            # Build comprehensive meta-context
+            meta_context = {
+                # Regime Analysis
+                'regime_confidence': regime_info['confidence'],
+                'regime_classification': regime_info['classification'],
+                'regime_stability': regime_info['stability'],
+                
+                # Microstructure Analysis  
+                'microstructure_strength': microstructure_info['strength'],
+                'liquidity_regime': microstructure_info['liquidity'],
+                'smart_money_activity': microstructure_info['smart_money'],
+                'order_flow_imbalance': microstructure_info['flow_imbalance'],
+                
+                # Adaptation Metrics
+                'adaptation_quality': adaptation_metrics['quality'],
+                'uncertainty_estimate': adaptation_metrics['uncertainty'],
+                'learning_confidence': adaptation_metrics['learning_confidence'],
+                'strategy_effectiveness': adaptation_metrics['strategy_effectiveness'],
+                
+                # Volatility and Risk Classification
+                'volatility_regime': self._classify_volatility_regime(features.volatility),
+                'risk_regime': self._classify_risk_regime(features, adaptation_decision),
+                'market_phase': self._determine_market_phase(features),
+                
+                # Additional Context for Learning
+                'feature_quality': self._assess_feature_quality(features),
+                'signal_reliability': self._assess_signal_reliability(features),
+                'market_efficiency': self._estimate_market_efficiency(features)
+            }
+            
+            # Validate meta-context completeness and bounds
+            meta_context = self._validate_and_normalize_context(meta_context)
+            
+            logger.debug(f"Meta-context built: regime_conf={meta_context['regime_confidence']:.3f}, "
+                        f"micro_strength={meta_context['microstructure_strength']:.3f}, "
+                        f"adapt_quality={meta_context['adaptation_quality']:.3f}")
+            
+            return meta_context
+            
+        except Exception as e:
+            logger.error(f"Error building meta-context: {e}")
+            # Return safe fallback context
+            return self._get_fallback_meta_context()
+    
+    def _extract_regime_info(self, features: Features) -> Dict[str, float]:
+        """Extract and process regime-related information"""
+        try:
+            # Regime confidence with bounds checking
+            regime_confidence = getattr(features, 'regime_confidence', 0.5)
+            regime_confidence = max(0.0, min(1.0, regime_confidence))
+            
+            # Estimate regime stability from momentum consistency
+            price_momentum = getattr(features, 'price_momentum', 0.0)
+            volume_momentum = getattr(features, 'volume_momentum', 0.0)
+            
+            # Regime stability based on momentum alignment
+            momentum_alignment = 1.0 - abs(price_momentum - volume_momentum) / 2.0
+            regime_stability = max(0.0, min(1.0, momentum_alignment))
+            
+            # Classify regime type based on market characteristics
+            volatility = getattr(features, 'volatility', 0.02)
+            if volatility < 0.01:
+                regime_classification = 'low_vol'
+            elif volatility < 0.03:
+                regime_classification = 'normal_vol'
+            elif volatility < 0.05:
+                regime_classification = 'high_vol'
+            else:
+                regime_classification = 'extreme_vol'
+            
+            return {
+                'confidence': regime_confidence,
+                'stability': regime_stability,
+                'classification': regime_classification
+            }
+            
+        except Exception as e:
+            logger.warning(f"Error extracting regime info: {e}")
+            return {
+                'confidence': 0.5,
+                'stability': 0.5, 
+                'classification': 'unknown'
+            }
+    
+    def _extract_microstructure_info(self, features: Features) -> Dict[str, float]:
+        """Extract and process microstructure-related information"""
+        try:
+            # Microstructure signal strength
+            microstructure_signal = getattr(features, 'microstructure_signal', 0.0)
+            microstructure_strength = abs(microstructure_signal)
+            
+            # Liquidity assessment from depth and spread indicators
+            liquidity_depth = getattr(features, 'liquidity_depth', 0.5)
+            bid_ask_spread = getattr(features, 'bid_ask_spread', 0.001)
+            
+            # Liquidity regime: higher depth and lower spread = better liquidity
+            liquidity_score = liquidity_depth * (1.0 / (1.0 + bid_ask_spread * 1000))
+            liquidity_regime = max(0.0, min(1.0, liquidity_score))
+            
+            # Smart money activity detection
+            smart_money_flow = getattr(features, 'smart_money_flow', 0.0)
+            smart_money_activity = abs(smart_money_flow)
+            
+            # Order flow imbalance estimation
+            volume_momentum = getattr(features, 'volume_momentum', 0.0)
+            price_momentum = getattr(features, 'price_momentum', 0.0)
+            
+            # Flow imbalance when volume and price momentum diverge
+            flow_imbalance = abs(volume_momentum - price_momentum) / 2.0
+            
+            return {
+                'strength': microstructure_strength,
+                'liquidity': liquidity_regime,
+                'smart_money': smart_money_activity,
+                'flow_imbalance': flow_imbalance
+            }
+            
+        except Exception as e:
+            logger.warning(f"Error extracting microstructure info: {e}")
+            return {
+                'strength': 0.0,
+                'liquidity': 0.5,
+                'smart_money': 0.0,
+                'flow_imbalance': 0.0
+            }
+    
+    def _process_adaptation_metrics(self, adaptation_decision: Dict[str, Any]) -> Dict[str, float]:
+        """Process adaptation decision metrics into normalized values"""
+        try:
+            # Extract adaptation quality metrics
+            adaptation_quality = adaptation_decision.get('adaptation_quality', 0.5)
+            adaptation_quality = max(0.0, min(1.0, adaptation_quality))
+            
+            # Extract uncertainty estimate
+            uncertainty_estimate = adaptation_decision.get('uncertainty', 0.5)
+            uncertainty_estimate = max(0.0, min(1.0, uncertainty_estimate))
+            
+            # Learning confidence from recent performance
+            learning_confidence = adaptation_decision.get('learning_confidence', 0.5)
+            learning_confidence = max(0.0, min(1.0, learning_confidence))
+            
+            # Strategy effectiveness assessment
+            strategy_name = adaptation_decision.get('strategy_name', 'conservative')
+            recent_performance = adaptation_decision.get('recent_performance', 0.0)
+            
+            # Convert performance to effectiveness score [0, 1]
+            if recent_performance >= 0:
+                strategy_effectiveness = min(1.0, recent_performance * 2.0 + 0.5)
+            else:
+                strategy_effectiveness = max(0.0, 0.5 + recent_performance * 2.0)
+            
+            return {
+                'quality': adaptation_quality,
+                'uncertainty': uncertainty_estimate,
+                'learning_confidence': learning_confidence,
+                'strategy_effectiveness': strategy_effectiveness
+            }
+            
+        except Exception as e:
+            logger.warning(f"Error processing adaptation metrics: {e}")
+            return {
+                'quality': 0.5,
+                'uncertainty': 0.5,
+                'learning_confidence': 0.5,
+                'strategy_effectiveness': 0.5
+            }
+    
+    def _classify_volatility_regime(self, volatility: float) -> str:
+        """Classify volatility into regime categories"""
+        if volatility < 0.005:
+            return 'ultra_low'
+        elif volatility < 0.015:
+            return 'low'
+        elif volatility < 0.025:
+            return 'normal'
+        elif volatility < 0.04:
+            return 'elevated'
+        elif volatility < 0.06:
+            return 'high'
+        else:
+            return 'extreme'
+    
+    def _classify_risk_regime(self, features: Features, adaptation_decision: Dict[str, Any]) -> str:
+        """Classify overall risk regime based on multiple factors"""
+        try:
+            volatility = getattr(features, 'volatility', 0.02)
+            regime_confidence = getattr(features, 'regime_confidence', 0.5)
+            uncertainty = adaptation_decision.get('uncertainty', 0.5)
+            
+            # Risk score combines volatility, regime uncertainty, and adaptation uncertainty
+            risk_score = (volatility * 20 + (1.0 - regime_confidence) + uncertainty) / 3.0
+            
+            if risk_score < 0.3:
+                return 'low_risk'
+            elif risk_score < 0.5:
+                return 'moderate_risk'
+            elif risk_score < 0.7:
+                return 'elevated_risk'
+            else:
+                return 'high_risk'
+                
+        except Exception:
+            return 'unknown_risk'
+    
+    def _determine_market_phase(self, features: Features) -> str:
+        """Determine current market cycle phase"""
+        try:
+            price_momentum = getattr(features, 'price_momentum', 0.0)
+            volatility = getattr(features, 'volatility', 0.02)
+            volume_momentum = getattr(features, 'volume_momentum', 0.0)
+            
+            # Phase determination based on momentum and volatility patterns
+            if price_momentum > 0.002 and volume_momentum > 0.0:
+                return 'uptrend'
+            elif price_momentum < -0.002 and volume_momentum > 0.0:
+                return 'downtrend'
+            elif volatility < 0.01 and abs(price_momentum) < 0.001:
+                return 'consolidation'
+            elif volatility > 0.04:
+                return 'volatile_range'
+            else:
+                return 'sideways'
+                
+        except Exception:
+            return 'unknown'
+    
+    def _assess_feature_quality(self, features: Features) -> float:
+        """Assess overall quality of input features"""
+        try:
+            # Check for completeness and validity of key features
+            key_features = ['volatility', 'price_momentum', 'volume_momentum', 
+                          'regime_confidence', 'liquidity_depth']
+            
+            quality_score = 0.0
+            for feature_name in key_features:
+                feature_value = getattr(features, feature_name, None)
+                if feature_value is not None and not (np.isnan(feature_value) or np.isinf(feature_value)):
+                    quality_score += 0.2  # Each feature contributes 20%
+            
+            return max(0.0, min(1.0, quality_score))
+            
+        except Exception:
+            return 0.5
+    
+    def _assess_signal_reliability(self, features: Features) -> float:
+        """Assess reliability of trading signals"""
+        try:
+            # Signal reliability based on consistency and strength
+            overall_signal = getattr(features, 'overall_signal', 0.0)
+            confidence = getattr(features, 'confidence', 0.5)
+            regime_confidence = getattr(features, 'regime_confidence', 0.5)
+            
+            # Combine signal strength with confidence measures
+            signal_strength = abs(overall_signal)
+            reliability_score = (signal_strength + confidence + regime_confidence) / 3.0
+            
+            return max(0.0, min(1.0, reliability_score))
+            
+        except Exception:
+            return 0.5
+    
+    def _estimate_market_efficiency(self, features: Features) -> float:
+        """Estimate current market efficiency level"""
+        try:
+            # Market efficiency indicators: low spread, high liquidity, regime stability
+            bid_ask_spread = getattr(features, 'bid_ask_spread', 0.001)
+            liquidity_depth = getattr(features, 'liquidity_depth', 0.5)
+            regime_confidence = getattr(features, 'regime_confidence', 0.5)
+            
+            # Efficiency score: high liquidity, low spread, stable regime
+            spread_efficiency = 1.0 / (1.0 + bid_ask_spread * 1000)
+            efficiency_score = (spread_efficiency + liquidity_depth + regime_confidence) / 3.0
+            
+            return max(0.0, min(1.0, efficiency_score))
+            
+        except Exception:
+            return 0.5
+    
+    def _validate_and_normalize_context(self, meta_context: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate and normalize meta-context values"""
+        try:
+            normalized_context = {}
+            
+            for key, value in meta_context.items():
+                if isinstance(value, (int, float)):
+                    # Ensure numeric values are within [0, 1] range where applicable
+                    if key.endswith(('_confidence', '_quality', '_regime', '_activity', 
+                                   '_strength', '_reliability', '_efficiency')):
+                        normalized_context[key] = max(0.0, min(1.0, float(value)))
+                    else:
+                        normalized_context[key] = float(value)
+                else:
+                    # Keep non-numeric values as-is
+                    normalized_context[key] = value
+            
+            return normalized_context
+            
+        except Exception as e:
+            logger.warning(f"Error validating meta-context: {e}")
+            return meta_context
+    
+    def _get_fallback_meta_context(self) -> Dict[str, Any]:
+        """Provide safe fallback meta-context in case of errors"""
+        return {
+            'regime_confidence': 0.5,
+            'regime_classification': 'unknown',
+            'regime_stability': 0.5,
+            'microstructure_strength': 0.0,
+            'liquidity_regime': 0.5,
+            'smart_money_activity': 0.0,
+            'order_flow_imbalance': 0.0,
+            'adaptation_quality': 0.5,
+            'uncertainty_estimate': 0.5,
+            'learning_confidence': 0.5,
+            'strategy_effectiveness': 0.5,
+            'volatility_regime': 'normal',
+            'risk_regime': 'moderate_risk',
+            'market_phase': 'sideways',
+            'feature_quality': 0.5,
+            'signal_reliability': 0.5,
+            'market_efficiency': 0.5
+        }
     
     def get_stats(self) -> Dict[str, Any]:
         """Get decision engine statistics"""

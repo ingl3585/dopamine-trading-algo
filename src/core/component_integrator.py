@@ -17,11 +17,10 @@ from src.neural.uncertainty_estimator import UncertaintyEstimator
 from src.neural.dynamic_pruning import DynamicPruningManager
 from src.neural.specialized_networks import SpecializedNetworkEnsemble
 
-# Phase 3 Components
-from src.agent.neuromorphic_reward_engine import NeuromorphicRewardEngine
+# Phase 3 Components - Consolidated Dopamine System
+from src.intelligence.subsystems.enhanced_dopamine_subsystem import ConsolidatedDopamineSubsystem
 from src.agent.temporal_reward_memory import TemporalRewardMemory, RewardContext
 from src.agent.surprise_detector import SurpriseDetector
-from src.agent.dopamine_pathway import DopaminePathway
 from src.agent.multi_objective_optimizer import MultiObjectiveOptimizer
 
 # System Components
@@ -29,7 +28,6 @@ from src.core.trading_system import TradingSystem
 from src.core.market_data_processor import MarketDataProcessor
 from src.core.system_state_manager import SystemStateManager
 from src.core.analysis_trigger_manager import AnalysisTriggerManager, AnalysisType
-# from src.core.personality_integration_manager import PersonalityIntegrationManager  # Removed - file deleted
 from src.core.config_manager import ConfigurationManager
 
 # Portfolio Components
@@ -60,10 +58,9 @@ class ComponentRegistry:
     intelligence_engine: Optional[Any] = None  # Master coordinator for 5 AI subsystems
     
     # Phase 4 - Reward Components
-    neuromorphic_reward_engine: Optional[NeuromorphicRewardEngine] = None
+    consolidated_dopamine_system: Optional[ConsolidatedDopamineSubsystem] = None
     temporal_reward_memory: Optional[TemporalRewardMemory] = None
     surprise_detector: Optional[SurpriseDetector] = None
-    dopamine_pathway: Optional[DopaminePathway] = None
     multi_objective_optimizer: Optional[MultiObjectiveOptimizer] = None
     
     # System Components
@@ -71,7 +68,6 @@ class ComponentRegistry:
     market_data_processor: Optional[MarketDataProcessor] = None
     system_state_manager: Optional[SystemStateManager] = None
     analysis_trigger_manager: Optional[AnalysisTriggerManager] = None
-    # personality_integration_manager: Optional[PersonalityIntegrationManager] = None  # Removed - file deleted
     configuration_manager: Optional[ConfigurationManager] = None
     
     # Portfolio Components
@@ -171,8 +167,6 @@ class ComponentIntegrator:
             # Analysis Trigger Manager
             self.components.analysis_trigger_manager = AnalysisTriggerManager(self.config)
             
-            # Personality Integration Manager - Removed (file deleted)
-            # self.components.personality_integration_manager = PersonalityIntegrationManager(self.config)
             
             # Trading System Orchestrator (depends on other components)
             self.components.trading_system = TradingSystem()
@@ -237,14 +231,11 @@ class ComponentIntegrator:
             # Surprise Detector
             self.components.surprise_detector = SurpriseDetector(self.config)
             
-            # Dopamine Pathway
-            self.components.dopamine_pathway = DopaminePathway(self.config)
-            
             # Multi-Objective Optimizer
             self.components.multi_objective_optimizer = MultiObjectiveOptimizer(self.config)
             
-            # Neuromorphic Reward Engine (depends on other reward components)
-            self.components.neuromorphic_reward_engine = NeuromorphicRewardEngine(self.config)
+            # Consolidated Dopamine System (replaces multiple dopamine implementations)
+            self.components.consolidated_dopamine_system = ConsolidatedDopamineSubsystem(self.config)
             
             logger.info("Reward components initialized")
             return True
@@ -276,7 +267,7 @@ class ComponentIntegrator:
             # Trade Outcome Processor (depends on reward engine)
             self.components.trade_outcome_processor = TradeOutcomeProcessor(
                 self.config,
-                reward_engine=self.components.neuromorphic_reward_engine
+                reward_engine=self.components.consolidated_dopamine_system
             )
             
             # Trading Decision Engine (depends on neural and intelligence components)
@@ -342,8 +333,6 @@ class ComponentIntegrator:
             # Connect portfolio components
             self._connect_portfolio_system()
             
-            # Connect personality system - Removed (file deleted)
-            # self._connect_personality_system()
             
             logger.info("Components connected successfully")
             return True
@@ -413,15 +402,12 @@ class ComponentIntegrator:
     def _connect_reward_system(self):
         """Connect reward system components"""
         try:
-            # Reward engine contains references to sub-components
-            reward_engine = self.components.neuromorphic_reward_engine
-            
-            # These are already connected in the reward engine initialization
-            # but we can add additional connections if needed
+            # Consolidated dopamine system contains all reward functionality
+            dopamine_system = self.components.consolidated_dopamine_system
             
             # Connect to trade outcome processor
             if hasattr(self.components.trade_outcome_processor, 'reward_engine'):
-                self.components.trade_outcome_processor.reward_engine = reward_engine
+                self.components.trade_outcome_processor.reward_engine = dopamine_system
             
             logger.info("Reward system connected")
             
@@ -447,29 +433,10 @@ class ComponentIntegrator:
         except Exception as e:
             logger.error(f"Error connecting portfolio system: {e}")
     
-    def _connect_personality_system(self):
-        """Connect personality integration system"""
-        try:
-            personality_mgr = self.components.personality_integration_manager
-            
-            # Register commentary callback
-            def handle_commentary(commentary: str):
-                logger.info(f"AI Commentary: {commentary}")
-            
-            personality_mgr.register_commentary_callback(handle_commentary)
-            
-            logger.info("Personality system connected")
-            
-        except Exception as e:
-            logger.error(f"Error connecting personality system: {e}")
-    
     def _trigger_market_analysis(self, market_data: Any, timeframe: str):
         """Trigger market analysis based on timeframe"""
         try:
             if timeframe == '15m':
-                # Generate personality commentary - Removed (file deleted)
-                # if self.components.personality_integration_manager:
-                #     self.components.personality_integration_manager.generate_15m_commentary(market_data)
                 logger.info("15m market analysis triggered")
             
             elif timeframe == '1h':
@@ -501,7 +468,7 @@ class ComponentIntegrator:
             'market_processor': self.components.market_data_processor,
             'state_manager': self.components.system_state_manager,
             'decision_engine': self.components.trading_decision_engine,
-            'reward_engine': self.components.neuromorphic_reward_engine,
+            'reward_engine': self.components.consolidated_dopamine_system,
             'portfolio_optimizer': self.components.portfolio_optimizer,
             'neural_manager': self.components.neural_network_manager
         }
@@ -550,9 +517,6 @@ class ComponentIntegrator:
             if self.components.system_state_manager:
                 self.components.system_state_manager.shutdown()
             
-            # Personality integration manager removed - file deleted
-            # if self.components.personality_integration_manager:
-            #     self.components.personality_integration_manager.shutdown()
             
             # Reset integration state
             self.integration_complete = False
@@ -571,7 +535,7 @@ class ComponentIntegrator:
             return ModernizedTradingAgent(
                 decision_engine=self.components.trading_decision_engine,
                 neural_manager=self.components.neural_network_manager,
-                reward_engine=self.components.neuromorphic_reward_engine,
+                reward_engine=self.components.consolidated_dopamine_system,
                 experience_manager=self.components.experience_manager,
                 outcome_processor=self.components.trade_outcome_processor,
                 state_manager=self.components.trading_state_manager,
@@ -590,7 +554,7 @@ class ModernizedTradingAgent:
     
     def __init__(self, decision_engine: TradingDecisionEngine,
                  neural_manager: NeuralNetworkManager,
-                 reward_engine: NeuromorphicRewardEngine,
+                 reward_engine: ConsolidatedDopamineSubsystem,
                  experience_manager: ExperienceManager,
                  outcome_processor: TradeOutcomeProcessor,
                  state_manager: TradingStateManager,

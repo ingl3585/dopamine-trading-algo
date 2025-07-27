@@ -148,7 +148,7 @@ class NeuralNetworkManager:
                 enable_few_shot=self.config.enable_few_shot,
                 memory_efficient=self.config.memory_efficient,
                 max_memory_gb=self.config.max_memory_gb
-            ).to(self.device)
+            ).to(self.device).float()
             
             # Target network for stable training
             self.target_network = create_enhanced_network(
@@ -157,18 +157,18 @@ class NeuralNetworkManager:
                 enable_few_shot=False,  # Target network doesn't need few-shot
                 memory_efficient=self.config.memory_efficient,
                 max_memory_gb=1.0
-            ).to(self.device)
+            ).to(self.device).float()
             
             # Feature learning network
             self.feature_learner = FeatureLearner(
                 raw_feature_dim=100,  # Match state creation
                 learned_feature_dim=self.config.feature_dim,
-            ).to(self.device)
+            ).to(self.device).float()
             
             # Few-shot learning capability
             self.few_shot_learner = FewShotLearner(
                 feature_dim=self.config.feature_dim
-            ).to(self.device)
+            ).to(self.device).float()
             
             # State encoder for creating enhanced states
             self.state_encoder = StateEncoder()
@@ -285,11 +285,11 @@ class NeuralNetworkManager:
             logger.error(f"Error in forward pass: {e}")
             # Return safe defaults
             return {
-                'action_logits': torch.zeros(1, 3, device=self.device),
-                'confidence': torch.tensor([[0.3]], device=self.device),
-                'position_size': torch.tensor([[1.0]], device=self.device),
-                'risk_params': torch.zeros(1, 4, device=self.device),
-                'few_shot_prediction': torch.tensor([[0.0]], device=self.device)
+                'action_logits': torch.zeros(1, 3, dtype=torch.float32, device=self.device),
+                'confidence': torch.tensor([[0.3]], dtype=torch.float32, device=self.device),
+                'position_size': torch.tensor([[1.0]], dtype=torch.float32, device=self.device),
+                'risk_params': torch.zeros(1, 4, dtype=torch.float32, device=self.device),
+                'few_shot_prediction': torch.tensor([[0.0]], dtype=torch.float32, device=self.device)
             }
     
     def process_features(self, raw_state: torch.Tensor) -> torch.Tensor:
@@ -307,7 +307,7 @@ class NeuralNetworkManager:
         except Exception as e:
             logger.error(f"Error processing features: {e}")
             # Return zero features as fallback
-            return torch.zeros(1, self.config.feature_dim, device=self.device)
+            return torch.zeros(1, self.config.feature_dim, dtype=torch.float32, device=self.device)
     
     def train_networks(self, experience_batch: List[Dict[str, Any]]) -> Dict[str, float]:
         """
@@ -331,7 +331,7 @@ class NeuralNetworkManager:
             # Prepare tensors
             states = torch.tensor(
                 [exp['state_features'] for exp in experience_batch],
-                dtype=torch.float64, device=self.device
+                dtype=torch.float32, device=self.device
             )
             actions = torch.tensor(
                 [exp['action'] for exp in experience_batch],
@@ -339,11 +339,11 @@ class NeuralNetworkManager:
             )
             rewards = torch.tensor(
                 [exp['reward'] for exp in experience_batch],
-                dtype=torch.float64, device=self.device
+                dtype=torch.float32, device=self.device
             )
             uncertainties = torch.tensor(
                 [exp.get('uncertainty', 0.5) for exp in experience_batch],
-                dtype=torch.float64, device=self.device
+                dtype=torch.float32, device=self.device
             )
             
             # Enhanced feature learning
@@ -432,7 +432,7 @@ class NeuralNetworkManager:
         few_shot_loss = F.mse_loss(few_shot_predictions.squeeze(), rewards.unsqueeze(1))
         
         # Regularization for catastrophic forgetting prevention
-        regularization_loss = torch.tensor(0.0, device=self.device)
+        regularization_loss = torch.tensor(0.0, dtype=torch.float32, device=self.device)
         if self.importance_weights:
             for name, param in self.main_network.named_parameters():
                 if name in self.importance_weights:
@@ -725,6 +725,13 @@ class NeuralNetworkManager:
                 
                 if 'few_shot_learner_state' in checkpoint:
                     self.few_shot_learner.load_state_dict(checkpoint['few_shot_learner_state'])
+                
+                # Ensure all networks use float32 after loading
+                self.main_network.float()
+                self.target_network.float()
+                self.feature_learner.float()
+                if hasattr(self, 'few_shot_learner'):
+                    self.few_shot_learner.float()
                     
             except Exception as arch_error:
                 logger.warning(f"Architecture mismatch detected: {arch_error}")

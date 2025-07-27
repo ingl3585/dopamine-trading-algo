@@ -163,8 +163,8 @@ class UncertaintyEstimator(nn.Module):
             self.deep_ensemble = None
             self.mc_dropout = None
         
-        # Convert to double precision
-        self.double()
+        # Convert to float precision
+        self.float()
         
         # Uncertainty tracking
         self.prediction_history = deque(maxlen=500)
@@ -379,8 +379,8 @@ class UncertaintyEstimator(nn.Module):
         ensemble_mean, epistemic, aleatoric = self.forward(features)
         
         # Target uncertainties based on actual error and confidence
-        target_epistemic = torch.tensor(error * (1.0 - confidence), dtype=torch.float64)
-        target_aleatoric = torch.tensor(error * confidence, dtype=torch.float64)
+        target_epistemic = torch.tensor(error * (1.0 - confidence), dtype=torch.float32)
+        target_aleatoric = torch.tensor(error * confidence, dtype=torch.float32)
         
         # Uncertainty losses
         epistemic_loss = F.mse_loss(epistemic, target_epistemic.unsqueeze(0))

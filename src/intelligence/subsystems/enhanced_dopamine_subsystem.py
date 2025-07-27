@@ -65,6 +65,147 @@ class DopamineResponse:
     position_size_modifier: float    # Suggested position size adjustment
     risk_tolerance_modifier: float   # Suggested risk tolerance adjustment
     urgency_factor: float           # Trading urgency/patience level
+    
+    def to_dict(self) -> Dict:
+        """Convert DopamineResponse to dictionary for safe serialization"""
+        try:
+            return {
+                'signal': float(self.signal),
+                'phase': self.phase.value if hasattr(self.phase, 'value') else str(self.phase),
+                'state': self.state.value if hasattr(self.state, 'value') else str(self.state),
+                'anticipation_factor': float(self.anticipation_factor),
+                'satisfaction_factor': float(self.satisfaction_factor),
+                'tolerance_level': float(self.tolerance_level),
+                'addiction_risk': float(self.addiction_risk),
+                'withdrawal_intensity': float(self.withdrawal_intensity),
+                'position_size_modifier': float(self.position_size_modifier),
+                'risk_tolerance_modifier': float(self.risk_tolerance_modifier),
+                'urgency_factor': float(self.urgency_factor)
+            }
+        except Exception as e:
+            logger.error(f"Error converting DopamineResponse to dict: {e}")
+            return {
+                'signal': 0.0,
+                'phase': 'monitoring',
+                'state': 'balanced',
+                'anticipation_factor': 0.0,
+                'satisfaction_factor': 0.0,
+                'tolerance_level': 0.5,
+                'addiction_risk': 0.0,
+                'withdrawal_intensity': 0.0,
+                'position_size_modifier': 1.0,
+                'risk_tolerance_modifier': 1.0,
+                'urgency_factor': 0.5
+            }
+    
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'DopamineResponse':
+        """Create DopamineResponse from dictionary with safe type conversion"""
+        try:
+            # Safe enum conversion
+            phase = DopaminePhase(data.get('phase', 'monitoring'))
+            state = DopamineState(data.get('state', 'balanced'))
+            
+            return cls(
+                signal=float(data.get('signal', 0.0)),
+                phase=phase,
+                state=state,
+                anticipation_factor=float(data.get('anticipation_factor', 0.0)),
+                satisfaction_factor=float(data.get('satisfaction_factor', 0.0)),
+                tolerance_level=float(data.get('tolerance_level', 0.5)),
+                addiction_risk=float(data.get('addiction_risk', 0.0)),
+                withdrawal_intensity=float(data.get('withdrawal_intensity', 0.0)),
+                position_size_modifier=float(data.get('position_size_modifier', 1.0)),
+                risk_tolerance_modifier=float(data.get('risk_tolerance_modifier', 1.0)),
+                urgency_factor=float(data.get('urgency_factor', 0.5))
+            )
+        except Exception as e:
+            logger.error(f"Error creating DopamineResponse from dict: {e}")
+            # Return safe default
+            return cls(
+                signal=0.0,
+                phase=DopaminePhase.MONITORING,
+                state=DopamineState.BALANCED,
+                anticipation_factor=0.0,
+                satisfaction_factor=0.0,
+                tolerance_level=0.5,
+                addiction_risk=0.0,
+                withdrawal_intensity=0.0,
+                position_size_modifier=1.0,
+                risk_tolerance_modifier=1.0,
+                urgency_factor=0.5
+            )
+    
+    def is_valid(self) -> bool:
+        """Validate DopamineResponse data integrity"""
+        try:
+            # Check signal bounds
+            if not isinstance(self.signal, (int, float)) or not (-10.0 <= self.signal <= 10.0):
+                return False
+            
+            # Check enum types
+            if not isinstance(self.phase, DopaminePhase) or not isinstance(self.state, DopamineState):
+                return False
+            
+            # Check factor bounds
+            factors = [
+                self.anticipation_factor, self.satisfaction_factor, self.tolerance_level,
+                self.addiction_risk, self.withdrawal_intensity, self.urgency_factor
+            ]
+            for factor in factors:
+                if not isinstance(factor, (int, float)) or not (0.0 <= factor <= 1.0):
+                    return False
+            
+            # Check modifier bounds (can be > 1.0)
+            modifiers = [self.position_size_modifier, self.risk_tolerance_modifier]
+            for modifier in modifiers:
+                if not isinstance(modifier, (int, float)) or not (0.0 <= modifier <= 5.0):
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error validating DopamineResponse: {e}")
+            return False
+    
+    def safe_copy(self) -> 'DopamineResponse':
+        """Create a safe copy with validated data"""
+        try:
+            # Convert to dict and back to ensure safe types
+            data = self.to_dict()
+            return self.from_dict(data)
+        except Exception as e:
+            logger.error(f"Error creating safe copy of DopamineResponse: {e}")
+            return DopamineResponse.from_dict({})
+    
+    def get_signal_safe(self) -> float:
+        """Safely get signal value with fallback"""
+        try:
+            return float(self.signal) if self.signal is not None else 0.0
+        except (ValueError, TypeError):
+            return 0.0
+    
+    def get_state_safe(self) -> str:
+        """Safely get state value as string with fallback"""
+        try:
+            return self.state.value if hasattr(self.state, 'value') else str(self.state)
+        except (AttributeError, TypeError):
+            return 'balanced'
+    
+    def update_safe(self, **kwargs) -> 'DopamineResponse':
+        """Safely update response fields and return new instance"""
+        try:
+            current_dict = self.to_dict()
+            
+            # Update with provided kwargs, ensuring type safety
+            for key, value in kwargs.items():
+                if key in current_dict:
+                    current_dict[key] = value
+            
+            return self.from_dict(current_dict)
+        except Exception as e:
+            logger.error(f"Error safely updating DopamineResponse: {e}")
+            return self.safe_copy()
 
 # Define protocols for clean architecture
 class DopamineSignalProvider(Protocol):
@@ -137,7 +278,7 @@ class ConsolidatedDopamineSubsystem(LegacyDopamineInterface):
         
         # Simplified psychological parameters - let AI discover psychology
         self.tolerance_buildup_rate = config.get('tolerance_buildup_rate', 0.001)
-        self.tolerance_decay_rate = config.get('tolerance_decay_rate', 0.001) 
+        self.tolerance_decay_rate = config.get('tolerance_decay_rate', 0.2) 
         self.addiction_threshold = config.get('addiction_threshold', 10.0)  # Higher threshold
         self.withdrawal_severity = config.get('withdrawal_severity', 0.01)  # Lower severity
         self.anticipation_multiplier = config.get('anticipation_multiplier', 1.01)  # Minimal initial

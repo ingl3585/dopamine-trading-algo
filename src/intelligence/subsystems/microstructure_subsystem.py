@@ -5,7 +5,7 @@ Microstructure Intelligence Subsystem - Order flow and regime analysis
 import logging
 import numpy as np
 from collections import deque
-from typing import Dict
+from typing import Dict, Optional
 
 from src.market_analysis.microstructure_analyzer import MarketMicrostructureEngine
 
@@ -291,16 +291,40 @@ class MicrostructureSubsystem:
             logger.error(f"Error getting microstructure features: {e}")
             return {'pattern_count': 0, 'regime_count': 0, 'total_events': 0, 'liquidity_accuracy': 0.5}
     
-    def analyze_market_state(self, market_features: Dict) -> Dict:
-        """Analyze market state for compatibility - wrapper around get_enhanced_signal"""
+    def analyze_market_state(self, market_features_or_prices, volumes=None) -> Dict:
+        """Analyze market state for compatibility - supports both calling patterns"""
         try:
+            # Handle both calling patterns
+            if volumes is not None:
+                # Called with (prices, volumes) - convert to market_features format
+                market_features = {
+                    'prices': market_features_or_prices,
+                    'volumes': volumes,
+                    'price': market_features_or_prices[-1] if market_features_or_prices else 0.0,
+                    'volume': volumes[-1] if volumes else 1000.0
+                }
+            else:
+                # Called with (market_features) - use as-is
+                market_features = market_features_or_prices
+            
             result = self.get_enhanced_signal(market_features)
             
             # Format for intelligence engine compatibility
+            microstructure_signal = result.get('microstructure_signal', 0.0)
             return {
-                'signal': result.get('microstructure_signal', 0.0),
+                'signal': microstructure_signal,
+                'microstructure_signal': microstructure_signal,  # Add expected field
+                'regime_adjusted_signal': result.get('regime_adjusted_signal', microstructure_signal),  # Add expected field
                 'confidence': result.get('regime_confidence', 0.5),
                 'reasoning': f"Regime: {result.get('market_regime', 'unknown')}, Flow: {result.get('order_flow_signal', 0.0):.3f}",
+                'order_flow': {  # Add expected nested structure
+                    'smart_money_flow': result.get('order_flow_signal', 0.0),
+                    'liquidity_depth': result.get('liquidity_score', 0.5)
+                },
+                'regime_state': {  # Add expected nested structure
+                    'confidence': result.get('regime_confidence', 0.5),
+                    'regime': result.get('market_regime', 'unknown')
+                },
                 'context': {
                     'smart_money_flow': result.get('order_flow_signal', 0.0),
                     'liquidity_depth': result.get('liquidity_score', 0.5),
@@ -312,8 +336,18 @@ class MicrostructureSubsystem:
             logger.error(f"Error in analyze_market_state: {e}")
             return {
                 'signal': 0.0,
+                'microstructure_signal': 0.0,
+                'regime_adjusted_signal': 0.0,
                 'confidence': 0.5,
                 'reasoning': 'Error in analysis',
+                'order_flow': {
+                    'smart_money_flow': 0.0,
+                    'liquidity_depth': 0.5
+                },
+                'regime_state': {
+                    'confidence': 0.5,
+                    'regime': 'unknown'
+                },
                 'context': {
                     'smart_money_flow': 0.0,
                     'liquidity_depth': 0.5,

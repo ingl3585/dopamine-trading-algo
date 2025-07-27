@@ -395,12 +395,12 @@ class TradeOutcomeProcessor:
                 'reflection', realization_market_data, reflection_context
             )
             
-            # Log dopamine integration
-            logger.info(f"DOPAMINE LEARNING: Realization signal={dopamine_realization.signal:.3f}, "
-                       f"Reflection signal={dopamine_reflection.signal:.3f}, "
-                       f"State={dopamine_reflection.state.value}, "
-                       f"Tolerance={dopamine_reflection.tolerance_level:.3f}, "
-                       f"Addiction={dopamine_reflection.addiction_risk:.3f}")
+            # Log dopamine integration with safe attribute access
+            logger.info(f"DOPAMINE LEARNING: Realization signal={self._safe_get_signal(dopamine_realization):.3f}, "
+                       f"Reflection signal={self._safe_get_signal(dopamine_reflection):.3f}, "
+                       f"State={self._safe_get_state(dopamine_reflection)}, "
+                       f"Tolerance={self._safe_get_tolerance(dopamine_reflection):.3f}, "
+                       f"Addiction={self._safe_get_addiction_risk(dopamine_reflection):.3f}")
             
             self.processing_stats['dopamine_integrations'] += 1
             return True
@@ -483,14 +483,50 @@ class TradeOutcomeProcessor:
         try:
             logger.info("Starting intelligence subsystems update...")
             
-            # Let intelligence engine learn from the outcome
-            self.intelligence_engine.learn_from_outcome(original_trade)
+            # Extract numeric PnL value from trade object safely
+            trade_pnl = self._safe_extract_trade_pnl(original_trade)
+            
+            # Create learning context from trade outcome data
+            learning_context = {
+                'dna_sequence': getattr(original_trade, 'dna_sequence', '') or trade_outcome.intelligence_data.get('dna_sequence', '') if trade_outcome.intelligence_data else '',
+                'cycles_info': getattr(original_trade, 'cycles_info', []) or trade_outcome.intelligence_data.get('cycles_info', []) if trade_outcome.intelligence_data else [],
+                'market_state': getattr(original_trade, 'market_state', {}) or trade_outcome.intelligence_data.get('market_state', {}) if trade_outcome.intelligence_data else {
+                    'volatility': 0.02,
+                    'price_momentum': 0.0,
+                    'volume_momentum': 0.0,
+                    'regime': 'ranging'
+                },
+                'microstructure_signal': getattr(original_trade, 'microstructure_signal', 0.0),
+                'is_bootstrap': False
+            }
+            
+            # Let intelligence engine learn from the numeric outcome with proper context
+            self.intelligence_engine.learn_from_outcome(trade_pnl, learning_context)
             logger.info("Intelligence subsystems updated successfully!")
             return True
             
         except Exception as e:
             logger.error(f"Intelligence subsystems update failed: {e}")
             return False
+    
+    def _safe_extract_trade_pnl(self, trade) -> float:
+        """Safely extract numeric PnL value from trade object"""
+        try:
+            # Try different possible attributes for PnL
+            if hasattr(trade, 'pnl'):
+                return float(trade.pnl)
+            elif hasattr(trade, 'profit_loss'):
+                return float(trade.profit_loss)
+            elif hasattr(trade, 'realized_pnl'):
+                return float(trade.realized_pnl)
+            elif hasattr(trade, 'net_pnl'):
+                return float(trade.net_pnl)
+            else:
+                logger.warning(f"Could not extract PnL from trade object: {type(trade)}")
+                return 0.0
+        except (ValueError, TypeError, AttributeError) as e:
+            logger.error(f"Error extracting trade PnL: {e}")
+            return 0.0
     
     def _update_network_performance(self, reward: float) -> bool:
         """Update network performance tracking"""
@@ -590,13 +626,13 @@ class TradeOutcomeProcessor:
         try:
             if trade_outcome.intelligence_data and 'subsystem_signals' in trade_outcome.intelligence_data:
                 signals = trade_outcome.intelligence_data['subsystem_signals']
-                return torch.tensor(signals[:6] + [0] * (6 - len(signals)), dtype=torch.float64)
+                return torch.tensor(signals[:6] + [0] * (6 - len(signals)), dtype=torch.float32)
             else:
-                return torch.tensor([0, 0, 0, 0, 0, 0], dtype=torch.float64)
+                return torch.tensor([0, 0, 0, 0, 0, 0], dtype=torch.float32)
                 
         except Exception as e:
             logger.error(f"Error extracting subsystem contributions: {e}")
-            return torch.tensor([0, 0, 0, 0, 0, 0], dtype=torch.float64)
+            return torch.tensor([0, 0, 0, 0, 0, 0], dtype=torch.float32)
     
     def _calculate_subsystem_agreement(self, trade_outcome: TradeOutcome) -> float:
         """Calculate agreement between subsystems"""
@@ -624,6 +660,64 @@ class TradeOutcomeProcessor:
             logger.error(f"Error calculating subsystem agreement: {e}")
             return 0.5
     
+    def _safe_get_signal(self, dopamine_response) -> float:
+        """Safely extract dopamine signal from response object or dictionary"""
+        try:
+            if hasattr(dopamine_response, 'signal'):
+                return float(dopamine_response.signal)
+            elif isinstance(dopamine_response, dict):
+                return float(dopamine_response.get('signal', 0.0))
+            else:
+                logger.warning(f"Unexpected dopamine response type: {type(dopamine_response)}")
+                return 0.0
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error extracting dopamine signal: {e}")
+            return 0.0
+    
+    def _safe_get_state(self, dopamine_response) -> str:
+        """Safely extract dopamine state from response object or dictionary"""
+        try:
+            if hasattr(dopamine_response, 'state'):
+                state = dopamine_response.state
+                return state.value if hasattr(state, 'value') else str(state)
+            elif isinstance(dopamine_response, dict):
+                state = dopamine_response.get('state', 'balanced')
+                return state.value if hasattr(state, 'value') else str(state)
+            else:
+                logger.warning(f"Unexpected dopamine response type: {type(dopamine_response)}")
+                return 'balanced'
+        except (AttributeError, TypeError) as e:
+            logger.error(f"Error extracting dopamine state: {e}")
+            return 'balanced'
+    
+    def _safe_get_tolerance(self, dopamine_response) -> float:
+        """Safely extract tolerance level from response object or dictionary"""
+        try:
+            if hasattr(dopamine_response, 'tolerance_level'):
+                return float(dopamine_response.tolerance_level)
+            elif isinstance(dopamine_response, dict):
+                return float(dopamine_response.get('tolerance_level', 0.5))
+            else:
+                logger.warning(f"Unexpected dopamine response type: {type(dopamine_response)}")
+                return 0.5
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error extracting tolerance level: {e}")
+            return 0.5
+    
+    def _safe_get_addiction_risk(self, dopamine_response) -> float:
+        """Safely extract addiction risk from response object or dictionary"""
+        try:
+            if hasattr(dopamine_response, 'addiction_risk'):
+                return float(dopamine_response.addiction_risk)
+            elif isinstance(dopamine_response, dict):
+                return float(dopamine_response.get('addiction_risk', 0.0))
+            else:
+                logger.warning(f"Unexpected dopamine response type: {type(dopamine_response)}")
+                return 0.0
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error extracting addiction risk: {e}")
+            return 0.0
+
     def get_processing_stats(self) -> Dict[str, Any]:
         """Get comprehensive processing statistics"""
         try:

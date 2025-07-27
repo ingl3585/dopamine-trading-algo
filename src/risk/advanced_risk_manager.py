@@ -7,8 +7,66 @@ from dataclasses import dataclass
 from collections import deque
 import time
 import json
-from scipy import stats
-from scipy.optimize import minimize_scalar
+
+# Import dependency manager for clean dependency handling
+try:
+    from ..core.dependency_manager import dependency_manager
+    
+    # Conditional SciPy imports with fallbacks
+    if dependency_manager.is_available('scipy'):
+        from scipy import stats
+        from scipy.optimize import minimize_scalar
+    else:
+        # Use fallback implementations
+        stats = dependency_manager.get_fallback('scipy_stats')
+        optimize = dependency_manager.get_fallback('scipy_optimize')
+        minimize_scalar = optimize.minimize_scalar if optimize else None
+        logging.getLogger(__name__).info("Using NumPy-based statistical and optimization fallbacks for SciPy functionality")
+        
+except ImportError:
+    # Fallback if dependency manager is not available
+    try:
+        from scipy import stats
+        from scipy.optimize import minimize_scalar
+    except ImportError:
+        # Create basic fallbacks inline
+        import numpy as np
+        
+        class StatsFallback:
+            @staticmethod
+            def percentileofscore(data, score):
+                return (np.sum(np.array(data) <= score) / len(data)) * 100
+            
+            @staticmethod
+            def genpareto():
+                class GenParetoFallback:
+                    @staticmethod
+                    def fit(data):
+                        mean_val = np.mean(data)
+                        std_val = np.std(data)
+                        return 0.1, mean_val, std_val
+                return GenParetoFallback()
+        
+        class OptimizeFallback:
+            @staticmethod
+            def minimize_scalar(func, bounds=None, method='bounded'):
+                if bounds is None:
+                    bounds = (-10, 10)
+                x_values = np.linspace(bounds[0], bounds[1], 100)
+                y_values = [func(x) for x in x_values]
+                min_idx = np.argmin(y_values)
+                
+                class OptimizeResult:
+                    def __init__(self, x, fun):
+                        self.x = x
+                        self.fun = fun
+                        self.success = True
+                
+                return OptimizeResult(x_values[min_idx], y_values[min_idx])
+        
+        stats = StatsFallback()
+        minimize_scalar = OptimizeFallback.minimize_scalar
+        logging.getLogger(__name__).warning("SciPy not available, using basic NumPy statistical and optimization fallbacks")
 
 logger = logging.getLogger(__name__)
 

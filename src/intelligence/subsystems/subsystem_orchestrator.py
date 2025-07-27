@@ -13,11 +13,14 @@ from .microstructure_subsystem import MicrostructureSubsystem
 logger = logging.getLogger(__name__)
 
 class EnhancedIntelligenceOrchestrator:
-    def __init__(self):
+    def __init__(self, config=None):
+        # Use config if provided, otherwise use defaults
+        config = config or {}
+        
         self.dna_subsystem = DNASubsystem()
         self.temporal_subsystem = FFTTemporalSubsystem()
         self.immune_subsystem = EvolvingImmuneSystem()
-        self.microstructure_subsystem = MicrostructureSubsystem({})
+        self.microstructure_subsystem = MicrostructureSubsystem(config)
         
         # Swarm Intelligence Components
         self.subsystem_votes = deque(maxlen=200)
@@ -629,6 +632,14 @@ class EnhancedIntelligenceOrchestrator:
             
             if len(prices) < 20:
                 return None
+            
+            # Generate timestamps if missing to ensure equal length
+            if len(timestamps) == 0 or len(timestamps) != len(prices):
+                import time
+                current_time = time.time()
+                # Generate mock timestamps spaced 1 minute apart (going backwards)
+                timestamps = [current_time - (i * 60) for i in range(len(prices))]
+                timestamps.reverse()  # Make them chronological
             
             # Analyze temporal patterns using FFT
             temporal_signal = self.temporal_subsystem.analyze_temporal_patterns(

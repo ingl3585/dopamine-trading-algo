@@ -8,10 +8,10 @@ import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 from src.core.market_data_processor import MarketData
-from src.intelligence.subsystem_evolution import EnhancedIntelligenceOrchestrator
+from src.intelligence.subsystems.subsystem_orchestrator import EnhancedIntelligenceOrchestrator
 from src.intelligence.subsystems.microstructure_subsystem import MicrostructureSubsystem
 from src.shared.types import Features
 from src.shared.intelligence_types import (
@@ -20,6 +20,47 @@ from src.shared.intelligence_types import (
 )
 
 logger = logging.getLogger(__name__)
+
+class DataTypeNormalizer:
+    """Utility class for ensuring consistent data types throughout the intelligence pipeline"""
+    
+    @staticmethod
+    def ensure_list(data) -> list:
+        """Convert any array-like data to Python list"""
+        if hasattr(data, 'tolist'):  # numpy array
+            return data.tolist()
+        elif isinstance(data, (list, tuple)):
+            return list(data)
+        else:
+            return [data] if data is not None else []
+    
+    @staticmethod 
+    def safe_slice(data, start_idx: int = None, end_idx: int = None) -> list:
+        """Safely slice data and return as Python list"""
+        try:
+            data_list = DataTypeNormalizer.ensure_list(data)
+            if start_idx is None and end_idx is None:
+                return data_list
+            elif start_idx is None:
+                return data_list[:end_idx]
+            elif end_idx is None:
+                return data_list[start_idx:]
+            else:
+                return data_list[start_idx:end_idx]
+        except Exception as e:
+            logger.warning(f"Safe slice failed: {e}, returning empty list")
+            return []
+    
+    @staticmethod
+    def safe_numpy_calculation(data, default_value=0.0):
+        """Safely perform numpy calculations with fallback"""
+        try:
+            if not data or len(data) == 0:
+                return default_value
+            return np.array(DataTypeNormalizer.ensure_list(data))
+        except Exception as e:
+            logger.warning(f"Numpy calculation failed: {e}, using default")
+            return np.array([default_value])
 
 class IntelligenceEngine:
     def __init__(self, config, memory_file="data/intelligence_memory.json"):
@@ -354,9 +395,12 @@ class IntelligenceEngine:
         if len(prices) < 20:
             return {}
         
-        # Enhanced feature extraction for all subsystems
-        price_array = np.array(prices[-50:])
-        volume_array = np.array(volumes[-50:])
+        # Enhanced feature extraction for all subsystems with safe data handling
+        safe_prices = DataTypeNormalizer.safe_slice(prices, -50)
+        safe_volumes = DataTypeNormalizer.safe_slice(volumes, -50)
+        
+        price_array = DataTypeNormalizer.safe_numpy_calculation(safe_prices)
+        volume_array = DataTypeNormalizer.safe_numpy_calculation(safe_volumes)
         
         # Price dynamics
         returns = np.diff(price_array) / price_array[:-1]
@@ -372,9 +416,13 @@ class IntelligenceEngine:
         if np.isnan(price_volume_corr):
             price_volume_corr = 0
         
-        # Position and range analysis
-        price_range = max(prices) - min(prices)
-        price_position = (prices[-1] - min(prices)) / price_range if price_range > 0 else 0.5
+        # Position and range analysis with safe data access
+        safe_prices_list = DataTypeNormalizer.ensure_list(prices)
+        if safe_prices_list:
+            price_range = max(safe_prices_list) - min(safe_prices_list)
+            price_position = (safe_prices_list[-1] - min(safe_prices_list)) / price_range if price_range > 0 else 0.5
+        else:
+            price_position = 0.5
         
         # Time-based features
         if timestamps:
@@ -451,8 +499,12 @@ class IntelligenceEngine:
             volatility = market_features.get('volatility', 0)
             momentum = market_features.get('price_momentum', 0)
             
+            # Use safe slicing to ensure proper data types
+            safe_prices = DataTypeNormalizer.safe_slice(prices, -20)
+            safe_volumes = DataTypeNormalizer.safe_slice(volumes, -20)
+            
             dna_sequence = self.orchestrator.dna_subsystem.encode_market_state(
-                prices[-20:], volumes[-20:], volatility, momentum
+                safe_prices, safe_volumes, volatility, momentum
             )
             
             if dna_sequence:
@@ -702,28 +754,32 @@ class IntelligenceEngine:
         """Apply learning to all subsystems based on synthetic outcome"""
         
         try:
-            # 1. DNA Subsystem Learning
+            # 1. DNA Subsystem Learning with type safety
             dna_sequence = dna_result.get('sequence', '')
-            if dna_sequence:
+            if dna_sequence and isinstance(dna_sequence, str):
                 self.orchestrator.dna_subsystem.learn_from_outcome(dna_sequence, outcome)
                 self.subsystem_training_progress['dna']['learning_events'] += 1
             
-            # 2. Temporal Subsystem Learning
+            # 2. Temporal Subsystem Learning with type safety
             cycles_info = temporal_result.get('cycles_info', [])
-            if cycles_info:
+            if cycles_info and isinstance(cycles_info, list):
                 self.orchestrator.temporal_subsystem.learn_from_outcome(cycles_info, outcome)
                 self.subsystem_training_progress['temporal']['learning_events'] += 1
             
-            # 3. Immune Subsystem Learning
-            self.orchestrator.immune_subsystem.learn_threat(market_features, outcome)
-            self.subsystem_training_progress['immune']['learning_events'] += 1
+            # 3. Immune Subsystem Learning with safe market features
+            if isinstance(market_features, dict):
+                self.orchestrator.immune_subsystem.learn_threat(market_features, outcome)
+                self.subsystem_training_progress['immune']['learning_events'] += 1
             
-            # 4. Microstructure Subsystem Learning (with context)
-            self.microstructure_subsystem.learn_from_outcome(outcome, microstructure_result)
-            self.subsystem_training_progress['microstructure']['learning_events'] += 1
+            # 4. Microstructure Subsystem Learning with safe context
+            if isinstance(microstructure_result, dict):
+                self.microstructure_subsystem.learn_from_outcome(outcome, microstructure_result)
+                self.subsystem_training_progress['microstructure']['learning_events'] += 1
             
         except Exception as e:
+            import traceback
             logger.error(f"Error in comprehensive learning: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
     
     def _comprehensive_subsystem_training(self):
         """Additional comprehensive training phase for all subsystems"""
@@ -920,8 +976,16 @@ class IntelligenceEngine:
         return directional_consensus * 0.7 + magnitude_consensus * 0.3
     
     def learn_from_outcome(self, outcome, learning_context=None):
-        """Enhanced learning with all four subsystems"""
+        """Enhanced learning with all four subsystems and comprehensive error handling"""
         try:
+            # Validate outcome parameter first
+            if not self._validate_outcome_parameter(outcome):
+                logger.error(f"Invalid outcome parameter for learning: {outcome} (type: {type(outcome)})")
+                return
+            
+            # Convert outcome to float for safe numeric operations
+            numeric_outcome = self._safe_convert_outcome(outcome)
+            
             # Use provided context or create default with consistent structure
             if learning_context is None:
                 learning_context = {
@@ -977,27 +1041,27 @@ class IntelligenceEngine:
                     if key not in market_state:
                         market_state[key] = default_value
             
-            # Learn in all subsystems
+            # Learn in all subsystems using numeric outcome
             try:
-                self.orchestrator.learn_from_outcome(outcome, learning_context)
+                self.orchestrator.learn_from_outcome(numeric_outcome, learning_context)
             except Exception as e:
                 logger.warning(f"Error in orchestrator learning: {e}")
             
             # Learn in microstructure engine
             try:
                 if hasattr(self.microstructure_subsystem, 'learn_from_outcome'):
-                    self.microstructure_subsystem.learn_from_outcome(outcome)
+                    self.microstructure_subsystem.learn_from_outcome(numeric_outcome)
             except Exception as e:
                 logger.warning(f"Error in microstructure learning: {e}")
             
             # Learn in enhanced dopamine subsystem with consistent context
             try:
                 dopamine_context = {
-                    'outcome': outcome,
+                    'outcome': numeric_outcome,
                     'market_state': market_state,
                     'is_bootstrap': is_bootstrap,
                     'trade_data': None,  # Will be populated if available
-                    'prediction_error': abs(outcome) if outcome != 0 else 0.1,
+                    'prediction_error': abs(numeric_outcome) if numeric_outcome != 0 else 0.1,
                     'confidence': learning_context.get('confidence', 0.5)
                 }
                 # Note: Dopamine learning is now handled by the trading agent's dopamine manager
@@ -1012,13 +1076,13 @@ class IntelligenceEngine:
                     'volatility': market_state.get('volatility', 0.02),
                     'predicted_confidence': 0.5  # Default confidence
                 }
-                self._get_adaptation_engine().update_from_outcome(outcome, adaptation_context)
+                self._get_adaptation_engine().update_from_outcome(numeric_outcome, adaptation_context)
                 
                 # Process adaptation event
-                urgency = min(1.0, abs(outcome) * 2.0)
+                urgency = min(1.0, abs(numeric_outcome) * 2.0)
                 self._get_adaptation_engine().process_market_event(
                     'trade_outcome',
-                    {'pnl': outcome, 'learning_context': learning_context},
+                    {'pnl': numeric_outcome, 'learning_context': learning_context},
                 urgency=urgency
             ) 
             except Exception as e:
@@ -1083,7 +1147,7 @@ class IntelligenceEngine:
         while len(features) < 64:
             features.append(0.0)
         
-        return torch.tensor(features[:64], dtype=torch.float64, device='cpu')
+        return torch.tensor(features[:64], dtype=torch.float32, device='cpu')
     
     def _recognize_patterns(self, prices: np.ndarray, volumes: np.ndarray) -> float:
         """Enhanced pattern recognition with all subsystems"""
@@ -1099,8 +1163,12 @@ class IntelligenceEngine:
         else:
             pattern_strength = abs(trend) * 0.5
         
-        # Add volatility pattern detection
-        volatility = np.std(prices) / np.mean(prices) if np.mean(prices) > 0 else 0
+        # Add volatility pattern detection using proper annualized volatility
+        if len(prices) > 1:
+            price_returns = np.diff(prices) / prices[:-1]
+            volatility = np.std(price_returns) * np.sqrt(252)  # Annualized volatility
+        else:
+            volatility = 0.02
         if volatility > 0.04:  # High volatility pattern
             pattern_strength *= 0.8  # Reduce pattern confidence in high volatility
         
@@ -1537,7 +1605,12 @@ class IntelligenceEngine:
         low = np.min(prices)
         price_position = (prices[-1] - low) / (high - low) if high > low else 0.5
 
-        volatility = np.std(prices) / np.mean(prices) if np.mean(prices) > 0 else 0
+        # Calculate proper annualized volatility from price returns
+        if len(prices) > 1:
+            price_returns = np.diff(prices) / prices[:-1]
+            volatility = np.std(price_returns) * np.sqrt(252)  # Annualized volatility
+        else:
+            volatility = 0.02
 
         # --- Timestamp and Time-based Features ---
         # Safely parse the timestamp from the data source. Avoid fallbacks to current time.
@@ -1594,13 +1667,17 @@ class IntelligenceEngine:
         # Wrap in a try-except block to catch any errors during signal processing.
         try:
             # 1. DNA Subsystem
+            # Use safe data type conversion
+            safe_prices = DataTypeNormalizer.ensure_list(data.prices_1m)
+            safe_volumes = DataTypeNormalizer.ensure_list(data.volumes_1m)
+            
             dna_sequence = self.orchestrator.dna_subsystem.encode_market_state(
-                data.prices_1m, data.volumes_1m, volatility, price_momentum
+                safe_prices, safe_volumes, volatility, price_momentum
             )
             dna_signal = self.orchestrator.dna_subsystem.analyze_sequence(dna_sequence) if dna_sequence else 0.0
             
             # 2. Temporal Subsystem
-            temporal_signal = self.orchestrator.temporal_subsystem.analyze_cycles(data.prices_1m, timestamps)
+            temporal_signal = self.orchestrator.temporal_subsystem.analyze_cycles(safe_prices, timestamps)
             
             # 3. Immune Subsystem
             immune_signal = self.orchestrator.immune_subsystem.detect_threats(market_features)
@@ -1741,8 +1818,12 @@ class IntelligenceEngine:
                 m1_long_ma = np.mean(prices_1m)
                 analysis['trend_1m'] = (m1_short_ma - m1_long_ma) / m1_long_ma if m1_long_ma > 0 else 0.0
                 
-                # 1M volatility
-                analysis['volatility_1m'] = np.std(prices_1m) / np.mean(prices_1m) if np.mean(prices_1m) > 0 else 0.02
+                # 1M volatility - proper annualized calculation
+                if len(prices_1m) > 1:
+                    price_returns_1m = np.diff(prices_1m) / prices_1m[:-1]
+                    analysis['volatility_1m'] = np.std(price_returns_1m) * np.sqrt(252 * 24 * 60)  # Annualized from 1-minute returns
+                else:
+                    analysis['volatility_1m'] = 0.02
                 
                 logger.debug(f"1M trend calculated: {analysis['trend_1m']:.4f} from {len(prices_1m)} bars")
             elif hasattr(data, 'prices_1m') and len(data.prices_1m) >= 3:
@@ -1760,8 +1841,12 @@ class IntelligenceEngine:
                 m5_long_ma = np.mean(prices_5m)
                 analysis['trend_5m'] = (m5_short_ma - m5_long_ma) / m5_long_ma if m5_long_ma > 0 else 0.0
                 
-                # 5M volatility
-                analysis['volatility_5m'] = np.std(prices_5m) / np.mean(prices_5m) if np.mean(prices_5m) > 0 else 0.02
+                # 5M volatility - proper annualized calculation
+                if len(prices_5m) > 1:
+                    price_returns_5m = np.diff(prices_5m) / prices_5m[:-1]
+                    analysis['volatility_5m'] = np.std(price_returns_5m) * np.sqrt(252 * 24 * 12)  # Annualized from 5-minute returns
+                else:
+                    analysis['volatility_5m'] = 0.02
                 
                 logger.debug(f"5M trend calculated: {analysis['trend_5m']:.4f} from {len(prices_5m)} bars")
             elif hasattr(data, 'prices_5m') and len(data.prices_5m) >= 2:
@@ -1779,8 +1864,12 @@ class IntelligenceEngine:
                 m15_long_ma = np.mean(prices_15m)
                 analysis['trend_15m'] = (m15_short_ma - m15_long_ma) / m15_long_ma if m15_long_ma > 0 else 0.0
                 
-                # 15M volatility
-                analysis['volatility_15m'] = np.std(prices_15m) / np.mean(prices_15m) if np.mean(prices_15m) > 0 else 0.02
+                # 15M volatility - proper annualized calculation
+                if len(prices_15m) > 1:
+                    price_returns_15m = np.diff(prices_15m) / prices_15m[:-1]
+                    analysis['volatility_15m'] = np.std(price_returns_15m) * np.sqrt(252 * 24 * 4)  # Annualized from 15-minute returns
+                else:
+                    analysis['volatility_15m'] = 0.02
                 
                 logger.debug(f"15M trend calculated: {analysis['trend_15m']:.4f} from {len(prices_15m)} bars")
             elif hasattr(data, 'prices_15m') and len(data.prices_15m) >= 2:
@@ -1798,8 +1887,12 @@ class IntelligenceEngine:
                 h1_long_ma = np.mean(prices_1h)
                 analysis['trend_1h'] = (h1_short_ma - h1_long_ma) / h1_long_ma if h1_long_ma > 0 else 0.0
                 
-                # 1H volatility
-                analysis['volatility_1h'] = np.std(prices_1h) / np.mean(prices_1h) if np.mean(prices_1h) > 0 else 0.02
+                # 1H volatility - proper annualized calculation
+                if len(prices_1h) > 1:
+                    price_returns_1h = np.diff(prices_1h) / prices_1h[:-1]
+                    analysis['volatility_1h'] = np.std(price_returns_1h) * np.sqrt(252 * 24)  # Annualized from 1-hour returns
+                else:
+                    analysis['volatility_1h'] = 0.02
                 
                 logger.debug(f"1H trend calculated: {analysis['trend_1h']:.4f} from {len(prices_1h)} bars")
             elif hasattr(data, 'prices_1h') and len(data.prices_1h) >= 2:
@@ -1823,8 +1916,12 @@ class IntelligenceEngine:
                 h4_long_ma = np.mean(prices_4h)
                 analysis['trend_4h'] = (h4_short_ma - h4_long_ma) / h4_long_ma if h4_long_ma > 0 else 0.0
                 
-                # 4H volatility
-                analysis['volatility_4h'] = np.std(prices_4h) / np.mean(prices_4h) if np.mean(prices_4h) > 0 else 0.02
+                # 4H volatility - proper annualized calculation
+                if len(prices_4h) > 1:
+                    price_returns_4h = np.diff(prices_4h) / prices_4h[:-1]
+                    analysis['volatility_4h'] = np.std(price_returns_4h) * np.sqrt(252 * 6)  # Annualized from 4-hour returns
+                else:
+                    analysis['volatility_4h'] = 0.02
                 
                 logger.debug(f"4H trend calculated: {analysis['trend_4h']:.4f} from {len(prices_4h)} bars")
             elif hasattr(data, 'prices_4h') and len(data.prices_4h) >= 1:

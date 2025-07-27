@@ -13,7 +13,7 @@ class EvolvingImmuneSystem:
         self.threat_evolution_tracker = {}
         self.autoimmune_prevention = set()
         self.antibody_generations = 0
-        self.threat_severity_threshold = -0.3
+        self.threat_severity_threshold = -0.15
         self.memory_consolidation_threshold = 3
         self.adaptive_response_rate = 0.1
         self.total_learning_events = 0
@@ -364,6 +364,119 @@ class EvolvingImmuneSystem:
                 offspring_parts.append(comp2[component])
         
         return "_".join(offspring_parts)
+
+    def analyze_threats(self, market_state: Dict) -> float:
+        """
+        Orchestrator-compatible threat analysis method.
+        
+        This method provides a clean interface for the orchestrator by delegating
+        to the existing detect_threats method and transforming the output to a 
+        positive threat level for consistent orchestrator processing.
+        
+        Following the Single Responsibility Principle, this method focuses solely
+        on providing the correct interface while delegating actual threat detection
+        to the existing, well-tested detect_threats implementation.
+        
+        Args:
+            market_state: Dictionary containing market data and features
+                Expected keys: volatility, volume_momentum, price_momentum, 
+                time_of_day, regime, etc.
+                
+        Returns:
+            float: Positive threat level (0.0 to 1.0)
+                  0.0 = No threats detected
+                  1.0 = Maximum threat level detected
+                  
+        Raises:
+            TypeError: If market_state is not a dictionary
+            ValueError: If market_state contains invalid data
+        """
+        # Input validation following defensive programming principles
+        if not isinstance(market_state, dict):
+            raise TypeError(f"Market state must be a dictionary, got {type(market_state)}")
+        
+        if not market_state:
+            logger.warning("Empty market state provided to threat analysis")
+            return 0.0
+        
+        try:
+            # Delegate to existing detect_threats method for core functionality
+            # This follows the Don't Repeat Yourself (DRY) principle
+            raw_threat_signal = self.detect_threats(market_state)
+            
+            # Transform signal from [-1, 1] range to positive threat level [0, 1]
+            # The detect_threats method returns negative values for threats
+            # (negative signal = threat detected), so we need to invert and normalize
+            if raw_threat_signal <= 0:
+                # Threat detected - convert to positive threat level
+                threat_level = abs(raw_threat_signal)
+            else:
+                # No threat detected (positive signal means good conditions)
+                threat_level = 0.0
+            
+            # Ensure output is within valid bounds [0.0, 1.0]
+            threat_level = max(0.0, min(1.0, threat_level))
+            
+            # Log threat analysis for monitoring and debugging
+            logger.debug(f"Threat analysis: raw_signal={raw_threat_signal:.4f}, "
+                        f"threat_level={threat_level:.4f}, "
+                        f"antibodies={len(self.antibodies)}")
+            
+            return threat_level
+            
+        except Exception as e:
+            logger.error(f"Error in threat analysis: {e}")
+            # Return moderate threat level as safe fallback
+            return 0.5
+
+    def classify_threat_level(self, threat_level: float) -> str:
+        """
+        Classify threat level into categorical risk levels.
+        
+        This method provides a human-readable classification of numerical threat
+        levels, supporting risk management and reporting systems. Following the
+        Single Responsibility Principle, it focuses solely on threat classification.
+        
+        Args:
+            threat_level: Numerical threat level between 0.0 and 1.0
+                         0.0 = No threat, 1.0 = Maximum threat
+                         
+        Returns:
+            str: Threat level classification
+                "low" - Minimal threat (0.0 to 0.25)
+                "moderate" - Moderate threat (0.25 to 0.5)  
+                "high" - High threat (0.5 to 0.75)
+                "critical" - Critical threat (0.75 to 1.0)
+                "invalid" - Invalid input
+                
+        Raises:
+            TypeError: If threat_level is not a number
+            ValueError: If threat_level is outside valid range
+        """
+        # Input validation following defensive programming principles
+        if not isinstance(threat_level, (int, float)):
+            raise TypeError(f"Threat level must be a number, got {type(threat_level)}")
+        
+        if threat_level < 0.0 or threat_level > 1.0:
+            raise ValueError(f"Threat level must be between 0.0 and 1.0, got {threat_level}")
+        
+        if np.isnan(threat_level) or np.isinf(threat_level):
+            logger.warning(f"Invalid threat level: {threat_level}")
+            return "invalid"
+        
+        # Threshold-based classification using domain expertise
+        # Thresholds chosen to provide meaningful risk management categories
+        if threat_level < 0.25:
+            classification = "low"
+        elif threat_level < 0.5:
+            classification = "moderate"
+        elif threat_level < 0.75:
+            classification = "high"
+        else:
+            classification = "critical"
+        
+        logger.debug(f"Threat classification: level={threat_level:.3f} -> {classification}")
+        return classification
 
     def get_immune_stats(self) -> Dict:
         if not self.antibodies:
