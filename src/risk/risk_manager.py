@@ -7,8 +7,8 @@ import math
 import time
 from collections import deque
 
-from src.agent.trading_agent import Decision
-from src.market_analysis.data_processor import MarketData
+from src.agent.trading_decision_engine import Decision
+from src.core.market_data_processor import MarketData
 from src.risk.advanced_risk_manager import AdvancedRiskManager
 from src.risk.risk_engine import RiskLearningEngine
 

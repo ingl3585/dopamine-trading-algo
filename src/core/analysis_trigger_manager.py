@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional, Callable, List
 from dataclasses import dataclass
 from enum import Enum
 
-from src.market_analysis.data_processor import MarketData
+from src.core.market_data_processor import MarketData
 
 logger = logging.getLogger(__name__)
 

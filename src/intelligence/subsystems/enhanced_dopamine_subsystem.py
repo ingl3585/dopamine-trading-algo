@@ -1,15 +1,24 @@
 """
-Enhanced Dopamine Subsystem - The Central Nervous System of Trading
-Mimics complete neurological dopamine pathways for comprehensive trading psychology
+Consolidated Dopamine Subsystem - The Central Nervous System of Trading
+Combines simple and enhanced dopamine pathways for comprehensive trading psychology
+with backward compatibility for legacy interfaces.
+
+This module provides:
+- Complete neurological dopamine pathway simulation
+- Multiple trading phases (anticipation, execution, monitoring, realization, reflection)
+- Advanced psychological modeling (tolerance, addiction, withdrawal)
+- Backward compatibility with simple dopamine interfaces
+- Clean architecture with SOLID principles
 """
 
 import numpy as np
 import time
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Protocol
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
+from abc import ABC, abstractmethod
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +66,40 @@ class DopamineResponse:
     risk_tolerance_modifier: float   # Suggested risk tolerance adjustment
     urgency_factor: float           # Trading urgency/patience level
 
-class EnhancedDopamineSubsystem:
+# Define protocols for clean architecture
+class DopamineSignalProvider(Protocol):
+    """Protocol for providing dopamine signals"""
+    def get_signal(self) -> float: ...
+    def get_signal_with_context(self) -> Dict: ...
+
+class DopamineEventProcessor(Protocol):
+    """Protocol for processing trading events"""
+    def process_trading_event(self, event_type: str, market_data: Dict, context: Dict = None) -> DopamineResponse: ...
+
+class DopamineLearningInterface(Protocol):
+    """Protocol for learning from trading outcomes"""
+    def learn_from_outcome(self, outcome: float, context: Optional[Dict] = None): ...
+
+# Backward compatibility interface
+class LegacyDopamineInterface(ABC):
+    """Abstract base class for backward compatibility with simple dopamine interface"""
+    
+    @abstractmethod
+    def process_pnl_update(self, market_data: Dict) -> float:
+        """Process P&L update for simple interface compatibility"""
+        pass
+    
+    @abstractmethod
+    def get_stats(self) -> Dict:
+        """Get comprehensive statistics for backward compatibility"""
+        pass
+    
+    @abstractmethod
+    def reset_session(self):
+        """Reset session for backward compatibility"""
+        pass
+
+class ConsolidatedDopamineSubsystem(LegacyDopamineInterface):
     """
     Enhanced Dopamine-inspired trading psychology system
     
@@ -179,12 +221,101 @@ class EnhancedDopamineSubsystem:
             logger.error(f"Error in dopamine event processing: {e}")
             return self.current_response
     
+    # ========================================
+    # BACKWARD COMPATIBILITY METHODS
+    # ========================================
+    
+    def process_pnl_update(self, market_data: Dict) -> float:
+        """
+        Process P&L update for backward compatibility with simple interface.
+        
+        Args:
+            market_data: Dictionary containing unrealized_pnl, position_size, etc.
+            
+        Returns:
+            float: Dopamine signal [-10.0 to +10.0] (enhanced range)
+        """
+        response = self.process_trading_event('monitoring', market_data)
+        return response.signal
+    
     def get_simple_signal(self, market_data: Dict) -> float:
         """
         Backwards compatibility - returns simple dopamine signal
         """
         response = self.process_trading_event('monitoring', market_data)
         return response.signal
+    
+    def get_signal_with_context(self) -> Dict:
+        """Get dopamine signal with context for backward compatibility"""
+        response = self.current_response
+        
+        return {
+            'signal': response.signal,
+            'previous_pnl': self.pnl_history[-1].unrealized_pnl if self.pnl_history else 0.0,
+            'consecutive_positive': self.consecutive_positive,
+            'consecutive_negative': self.consecutive_negative,
+            'peak_pnl': self.peak_pnl,
+            'trough_pnl': self.trough_pnl,
+            'momentum_state': self._get_momentum_state(),
+            # Enhanced context
+            'psychological_state': response.state.value,
+            'phase': response.phase.value,
+            'tolerance_level': self.tolerance_level,
+            'addiction_score': self.addiction_score,
+            'withdrawal_intensity': self.withdrawal_intensity,
+            'position_size_modifier': response.position_size_modifier,
+            'risk_tolerance_modifier': response.risk_tolerance_modifier,
+            'urgency_factor': response.urgency_factor
+        }
+    
+    def get_stats(self) -> Dict:
+        """Get comprehensive statistics for backward compatibility"""
+        signal_history = [r.signal for r in list(self.response_history)]
+        pnl_history_values = [s.unrealized_pnl for s in list(self.pnl_history)]
+        
+        # Calculate statistics
+        if signal_history:
+            avg_signal = np.mean(signal_history)
+            signal_volatility = np.std(signal_history)
+            max_signal = np.max(signal_history)
+            min_signal = np.min(signal_history)
+        else:
+            avg_signal = signal_volatility = max_signal = min_signal = 0.0
+        
+        return {
+            # Original stats for backward compatibility
+            'current_signal': self.current_response.signal,
+            'avg_signal': avg_signal,
+            'signal_volatility': signal_volatility,
+            'max_signal': max_signal,
+            'min_signal': min_signal,
+            'signal_history_length': len(signal_history),
+            'pnl_history_length': len(pnl_history_values),
+            'consecutive_positive': self.consecutive_positive,
+            'consecutive_negative': self.consecutive_negative,
+            'peak_pnl': self.peak_pnl,
+            'trough_pnl': self.trough_pnl,
+            'momentum_state': self._get_momentum_state(),
+            'expected_pnl': self.expected_pnl,
+            'expectation_confidence': self.expectation_confidence,
+            'max_consecutive_positive': max(self.consecutive_positive, 0),
+            'max_consecutive_negative': max(self.consecutive_negative, 0),
+            
+            # Enhanced stats
+            'psychological_state': self.current_response.state.value,
+            'current_phase': self.current_response.phase.value,
+            'tolerance_level': self.tolerance_level,
+            'addiction_score': self.addiction_score,
+            'withdrawal_intensity': self.withdrawal_intensity,
+            'position_size_modifier': self.current_response.position_size_modifier,
+            'risk_tolerance_modifier': self.current_response.risk_tolerance_modifier,
+            'urgency_factor': self.current_response.urgency_factor,
+            'session_peak_dopamine': self.session_peak_dopamine,
+            'session_trough_dopamine': self.session_trough_dopamine,
+            'psychological_health_score': self._calculate_psychological_health(),
+            'addiction_risk_level': self._assess_addiction_risk(),
+            'withdrawal_risk_level': self._assess_withdrawal_risk()
+        }
     
     def _calculate_enhanced_dopamine_response(self, snapshot: DopamineSnapshot) -> DopamineResponse:
         """Calculate comprehensive dopamine response based on all factors"""
@@ -826,7 +957,13 @@ class EnhancedDopamineSubsystem:
             return "neutral_momentum"
 
     def reset_session(self, preserve_learning: bool = True):
-        """Reset dopamine system for new trading session"""
+        """
+        Reset dopamine system for new trading session.
+        
+        Args:
+            preserve_learning: If True, preserves tolerance, addiction, and learning state.
+                             If False, performs complete reset (backward compatibility).
+        """
         
         # Always reset these
         self.pnl_history.clear()
@@ -1185,5 +1322,24 @@ class EnhancedDopamineSubsystem:
         return np.mean(recent_accuracies)
 
 
-# Backwards compatibility alias
-DopamineSubsystem = EnhancedDopamineSubsystem
+# ========================================
+# BACKWARD COMPATIBILITY ALIASES
+# ========================================
+
+# Main class aliases for backward compatibility
+DopamineSubsystem = ConsolidatedDopamineSubsystem
+EnhancedDopamineSubsystem = ConsolidatedDopamineSubsystem
+
+# Export the main interface for external use
+__all__ = [
+    'DopamineSubsystem',
+    'EnhancedDopamineSubsystem', 
+    'ConsolidatedDopamineSubsystem',
+    'DopamineResponse',
+    'DopaminePhase',
+    'DopamineState',
+    'DopamineSnapshot',
+    'DopamineSignalProvider',
+    'DopamineEventProcessor',
+    'DopamineLearningInterface'
+]

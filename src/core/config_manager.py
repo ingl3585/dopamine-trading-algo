@@ -1,9 +1,23 @@
-# configuration_manager.py
+"""
+Unified Configuration Management System
 
-import logging
+This module consolidates configuration management functionality from the previous
+Config and ConfigurationManager classes, providing both simple and advanced interfaces
+while following clean architecture principles.
+
+Responsibilities:
+- Load and validate configurations from multiple sources (files, environment, defaults)
+- Provide type-safe configuration access with validation
+- Support both simple property access and advanced schema-based validation
+- Handle environment-specific configurations
+- Support runtime configuration updates
+- Manage configuration schemas and validation rules
+"""
+
 import os
 import json
-from typing import Dict, Any, Optional, List, Union
+import logging
+from typing import Dict, Any, Optional, List, Union, Type
 from pathlib import Path
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -12,9 +26,9 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class ConfigurationSchema:
-    """Schema for configuration validation"""
+    """Schema definition for configuration validation"""
     key: str
-    data_type: type
+    data_type: Type
     default_value: Any
     min_value: Optional[Union[int, float]] = None
     max_value: Optional[Union[int, float]] = None
@@ -22,38 +36,68 @@ class ConfigurationSchema:
     description: str = ""
     required: bool = False
 
-class ConfigurationManager:
-    """
-    Centralized configuration management for the trading system.
+class IConfigurationProvider:
+    """Interface for configuration providers following interface segregation principle"""
     
-    Responsibilities:
-    - Load and validate configurations from multiple sources
-    - Handle environment-specific overrides
-    - Provide type-safe configuration access
-    - Support runtime configuration updates
-    - Manage configuration schemas and validation
+    def get(self, key: str, default: Any = None) -> Any:
+        """Get configuration value"""
+        raise NotImplementedError
+    
+    def get_typed(self, key: str, expected_type: Type, default: Any = None) -> Any:
+        """Get configuration value with type checking"""
+        raise NotImplementedError
+
+class IConfigurationValidator:
+    """Interface for configuration validation"""
+    
+    def validate(self, key: str, value: Any) -> bool:
+        """Validate a configuration value"""
+        raise NotImplementedError
+    
+    def validate_all(self) -> bool:
+        """Validate all configuration values"""
+        raise NotImplementedError
+
+class ConfigurationManager(IConfigurationProvider, IConfigurationValidator):
+    """
+    Unified configuration management system following clean architecture principles.
+    
+    Features:
+    - Multiple configuration sources (defaults, files, environment variables)
+    - Schema-based validation with type checking
+    - Environment-aware configuration loading
+    - Runtime configuration updates
+    - Simple and advanced access patterns
+    - Comprehensive error handling and logging
     """
     
-    def __init__(self, config_file: Optional[str] = None):
+    def __init__(self, config_file: Optional[str] = None, enable_validation: bool = True):
+        """
+        Initialize configuration manager
+        
+        Args:
+            config_file: Optional specific configuration file to load
+            enable_validation: Whether to enable schema validation
+        """
+        self._settings: Dict[str, Any] = {}
+        self._schemas: Dict[str, ConfigurationSchema] = {}
+        self._config_sources: List[str] = []
+        self._validation_errors: List[str] = []
+        self._enable_validation = enable_validation
+        self._load_timestamp: Optional[datetime] = None
+        
+        # Configuration state
         self.config_file = config_file
-        self.settings = {}
-        self.schemas = {}
         self.environment = os.getenv('TRADING_ENV', 'development')
-        self.config_sources = []
         
-        # Configuration validation
-        self.validation_errors = []
-        self.load_timestamp = None
-        
-        # Initialize configuration schemas
+        # Initialize the configuration system
         self._initialize_schemas()
-        
-        # Load configurations
         self._load_all_configurations()
         
         logger.info(f"Configuration manager initialized for {self.environment} environment")
+        logger.info(f"Loaded from sources: {', '.join(self._config_sources)}")
     
-    def _initialize_schemas(self):
+    def _initialize_schemas(self) -> None:
         """Initialize configuration schemas for validation"""
         schemas = [
             # TCP Configuration
@@ -86,7 +130,7 @@ class ConfigurationManager:
             ConfigurationSchema('kelly_lookback', int, 100, 10, 1000,
                                description="Number of trades for Kelly calculation"),
             
-            # Market Data
+            # Market Data Configuration
             ConfigurationSchema('mnq_point_value', float, 2.0, 0.1, 10.0,
                                description="MNQ futures point value"),
             ConfigurationSchema('mnq_tick_size', float, 0.25, 0.01, 1.0,
@@ -123,7 +167,7 @@ class ConfigurationManager:
             ConfigurationSchema('close_positions_on_shutdown', bool, False,
                                description="Close positions on system shutdown"),
             
-            # Performance Tuning
+            # Neural Network Configuration
             ConfigurationSchema('batch_size', int, 32, 8, 128,
                                description="Neural network batch size"),
             ConfigurationSchema('learning_rate', float, 0.001, 0.0001, 0.01,
@@ -144,14 +188,14 @@ class ConfigurationManager:
         
         # Store schemas for validation
         for schema in schemas:
-            self.schemas[schema.key] = schema
+            self._schemas[schema.key] = schema
     
-    def _load_all_configurations(self):
-        """Load configurations from all sources"""
+    def _load_all_configurations(self) -> None:
+        """Load configurations from all sources with proper error handling"""
         try:
-            # Load base configuration
-            self.settings = self._load_base_config()
-            self.config_sources.append('base_defaults')
+            # Load base configuration from schemas
+            self._settings = self._load_base_config()
+            self._config_sources.append('schema_defaults')
             
             # Load environment-specific configuration
             self._load_environment_config()
@@ -163,65 +207,83 @@ class ConfigurationManager:
             # Apply environment variable overrides
             self._load_environment_variables()
             
-            # Validate all configurations
-            self._validate_all_configs()
+            # Validate all configurations if enabled
+            if self._enable_validation:
+                self.validate_all()
             
             # Create necessary directories
             self._create_directories()
             
-            self.load_timestamp = datetime.now()
-            
-            logger.info(f"Configuration loaded from sources: {', '.join(self.config_sources)}")
+            self._load_timestamp = datetime.now()
             
         except Exception as e:
-            logger.error(f"Error loading configurations: {e}")
-            raise
+            logger.error(f"Critical error loading configurations: {e}")
+            raise RuntimeError(f"Configuration system initialization failed: {e}") from e
     
     def _load_base_config(self) -> Dict[str, Any]:
-        """Load base configuration with defaults"""
+        """Load base configuration with defaults from schemas"""
         base_config = {}
         
         # Set defaults from schemas
-        for key, schema in self.schemas.items():
+        for key, schema in self._schemas.items():
             base_config[key] = schema.default_value
         
-        # Add environment
+        # Add system environment
         base_config['environment'] = self.environment
         
         return base_config
     
-    def _load_environment_config(self):
-        """Load environment-specific configuration"""
+    def _load_environment_config(self) -> None:
+        """Load environment-specific configuration file"""
         try:
             config_file = f"config/{self.environment}.json"
             
             if os.path.exists(config_file):
                 self._load_config_file(config_file)
-                self.config_sources.append(f'env_{self.environment}')
+                self._config_sources.append(f'env_{self.environment}')
                 logger.info(f"Loaded {self.environment} environment configuration")
             else:
-                logger.info(f"No {self.environment} environment config found")
+                logger.info(f"No {self.environment} environment config found, using defaults")
                 
         except Exception as e:
             logger.warning(f"Error loading environment config: {e}")
     
-    def _load_config_file(self, config_file: str):
+    def _load_config_file(self, config_file: str) -> None:
         """Load configuration from JSON file"""
         try:
             with open(config_file, 'r') as f:
                 file_config = json.load(f)
-                self.settings.update(file_config)
                 
-            if config_file not in self.config_sources:
-                self.config_sources.append(f'file_{config_file}')
+            # Deep merge configuration
+            self._deep_merge_config(file_config)
+            
+            if f'file_{config_file}' not in self._config_sources:
+                self._config_sources.append(f'file_{config_file}')
                 
             logger.info(f"Loaded configuration from {config_file}")
             
         except Exception as e:
             logger.warning(f"Error loading config file {config_file}: {e}")
     
-    def _load_environment_variables(self):
-        """Load configuration from environment variables"""
+    def _deep_merge_config(self, new_config: Dict[str, Any]) -> None:
+        """Deep merge configuration dictionaries"""
+        for key, value in new_config.items():
+            if isinstance(value, dict) and key in self._settings and isinstance(self._settings[key], dict):
+                # Recursively merge nested dictionaries
+                self._deep_merge_dict(self._settings[key], value)
+            else:
+                self._settings[key] = value
+    
+    def _deep_merge_dict(self, target: Dict[str, Any], source: Dict[str, Any]) -> None:
+        """Recursively merge dictionaries"""
+        for key, value in source.items():
+            if isinstance(value, dict) and key in target and isinstance(target[key], dict):
+                self._deep_merge_dict(target[key], value)
+            else:
+                target[key] = value
+    
+    def _load_environment_variables(self) -> None:
+        """Load configuration from environment variables with type conversion"""
         env_mappings = {
             'TRADING_TCP_DATA_PORT': 'tcp_data_port',
             'TRADING_TCP_SIGNAL_PORT': 'tcp_signal_port',
@@ -246,119 +308,137 @@ class ConfigurationManager:
                 try:
                     value = os.environ[env_var]
                     
-                    # Convert to appropriate type based on schema
-                    if config_key in self.schemas:
-                        schema = self.schemas[config_key]
-                        if schema.data_type == int:
-                            value = int(value)
-                        elif schema.data_type == float:
-                            value = float(value)
-                        elif schema.data_type == bool:
-                            value = value.lower() in ('true', '1', 'yes', 'on')
+                    # Type conversion based on schema
+                    if config_key in self._schemas:
+                        schema = self._schemas[config_key]
+                        value = self._convert_to_type(value, schema.data_type)
                     
-                    self.settings[config_key] = value
+                    self._settings[config_key] = value
                     env_overrides += 1
+                    logger.debug(f"Applied environment override: {config_key} = {value}")
                     
                 except Exception as e:
                     logger.warning(f"Error applying environment variable {env_var}: {e}")
         
         if env_overrides > 0:
-            self.config_sources.append(f'env_vars_{env_overrides}')
+            self._config_sources.append(f'env_vars_{env_overrides}')
             logger.info(f"Applied {env_overrides} environment variable overrides")
     
-    def _validate_all_configs(self):
-        """Validate all configuration values"""
-        self.validation_errors = []
-        
-        for key, schema in self.schemas.items():
-            if key in self.settings:
-                self._validate_config_value(key, self.settings[key], schema)
-            elif schema.required:
-                self.validation_errors.append(f"Required configuration '{key}' is missing")
-        
-        if self.validation_errors:
-            error_msg = f"Configuration validation failed: {', '.join(self.validation_errors)}"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-        
-        logger.info("All configurations validated successfully")
+    def _convert_to_type(self, value: str, target_type: Type) -> Any:
+        """Convert string value to target type"""
+        if target_type == bool:
+            return value.lower() in ('true', '1', 'yes', 'on')
+        elif target_type == int:
+            return int(value)
+        elif target_type == float:
+            return float(value)
+        else:
+            return value
     
-    def _validate_config_value(self, key: str, value: Any, schema: ConfigurationSchema):
-        """Validate a single configuration value"""
-        try:
-            # Type validation
-            if not isinstance(value, schema.data_type):
-                self.validation_errors.append(f"'{key}' must be {schema.data_type.__name__}")
-                return
-            
-            # Range validation for numeric values
-            if schema.min_value is not None and isinstance(value, (int, float)):
-                if value < schema.min_value:
-                    self.validation_errors.append(f"'{key}' must be >= {schema.min_value}")
-            
-            if schema.max_value is not None and isinstance(value, (int, float)):
-                if value > schema.max_value:
-                    self.validation_errors.append(f"'{key}' must be <= {schema.max_value}")
-            
-            # Allowed values validation
-            if schema.allowed_values is not None:
-                if value not in schema.allowed_values:
-                    self.validation_errors.append(f"'{key}' must be one of {schema.allowed_values}")
-            
-        except Exception as e:
-            self.validation_errors.append(f"Error validating '{key}': {e}")
-    
-    def _create_directories(self):
+    def _create_directories(self) -> None:
         """Create necessary directories"""
         directory_keys = ['data_directory', 'models_directory', 'logs_directory']
         
         for key in directory_keys:
-            if key in self.settings:
-                dir_path = Path(self.settings[key])
-                dir_path.mkdir(parents=True, exist_ok=True)
-                logger.debug(f"Ensured directory exists: {dir_path}")
+            if key in self._settings:
+                try:
+                    dir_path = Path(self._settings[key])
+                    dir_path.mkdir(parents=True, exist_ok=True)
+                    logger.debug(f"Ensured directory exists: {dir_path}")
+                except Exception as e:
+                    logger.error(f"Failed to create directory for {key}: {e}")
     
+    # IConfigurationProvider implementation
     def get(self, key: str, default: Any = None) -> Any:
         """Get configuration value with optional default"""
-        return self.settings.get(key, default)
+        return self._settings.get(key, default)
     
-    def get_typed(self, key: str, expected_type: type, default: Any = None) -> Any:
-        """Get configuration value with type checking"""
+    def get_typed(self, key: str, expected_type: Type, default: Any = None) -> Any:
+        """Get configuration value with type checking and conversion"""
         value = self.get(key, default)
         
         if value is not None and not isinstance(value, expected_type):
             try:
-                # Attempt type conversion
-                if expected_type == bool and isinstance(value, str):
-                    value = value.lower() in ('true', '1', 'yes', 'on')
-                else:
-                    value = expected_type(value)
-            except (ValueError, TypeError):
-                logger.warning(f"Could not convert '{key}' to {expected_type.__name__}")
+                value = self._convert_to_type(str(value), expected_type)
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Could not convert '{key}' to {expected_type.__name__}: {e}")
                 return default
         
         return value
     
+    # IConfigurationValidator implementation
+    def validate(self, key: str, value: Any) -> bool:
+        """Validate a single configuration value"""
+        if not self._enable_validation or key not in self._schemas:
+            return True
+        
+        schema = self._schemas[key]
+        return self._validate_config_value(key, value, schema)
+    
+    def validate_all(self) -> bool:
+        """Validate all configuration values"""
+        if not self._enable_validation:
+            return True
+        
+        self._validation_errors.clear()
+        
+        for key, schema in self._schemas.items():
+            if key in self._settings:
+                if not self._validate_config_value(key, self._settings[key], schema):
+                    return False
+            elif schema.required:
+                self._validation_errors.append(f"Required configuration '{key}' is missing")
+        
+        if self._validation_errors:
+            error_msg = f"Configuration validation failed: {', '.join(self._validation_errors)}"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+        
+        logger.info("All configurations validated successfully")
+        return True
+    
+    def _validate_config_value(self, key: str, value: Any, schema: ConfigurationSchema) -> bool:
+        """Validate a single configuration value against its schema"""
+        try:
+            # Type validation
+            if not isinstance(value, schema.data_type):
+                self._validation_errors.append(f"'{key}' must be {schema.data_type.__name__}")
+                return False
+            
+            # Range validation for numeric values
+            if schema.min_value is not None and isinstance(value, (int, float)):
+                if value < schema.min_value:
+                    self._validation_errors.append(f"'{key}' must be >= {schema.min_value}")
+                    return False
+            
+            if schema.max_value is not None and isinstance(value, (int, float)):
+                if value > schema.max_value:
+                    self._validation_errors.append(f"'{key}' must be <= {schema.max_value}")
+                    return False
+            
+            # Allowed values validation
+            if schema.allowed_values is not None:
+                if value not in schema.allowed_values:
+                    self._validation_errors.append(f"'{key}' must be one of {schema.allowed_values}")
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            self._validation_errors.append(f"Error validating '{key}': {e}")
+            return False
+    
+    # Advanced configuration management methods
     def set(self, key: str, value: Any, validate: bool = True) -> bool:
         """Set configuration value with optional validation"""
         try:
-            if validate and key in self.schemas:
-                # Create temporary copy for validation
-                temp_settings = self.settings.copy()
-                temp_settings[key] = value
-                
-                # Validate the new value
-                schema = self.schemas[key]
-                temp_errors = []
-                self._validate_config_value(key, value, schema)
-                
-                if self.validation_errors:
-                    logger.error(f"Validation failed for '{key}': {self.validation_errors}")
+            if validate and self._enable_validation:
+                if not self.validate(key, value):
+                    logger.error(f"Validation failed for '{key}': {self._validation_errors}")
                     return False
             
-            # Set the value
-            old_value = self.settings.get(key)
-            self.settings[key] = value
+            old_value = self._settings.get(key)
+            self._settings[key] = value
             
             logger.info(f"Configuration updated: {key} = {value} (was: {old_value})")
             return True
@@ -370,10 +450,11 @@ class ConfigurationManager:
     def get_section(self, prefix: str) -> Dict[str, Any]:
         """Get all configuration values with a specific prefix"""
         return {
-            key: value for key, value in self.settings.items()
+            key: value for key, value in self._settings.items()
             if key.startswith(prefix)
         }
     
+    # Convenience methods for backward compatibility
     def get_tcp_config(self) -> Dict[str, Any]:
         """Get TCP-specific configuration"""
         return {
@@ -420,8 +501,26 @@ class ConfigurationManager:
             'environment': self.get('environment')
         }
     
-    def reload_configuration(self, config_file: Optional[str] = None):
-        """Reload configuration from sources"""
+    def get_learnable_parameters(self) -> List[str]:
+        """Return parameters that should be meta-learned rather than hardcoded"""
+        return [
+            'max_daily_loss_factor',
+            'max_position_size_factor',
+            'min_confidence_threshold',
+            'risk_per_trade_factor',
+            'max_trades_per_hour',
+            'stop_preference',
+            'target_preference',
+            'loss_tolerance_factor',
+            'consecutive_loss_tolerance',
+            'position_size_factor',
+            'stop_distance_factor',
+            'target_distance_factor',
+        ]
+    
+    # System management methods
+    def reload_configuration(self, config_file: Optional[str] = None) -> None:
+        """Reload configuration from all sources"""
         try:
             logger.info("Reloading configuration...")
             
@@ -429,9 +528,9 @@ class ConfigurationManager:
                 self.config_file = config_file
             
             # Clear current state
-            self.settings.clear()
-            self.config_sources.clear()
-            self.validation_errors.clear()
+            self._settings.clear()
+            self._config_sources.clear()
+            self._validation_errors.clear()
             
             # Reload all configurations
             self._load_all_configurations()
@@ -442,29 +541,22 @@ class ConfigurationManager:
             logger.error(f"Error reloading configuration: {e}")
             raise
     
-    def save_configuration(self, output_file: str, include_defaults: bool = False):
+    def save_configuration(self, output_file: str, include_defaults: bool = False) -> None:
         """Save current configuration to file"""
         try:
-            # Prepare configuration for saving
             config_to_save = {}
             
-            for key, value in self.settings.items():
-                if include_defaults or key in self.schemas:
-                    # Don't save if it's just the default value
-                    if not include_defaults and key in self.schemas:
-                        if value == self.schemas[key].default_value:
-                            continue
-                    
+            for key, value in self._settings.items():
+                if include_defaults or key not in self._schemas or value != self._schemas[key].default_value:
                     config_to_save[key] = value
             
             # Add metadata
             config_to_save['_metadata'] = {
                 'saved_at': datetime.now().isoformat(),
                 'environment': self.environment,
-                'sources': self.config_sources
+                'sources': self._config_sources
             }
             
-            # Save to file
             with open(output_file, 'w') as f:
                 json.dump(config_to_save, f, indent=2, default=str)
             
@@ -475,29 +567,63 @@ class ConfigurationManager:
             raise
     
     def get_configuration_summary(self) -> Dict[str, Any]:
-        """Get summary of configuration state"""
+        """Get comprehensive configuration summary"""
         return {
             'environment': self.environment,
-            'sources': self.config_sources,
-            'total_settings': len(self.settings),
-            'validation_errors': len(self.validation_errors),
-            'schemas_defined': len(self.schemas),
-            'load_timestamp': self.load_timestamp.isoformat() if self.load_timestamp else None,
-            'required_settings': [k for k, v in self.schemas.items() if v.required],
+            'sources': self._config_sources,
+            'total_settings': len(self._settings),
+            'validation_errors': len(self._validation_errors),
+            'schemas_defined': len(self._schemas),
+            'load_timestamp': self._load_timestamp.isoformat() if self._load_timestamp else None,
+            'required_settings': [k for k, v in self._schemas.items() if v.required],
             'modified_from_defaults': [
-                k for k, v in self.settings.items() 
-                if k in self.schemas and v != self.schemas[k].default_value
-            ]
+                k for k, v in self._settings.items() 
+                if k in self._schemas and v != self._schemas[k].default_value
+            ],
+            'validation_enabled': self._enable_validation
         }
+
+# Simple Config class for backward compatibility and simple use cases
+class Config(IConfigurationProvider):
+    """
+    Simple configuration interface for backward compatibility.
     
-    def validate_configuration(self) -> Dict[str, Any]:
-        """Validate current configuration and return results"""
-        self._validate_all_configs()
+    This provides the same interface as the original Config class while
+    delegating to the more sophisticated ConfigurationManager.
+    """
+    
+    def __init__(self, config_file: Optional[str] = None):
+        """Initialize simple config interface"""
+        self._config_manager = ConfigurationManager(config_file, enable_validation=False)
+        self.settings = self._config_manager._settings
         
-        return {
-            'is_valid': len(self.validation_errors) == 0,
-            'errors': self.validation_errors,
-            'warnings': [],  # Could add warnings for deprecated settings
-            'validated_settings': len(self.settings),
-            'validation_timestamp': datetime.now().isoformat()
-        }
+        logger.info(f"Simple config interface initialized: {self._get_config_summary()}")
+    
+    def get(self, key: str, default: Any = None) -> Any:
+        """Get configuration value"""
+        return self._config_manager.get(key, default)
+    
+    def get_typed(self, key: str, expected_type: Type, default: Any = None) -> Any:
+        """Get configuration value with type checking"""
+        return self._config_manager.get_typed(key, expected_type, default)
+    
+    def get_tcp_config(self) -> Dict[str, Any]:
+        """Get TCP-specific configuration"""
+        return self._config_manager.get_tcp_config()
+    
+    def get_risk_config(self) -> Dict[str, Any]:
+        """Get risk management configuration"""
+        return self._config_manager.get_risk_config()
+    
+    def get_learnable_parameters(self) -> List[str]:
+        """Return parameters that should be meta-learned"""
+        return self._config_manager.get_learnable_parameters()
+    
+    def _get_config_summary(self) -> str:
+        """Get a summary of current configuration for backward compatibility"""
+        summary_keys = [
+            'environment', 'tcp_data_port', 'tcp_signal_port', 
+            'max_position_size', 'max_daily_loss', 'leverage'
+        ]
+        summary = {k: self._config_manager.get(k) for k in summary_keys}
+        return str(summary)

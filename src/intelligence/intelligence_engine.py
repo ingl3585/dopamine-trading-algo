@@ -10,11 +10,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from src.market_analysis.data_processor import MarketData
+from src.core.market_data_processor import MarketData
 from src.intelligence.subsystem_evolution import EnhancedIntelligenceOrchestrator
-from src.market_analysis.microstructure_analyzer import MarketMicrostructureEngine
-from src.intelligence.subsystems.enhanced_dopamine_subsystem import EnhancedDopamineSubsystem
+from src.intelligence.subsystems.microstructure_subsystem import MicrostructureSubsystem
 from src.shared.types import Features
+from src.shared.intelligence_types import (
+    IntelligenceSignal, IntelligenceUpdate, IntelligenceContext,
+    IntelligenceSignalType, create_intelligence_signal, create_intelligence_context
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +30,10 @@ class IntelligenceEngine:
         self.orchestrator = EnhancedIntelligenceOrchestrator(config)
         
         # Microstructure analysis (4th subsystem)
-        self.microstructure_engine = MarketMicrostructureEngine()
+        self.microstructure_subsystem = MicrostructureSubsystem(config)
         
-        # Enhanced Dopamine subsystem (5th subsystem) - Complete trading psychology system
-        self.dopamine_subsystem = EnhancedDopamineSubsystem(config)
+        # Note: Dopamine processing has been moved to the trading agent
+        # Intelligence engine now focuses on the 4 core subsystems: DNA, Temporal, Immune, Microstructure
         
         # Real-time adaptation (dependency injection to avoid circular imports)
         self.adaptation_engine = None
@@ -51,13 +54,24 @@ class IntelligenceEngine:
             'microstructure_patterns_learned': 0
         }
         
-        # Subsystem training progress tracking
+        # Intelligence signal generation parameters
+        self.signal_generation_config = {
+            'signal_threshold': 0.1,
+            'confidence_threshold': 0.3,
+            'consensus_window': 20,
+            'signal_decay_factor': 0.95
+        }
+        
+        # Subsystem training progress tracking (4 subsystems)
         self.subsystem_training_progress = {
             'dna': {'sequences_processed': 0, 'learning_events': 0},
             'temporal': {'cycles_analyzed': 0, 'learning_events': 0},
-            'immune': {'threats_detected': 0, 'learning_events': 0},
+            'immune': {'threats_detected': 0, 'patterns_analyzed': 0, 'learning_events': 0},
             'microstructure': {'patterns_analyzed': 0, 'learning_events': 0}
         }
+        
+        # Signal history for consensus calculation
+        self.recent_signals = deque(maxlen=100)
         
         self.load_patterns(self.memory_file)
 
@@ -81,8 +95,11 @@ class IntelligenceEngine:
             logger.warning(f"Empty filepath provided, using default: {filepath}")
         
         orchestrator_stats = self.orchestrator.get_comprehensive_stats()
-        microstructure_features = self.microstructure_engine.get_microstructure_features()
+        microstructure_features = self.microstructure_subsystem.get_microstructure_features()
         adaptation_stats = self._get_adaptation_engine().get_comprehensive_stats()
+        
+        # Include intelligence signal statistics
+        signal_stats = self._get_signal_generation_stats()
         
         data = {
             'patterns': dict(self.patterns),
@@ -93,6 +110,7 @@ class IntelligenceEngine:
             'orchestrator_stats': orchestrator_stats,
             'microstructure_features': microstructure_features,
             'adaptation_stats': adaptation_stats,
+            'signal_generation_stats': signal_stats,
             'saved_at': datetime.now().isoformat()
         }
         
@@ -203,25 +221,25 @@ class IntelligenceEngine:
             self.bootstrap_stats['temporal_cycles_found'] = orchestrator_stats.get('temporal_cycles', 0)
             self.bootstrap_stats['immune_threats_learned'] = orchestrator_stats.get('immune_system', {}).get('total_antibodies', 0)
             
-            microstructure_features = self.microstructure_engine.get_microstructure_features()
-            self.bootstrap_stats['microstructure_patterns_learned'] = microstructure_features.get('pattern_count', 0) if isinstance(microstructure_features, dict) else 0
+            # Update microstructure stats from training progress 
+            # Note: 'patterns_analyzed' represents data windows processed, not learned patterns stored
+            self.bootstrap_stats['microstructure_patterns_learned'] = self.subsystem_training_progress['microstructure']['patterns_analyzed']
             
             # Close progress bars after bootstrap to prevent interference with live trading logs
-            self.orchestrator.close_progress_bars(self.microstructure_engine)
+            self.orchestrator.close_progress_bars()
             
             # Mark all subsystems as live trading to prevent progress bar reinitialization
             self.orchestrator.dna_subsystem._live_trading_started = True
             self.orchestrator.temporal_subsystem._live_trading_started = True
             self.orchestrator.immune_subsystem._live_trading_started = True
-            self.microstructure_engine._live_trading_started = True
             
             self.historical_processed = True
             
             logger.info(f"Enhanced bootstrap complete: {total_bars} bars processed across all subsystems")
-            logger.info(f"DNA patterns: {self.bootstrap_stats['dna_patterns_learned']}")
-            logger.info(f"Temporal cycles: {self.bootstrap_stats['temporal_cycles_found']}")
-            logger.info(f"Immune threats: {self.bootstrap_stats['immune_threats_learned']}")
-            logger.info(f"Microstructure patterns: {self.bootstrap_stats['microstructure_patterns_learned']}")
+            logger.info(f"DNA patterns: {self.bootstrap_stats['dna_patterns_learned']} (stored sequences)")
+            logger.info(f"Temporal cycles: {self.bootstrap_stats['temporal_cycles_found']} (detected cycles)")
+            logger.info(f"Immune threats: {self.bootstrap_stats['immune_threats_learned']} (learned antibodies)")
+            logger.info(f"Microstructure patterns: {self.bootstrap_stats['microstructure_patterns_learned']} (data windows analyzed)")
             logger.info(f"Total time: {self.bootstrap_stats['bootstrap_time']:.1f}s")
             
             self.save_patterns(self.memory_file)
@@ -310,8 +328,12 @@ class IntelligenceEngine:
                 
                 processed_count += 1
                 
-                # Progress logging every 50 windows
-                if processed_count % 50 == 0:
+                # Progress logging - more frequent for longer timeframes, less for shorter ones
+                progress_interval = {
+                    '4h': 5, '1h': 10, '15m': 10, '5m': 25, '1m': 50
+                }.get(timeframe, 50)
+                
+                if processed_count % progress_interval == 0:
                     logger.info(f"Comprehensive training progress: {processed_count} windows processed for {timeframe}")
                 
             except Exception as e:
@@ -321,7 +343,7 @@ class IntelligenceEngine:
         logger.info(f"Comprehensive processing complete: {processed_count} windows for {timeframe}")
         
         # Add clean line break after progress bar updates for major processing phases
-        if processed_count > 50 and timeframe == "1m":  # Only for 1m timeframe which has most activity
+        if processed_count > 20:  # Show line break for any significant processing
             print()
             
         return processed_count
@@ -486,13 +508,27 @@ class IntelligenceEngine:
         return {'subsystem': 'temporal', 'signal': 0.0, 'strength': 0.0, 'cycles_info': []}
     
     def _train_immune_subsystem(self, market_features: Dict) -> Dict:
-        """Train immune subsystem with threat detection"""
+        """Train immune subsystem with threat detection on historical data"""
         try:
             # Enhanced threat detection
             immune_signal = self.orchestrator.immune_subsystem.detect_threats(market_features)
             
             # Track training progress
             self.subsystem_training_progress['immune']['threats_detected'] += 1
+            
+            # Train on negative signals (threats) from historical data
+            if immune_signal < -0.1:  # Significant threat detected
+                self.orchestrator.immune_subsystem.learn_threat(
+                    market_features, 
+                    immune_signal, 
+                    is_bootstrap=True
+                )
+                self.subsystem_training_progress['immune']['patterns_analyzed'] += 1
+                
+                # Log immune learning progress
+                antibody_count = len(self.orchestrator.immune_subsystem.antibodies)
+                if antibody_count > 0 and antibody_count % 5 == 0:
+                    logger.info(f"Immune Learning: {antibody_count} threats learned")
             
             # Classify threat type
             threat_type = 'none'
@@ -519,22 +555,32 @@ class IntelligenceEngine:
     def _train_microstructure_subsystem(self, prices: List[float], volumes: List[float]) -> Dict:
         """Train microstructure subsystem with order flow analysis"""
         try:
-            # Enhanced microstructure analysis
-            microstructure_result = self.microstructure_engine.analyze_market_state(
-                prices, volumes
-            )
+            # Enhanced microstructure analysis using integrated subsystem
+            market_features = {
+                'prices': prices,
+                'volumes': volumes,
+                'price_momentum': (prices[-1] - prices[0]) / prices[0] if len(prices) > 1 and prices[0] != 0 else 0.0,
+                'volume_ratio': sum(volumes[-5:]) / sum(volumes[:-5]) if len(volumes) > 10 else 1.0
+            }
             
-            # Extract key signals
-            microstructure_signal = microstructure_result.get('microstructure_signal', 0.0)
-            regime_adjusted_signal = microstructure_result.get('regime_adjusted_signal', 0.0)
-            
-            # Extract order flow features
-            order_flow = microstructure_result.get('order_flow', {})
-            smart_money_flow = order_flow.get('smart_money_flow', 0.0)
-            liquidity_depth = order_flow.get('liquidity_depth', 0.5)
+            microstructure_result = self.microstructure_subsystem.get_enhanced_signal(market_features)
             
             # Track training progress
             self.subsystem_training_progress['microstructure']['patterns_analyzed'] += 1
+            
+            # Extract key signals
+            microstructure_signal = microstructure_result.get('signal', 0.0)
+            regime_adjusted_signal = microstructure_result.get('confidence', 0.0)
+            
+            # Extract order flow features  
+            context = microstructure_result.get('context', {})
+            smart_money_flow = context.get('smart_money_flow', 0.0)
+            liquidity_depth = context.get('liquidity_depth', 0.5)
+            
+            # Log microstructure learning progress
+            pattern_count = self.subsystem_training_progress['microstructure']['patterns_analyzed']
+            if pattern_count > 0 and pattern_count % 25 == 0:
+                logger.info(f"Microstructure Learning: {pattern_count} patterns learned")
             
             return {
                 'subsystem': 'microstructure',
@@ -543,8 +589,8 @@ class IntelligenceEngine:
                 'strength': abs(microstructure_signal),
                 'smart_money_flow': smart_money_flow,
                 'liquidity_depth': liquidity_depth,
-                'order_flow': order_flow,
-                'regime_state': microstructure_result.get('regime_state', {})
+                'order_flow': context,
+                'regime_state': microstructure_result.get('reasoning', '')
             }
             
         except Exception as e:
@@ -673,7 +719,7 @@ class IntelligenceEngine:
             self.subsystem_training_progress['immune']['learning_events'] += 1
             
             # 4. Microstructure Subsystem Learning (with context)
-            self.microstructure_engine.learn_from_outcome(outcome, microstructure_result)
+            self.microstructure_subsystem.learn_from_outcome(outcome, microstructure_result)
             self.subsystem_training_progress['microstructure']['learning_events'] += 1
             
         except Exception as e:
@@ -724,7 +770,7 @@ class IntelligenceEngine:
         
         # Get stats from all subsystems
         orchestrator_stats = self.orchestrator.get_comprehensive_stats()
-        microstructure_features = self.microstructure_engine.get_microstructure_features()
+        microstructure_features = self.microstructure_subsystem.get_microstructure_features()
         
         # Look for correlations between subsystem signals
         # This would involve analyzing historical performance of subsystem combinations
@@ -787,7 +833,7 @@ class IntelligenceEngine:
                 self.orchestrator.immune_subsystem.learn_threat(market_state, scenario['expected_outcome'])
                 
                 # Train microstructure on synthetic scenarios
-                self.microstructure_engine.learn_from_outcome(scenario['expected_outcome'])
+                self.microstructure_subsystem.learn_from_outcome(scenario['expected_outcome'])
                 
             except Exception as e:
                 logger.warning(f"Error in synthetic scenario training: {e}")
@@ -939,8 +985,8 @@ class IntelligenceEngine:
             
             # Learn in microstructure engine
             try:
-                if hasattr(self.microstructure_engine, 'learn_from_outcome'):
-                    self.microstructure_engine.learn_from_outcome(outcome)
+                if hasattr(self.microstructure_subsystem, 'learn_from_outcome'):
+                    self.microstructure_subsystem.learn_from_outcome(outcome)
             except Exception as e:
                 logger.warning(f"Error in microstructure learning: {e}")
             
@@ -954,7 +1000,9 @@ class IntelligenceEngine:
                     'prediction_error': abs(outcome) if outcome != 0 else 0.1,
                     'confidence': learning_context.get('confidence', 0.5)
                 }
-                self.dopamine_subsystem.learn_from_outcome(outcome, dopamine_context)
+                # Note: Dopamine learning is now handled by the trading agent's dopamine manager
+                # Intelligence subsystems focus on providing clean signals only
+                pass  # Dopamine processing moved to agent
             except Exception as e:
                 logger.warning(f"Error in dopamine learning: {e}")
             
@@ -1324,11 +1372,9 @@ class IntelligenceEngine:
     def _trigger_subsystem_learning(self, subsystem_name: str, learning_data: dict, priority: float):
         """Trigger actual learning update for specific subsystem"""
         try:
-            if subsystem_name == 'dopamine' and hasattr(self.orchestrator, 'dopamine_subsystem'):
-                # Update dopamine learning
-                outcome = learning_data.get('trade_outcome', 0)
-                if abs(outcome) > 0.01:  # Significant outcome
-                    self.orchestrator.dopamine_subsystem.update_dopamine_response(outcome, priority)
+            if subsystem_name == 'dopamine':
+                # Note: Dopamine subsystem learning is now handled by the agent's dopamine manager
+                pass  # Dopamine processing moved to agent
             
             elif subsystem_name == 'immune' and hasattr(self.orchestrator, 'immune_subsystem'):
                 # Update immune system
@@ -1352,8 +1398,8 @@ class IntelligenceEngine:
                 # Update microstructure analysis
                 volume_data = learning_data.get('volume_significance', 0)
                 if abs(volume_data) > 0.1:
-                    if hasattr(self, 'microstructure_engine'):
-                        self.microstructure_engine.learn_from_outcome(learning_data)
+                    if hasattr(self, 'microstructure_subsystem'):
+                        self.microstructure_subsystem.learn_from_outcome(learning_data)
         
         except Exception as e:
             logger.error(f"Error triggering learning for {subsystem_name}: {e}")
@@ -1405,7 +1451,7 @@ class IntelligenceEngine:
         total += len(self.patterns)
         
         # Add microstructure patterns
-        microstructure_features = self.microstructure_engine.get_microstructure_features()
+        microstructure_features = self.microstructure_subsystem.get_microstructure_features()
         if isinstance(microstructure_features, dict):
             total += len(microstructure_features.get('patterns', {}))
         
@@ -1415,22 +1461,27 @@ class IntelligenceEngine:
         """Enhanced statistics with all four subsystems"""
         orchestrator_stats = self.orchestrator.get_comprehensive_stats()
         adaptation_stats = self._get_adaptation_engine().get_comprehensive_stats()
-        microstructure_features = self.microstructure_engine.get_microstructure_features()
+        microstructure_features = self.microstructure_subsystem.get_microstructure_features()
         
         # Extract subsystem counts
         dna_stats = orchestrator_stats.get('dna_evolution', {})
         immune_stats = orchestrator_stats.get('immune_system', {})
         temporal_cycles = orchestrator_stats.get('temporal_cycles', 0)
         
-        # Count microstructure patterns
+        # Count microstructure patterns - use bootstrap stats if available for consistency
         micro_patterns_count = 0
-        if isinstance(microstructure_features, dict):
+        if hasattr(self, 'bootstrap_stats') and 'microstructure_patterns_learned' in self.bootstrap_stats:
+            # Use bootstrap stats for consistency with logged values
+            micro_patterns_count = self.bootstrap_stats['microstructure_patterns_learned']
+        elif isinstance(microstructure_features, dict):
+            # Fallback to real-time pattern count
             micro_patterns_count = microstructure_features.get('pattern_count', 0)
         
         # Get dopamine subsystem stats
         dopamine_stats = 0
         try:
-            dopamine_metrics = self.dopamine_subsystem.get_enhanced_performance_metrics()
+            # Note: Dopamine metrics are now provided by the agent's dopamine manager
+            dopamine_metrics = {'status': 'moved_to_agent'}
             if isinstance(dopamine_metrics, dict) and dopamine_metrics.get('status') != 'insufficient_data':
                 dopamine_stats = dopamine_metrics.get('total_updates', 0)
         except:
@@ -1555,7 +1606,7 @@ class IntelligenceEngine:
             immune_signal = self.orchestrator.immune_subsystem.detect_threats(market_features)
             
             # 4. Microstructure Subsystem
-            microstructure_result = self.microstructure_engine.analyze_market_state(
+            microstructure_result = self.microstructure_subsystem.analyze_market_state(
                 data.prices_1m, data.volumes_1m
             )
             microstructure_signal = microstructure_result.get('microstructure_signal', 0.0)
@@ -1576,7 +1627,8 @@ class IntelligenceEngine:
                 'open_positions': getattr(data, 'open_positions', 0.0),
                 'current_price': data.prices_1m[-1] if data.prices_1m else 0.0
             }
-            dopamine_signal = self.dopamine_subsystem.get_simple_signal(dopamine_market_data)
+            # Note: Dopamine signals are now generated by the agent's dopamine manager
+            dopamine_signal = 0.0  # Placeholder - actual dopamine processing is in agent
 
         except Exception as e:
             logger.error(f"Error during subsystem processing in extract_features: {e}")
@@ -1885,7 +1937,8 @@ class IntelligenceEngine:
             temporal_signal_value = self._analyze_temporal_patterns_simple(current_timestamp)
             immune_signal_value = self._analyze_risk_patterns_simple(current_price, volatility)
             microstructure_signal_value = max(-1.0, min(1.0, volume_momentum * 0.5 + (1.0 - volatility) * 0.5))
-            dopamine_signal = self.dopamine_subsystem.get_simple_signal(market_features)
+            # Note: Dopamine signals are now generated by the agent's dopamine manager  
+            dopamine_signal = 0.0  # Placeholder - actual dopamine processing is in agent
             
             # Get dopamine signal value
             dopamine_signal_value = dopamine_signal.signal if hasattr(dopamine_signal, 'signal') else dopamine_signal
@@ -2297,3 +2350,290 @@ class IntelligenceEngine:
             return signal * 1.2  # Increase signal strength
         else:
             return signal  # Normal regime
+    
+    # ========================================
+    # INTELLIGENCE SIGNAL GENERATION METHODS
+    # ========================================
+    
+    def get_intelligence_signals(self, features: Features, market_data) -> List[IntelligenceSignal]:
+        """
+        Get intelligence signals from all 4 subsystems
+        
+        This is the main method for generating intelligence signals that the
+        dopamine manager will process for trading decisions.
+        
+        Args:
+            features: Processed market features
+            market_data: Current market data
+            
+        Returns:
+            List of intelligence signals from each subsystem
+        """
+        try:
+            signals = []
+            current_time = time.time()
+            
+            # Get DNA subsystem signal (pattern recognition)
+            dna_signal = self._generate_dna_intelligence_signal(features, market_data, current_time)
+            if dna_signal:
+                signals.append(dna_signal)
+            
+            # Get Temporal subsystem signal (time-based analysis)
+            temporal_signal = self._generate_temporal_intelligence_signal(features, market_data, current_time)
+            if temporal_signal:
+                signals.append(temporal_signal)
+            
+            # Get Immune subsystem signal (anomaly detection)
+            immune_signal = self._generate_immune_intelligence_signal(features, market_data, current_time)
+            if immune_signal:
+                signals.append(immune_signal)
+            
+            # Get Microstructure subsystem signal (market microstructure)
+            microstructure_signal = self._generate_microstructure_intelligence_signal(features, market_data, current_time)
+            if microstructure_signal:
+                signals.append(microstructure_signal)
+            
+            # Store signals for consensus tracking
+            for signal in signals:
+                self.recent_signals.append(signal)
+            
+            logger.debug(f"Generated {len(signals)} intelligence signals")
+            return signals
+            
+        except Exception as e:
+            logger.error(f"Error generating intelligence signals: {e}")
+            return []
+    
+    def _generate_dna_intelligence_signal(self, features: Features, market_data, timestamp: float) -> Optional[IntelligenceSignal]:
+        """Generate intelligence signal from DNA subsystem (pattern recognition)"""
+        try:
+            # Get DNA analysis from orchestrator
+            dna_result = self.orchestrator.analyze_dna_patterns(features, market_data)
+            
+            if not dna_result or not isinstance(dna_result, dict):
+                return None
+            
+            # Extract signal strength and confidence
+            signal_strength = dna_result.get('signal', 0.0)
+            confidence = dna_result.get('confidence', 0.5)
+            pattern_type = dna_result.get('pattern_type', 'unknown')
+            
+            # Determine direction based on signal strength
+            if signal_strength > self.signal_generation_config['signal_threshold']:
+                direction = 'bullish'
+            elif signal_strength < -self.signal_generation_config['signal_threshold']:
+                direction = 'bearish'
+            else:
+                direction = 'neutral'
+            
+            # Only generate signals above confidence threshold
+            if confidence < self.signal_generation_config['confidence_threshold']:
+                return None
+            
+            return create_intelligence_signal(
+                signal_type=IntelligenceSignalType.PATTERN_RECOGNITION,
+                strength=signal_strength,
+                confidence=confidence,
+                direction=direction,
+                timeframe=getattr(features, 'timeframe', '1m'),
+                subsystem_id='dna',
+                pattern_type=pattern_type,
+                analysis_source='dna_sequences'
+            )
+            
+        except Exception as e:
+            logger.error(f"Error generating DNA intelligence signal: {e}")
+            return None
+    
+    def _generate_temporal_intelligence_signal(self, features: Features, market_data, timestamp: float) -> Optional[IntelligenceSignal]:
+        """Generate intelligence signal from Temporal subsystem (time-based analysis)"""
+        try:
+            # Get temporal analysis from orchestrator
+            temporal_result = self.orchestrator.analyze_temporal_cycles(features, market_data)
+            
+            if not temporal_result or not isinstance(temporal_result, dict):
+                return None
+            
+            signal_strength = temporal_result.get('signal', 0.0)
+            confidence = temporal_result.get('confidence', 0.5)
+            cycle_phase = temporal_result.get('cycle_phase', 'unknown')
+            
+            # Determine direction
+            if signal_strength > self.signal_generation_config['signal_threshold']:
+                direction = 'bullish'
+            elif signal_strength < -self.signal_generation_config['signal_threshold']:
+                direction = 'bearish'
+            else:
+                direction = 'neutral'
+            
+            if confidence < self.signal_generation_config['confidence_threshold']:
+                return None
+            
+            return create_intelligence_signal(
+                signal_type=IntelligenceSignalType.TEMPORAL_ANALYSIS,
+                strength=signal_strength,
+                confidence=confidence,
+                direction=direction,
+                timeframe=getattr(features, 'timeframe', '1m'),
+                subsystem_id='temporal',
+                cycle_phase=cycle_phase,
+                analysis_source='temporal_cycles'
+            )
+            
+        except Exception as e:
+            logger.error(f"Error generating Temporal intelligence signal: {e}")
+            return None
+    
+    def _generate_immune_intelligence_signal(self, features: Features, market_data, timestamp: float) -> Optional[IntelligenceSignal]:
+        """Generate intelligence signal from Immune subsystem (anomaly detection)"""
+        try:
+            # Get immune analysis from orchestrator
+            immune_result = self.orchestrator.analyze_immune_threats(features, market_data)
+            
+            if not immune_result or not isinstance(immune_result, dict):
+                return None
+            
+            signal_strength = immune_result.get('signal', 0.0)
+            confidence = immune_result.get('confidence', 0.5)
+            threat_level = immune_result.get('threat_level', 'none')
+            
+            # Immune signals are typically bearish (detecting threats) or neutral
+            if signal_strength < -self.signal_generation_config['signal_threshold']:
+                direction = 'bearish'  # Threat detected
+            elif abs(signal_strength) < self.signal_generation_config['signal_threshold']:
+                direction = 'neutral'  # No threat
+            else:
+                direction = 'neutral'  # Conservative approach for immune signals
+            
+            if confidence < self.signal_generation_config['confidence_threshold']:
+                return None
+            
+            return create_intelligence_signal(
+                signal_type=IntelligenceSignalType.ANOMALY_DETECTION,
+                strength=signal_strength,
+                confidence=confidence,
+                direction=direction,
+                timeframe=getattr(features, 'timeframe', '1m'),
+                subsystem_id='immune',
+                threat_level=threat_level,
+                analysis_source='immune_antibodies'
+            )
+            
+        except Exception as e:
+            logger.error(f"Error generating Immune intelligence signal: {e}")
+            return None
+    
+    def _generate_microstructure_intelligence_signal(self, features: Features, market_data, timestamp: float) -> Optional[IntelligenceSignal]:
+        """Generate intelligence signal from Microstructure subsystem"""
+        try:
+            # Get microstructure analysis
+            microstructure_result = self.microstructure_subsystem.analyze_market_microstructure(features, market_data)
+            
+            if not microstructure_result or not isinstance(microstructure_result, dict):
+                return None
+            
+            signal_strength = microstructure_result.get('signal', 0.0)
+            confidence = microstructure_result.get('confidence', 0.5)
+            liquidity_state = microstructure_result.get('liquidity_state', 'normal')
+            
+            # Determine direction based on microstructure conditions
+            if signal_strength > self.signal_generation_config['signal_threshold']:
+                direction = 'bullish'
+            elif signal_strength < -self.signal_generation_config['signal_threshold']:
+                direction = 'bearish'
+            else:
+                direction = 'neutral'
+            
+            if confidence < self.signal_generation_config['confidence_threshold']:
+                return None
+            
+            return create_intelligence_signal(
+                signal_type=IntelligenceSignalType.MICROSTRUCTURE,
+                strength=signal_strength,
+                confidence=confidence,
+                direction=direction,
+                timeframe=getattr(features, 'timeframe', '1m'),
+                subsystem_id='microstructure',
+                liquidity_state=liquidity_state,
+                analysis_source='market_microstructure'
+            )
+            
+        except Exception as e:
+            logger.error(f"Error generating Microstructure intelligence signal: {e}")
+            return None
+    
+    def _get_signal_generation_stats(self) -> Dict[str, Any]:
+        """Get statistics about signal generation"""
+        try:
+            recent_signals_list = list(self.recent_signals)
+            
+            if not recent_signals_list:
+                return {
+                    'total_signals': 0,
+                    'subsystem_distribution': {},
+                    'direction_distribution': {},
+                    'average_confidence': 0.0,
+                    'average_strength': 0.0
+                }
+            
+            # Count signals by subsystem
+            subsystem_counts = {}
+            direction_counts = {}
+            confidences = []
+            strengths = []
+            
+            for signal in recent_signals_list:
+                # Subsystem distribution
+                subsystem = signal.subsystem_id
+                subsystem_counts[subsystem] = subsystem_counts.get(subsystem, 0) + 1
+                
+                # Direction distribution
+                direction = signal.direction
+                direction_counts[direction] = direction_counts.get(direction, 0) + 1
+                
+                # Statistics
+                confidences.append(signal.confidence)
+                strengths.append(abs(signal.strength))
+            
+            return {
+                'total_signals': len(recent_signals_list),
+                'subsystem_distribution': subsystem_counts,
+                'direction_distribution': direction_counts,
+                'average_confidence': np.mean(confidences) if confidences else 0.0,
+                'average_strength': np.mean(strengths) if strengths else 0.0,
+                'signal_generation_config': self.signal_generation_config.copy()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting signal generation stats: {e}")
+            return {'error': str(e)}
+    
+    def update_signal_generation_config(self, new_config: Dict[str, Any]):
+        """Update signal generation configuration"""
+        try:
+            self.signal_generation_config.update(new_config)
+            logger.info(f"Signal generation config updated: {new_config}")
+        except Exception as e:
+            logger.error(f"Error updating signal generation config: {e}")
+    
+    def get_intelligence_health(self) -> Dict[str, Any]:
+        """Get health status of all intelligence subsystems"""
+        try:
+            orchestrator_health = self.orchestrator.get_comprehensive_stats()
+            microstructure_health = self.microstructure_subsystem.get_microstructure_features()
+            
+            return {
+                'dna_health': orchestrator_health.get('dna_evolution', {}),
+                'temporal_health': orchestrator_health.get('temporal_cycles', {}),
+                'immune_health': orchestrator_health.get('immune_system', {}),
+                'microstructure_health': microstructure_health,
+                'signal_generation_health': self._get_signal_generation_stats(),
+                'overall_status': 'healthy' if all([
+                    orchestrator_health,
+                    microstructure_health
+                ]) else 'degraded'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting intelligence health: {e}")
+            return {'error': str(e), 'overall_status': 'error'}

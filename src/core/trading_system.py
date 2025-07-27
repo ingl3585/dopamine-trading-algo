@@ -1,18 +1,26 @@
-# trading_system.py
+# trading_system.py - Unified Trading System Orchestrator
 
+import asyncio
 import logging
 import time
+import threading
+from datetime import datetime
+from typing import Dict, Any, Optional, List
+from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
 
-from src.market_analysis.data_processor import DataProcessor
+# Core system imports
+from src.core.market_data_processor import MarketDataProcessor as DataProcessor
 from src.intelligence.intelligence_engine import IntelligenceEngine
-from src.agent.trading_agent import TradingAgent
+from src.agent.trading_agent_v2 import TradingAgent
 from src.risk.risk_manager import RiskManager
 from src.communication.tcp_bridge import TCPServer
 from src.portfolio.portfolio import Portfolio
-from src.core.config import Config
+from src.core.config_manager import Config
 from src.core.dependency_registry import registry, register_service
 from src.core.state_coordinator import state_coordinator, register_state_component
-from src.core.market_data_processor import MarketDataProcessor
+from src.core.event_bus import EventBus, EventType, EventDrivenComponent
+from src.shared.types import TradeDecision
 
 logger = logging.getLogger(__name__)
 
@@ -26,52 +34,152 @@ except ImportError as e:
     logger.warning(f"Personality system not available: {e}")
     PERSONALITY_AVAILABLE = False
 
-logger = logging.getLogger(__name__)
+@dataclass
+class SystemHealth:
+    """System health status"""
+    overall_health: str  # healthy, warning, critical
+    component_health: Dict[str, str]
+    event_bus_health: str
+    integration_health: str
+    performance_health: str
+    issues: List[str]
+    recommendations: List[str]
 
 class TradingSystem:
-    def __init__(self):
-        logger.info("Initializing trading system with coordinated architecture")
-        self.config = Config()
+    """
+    Unified Trading System Orchestrator
+    
+    Combines the best features from all orchestrator implementations:
+    - Production-ready TCP integration with NinjaTrader
+    - Dependency injection and state coordination
+    - Event-driven architecture with health monitoring
+    - Async/await patterns for optimal performance
+    - Clean separation of concerns following SOLID principles
+    
+    Architecture:
+    - Core Infrastructure: TCP bridge, data processing, configuration
+    - AI Intelligence: Multi-subsystem analysis and pattern recognition
+    - Trading Agent: Reinforcement learning with dopamine pathways
+    - Risk Management: Dynamic risk assessment and position sizing
+    - Portfolio Management: Position tracking and performance analysis
+    - Event System: Async event-driven component communication
+    - Health Monitoring: System resilience and error recovery
+    """
+    def __init__(self, config_file: Optional[str] = None):
+        logger.info("Initializing unified trading system orchestrator")
+        
+        # Core configuration and state
+        self.config = Config(config_file) if config_file else Config()
+        self.running = False
+        self.system_initialized = False
+        self.bootstrap_complete = False
+        
+        # Initialize core components
         self.portfolio = Portfolio()
-        self.data_processor = DataProcessor()
-        self.market_data_processor = MarketDataProcessor()
+        self.data_processor = DataProcessor(self.config.settings)
         self.intelligence = IntelligenceEngine(self.config)
         self.agent = TradingAgent(self.intelligence, self.portfolio)
         self.risk_manager = RiskManager(self.portfolio, self.agent.meta_learner, self.agent)
         
-        # Register services in dependency registry
-        self._setup_dependency_injection()
+        # Event-driven architecture
+        event_config = {
+            'max_event_queue_size': 1000,
+            'event_thread_pool_size': 4,
+            'event_history_size': 10000
+        }
+        self.event_bus = EventBus(event_config)
+        self.event_handlers = {}
         
-        # Register components for coordinated state management
-        self._setup_state_coordination()
-        
-        self.tcp_server = TCPServer()
-        self.tcp_server.on_market_data = self._process_market_data
-        self.tcp_server.on_trade_completion = self._process_trade_completion
-        self.tcp_server.on_historical_data = self._process_historical_data
-        
-        self.running = False
+        # System state tracking
         self.last_save = time.time()
         self.last_account_update = time.time()
         self.ready_for_trading = False
-        
-        # Enhanced tracking
         self.total_decisions = 0
         self.data_updates_received = 0
+        self.trade_count = 0
+        self.last_decision_time = None
         
         # Account monitoring
         self.last_account_balance = 0.0
         self.account_change_threshold = 0.05
         
-        # AI Trading Personality Integration with Enhanced Context
+        # Health monitoring (TODO: Implement SystemHealthMonitor if needed)
+        # self.health_monitor = SystemHealthMonitor(self.event_bus)
+        # self.health_data = {}
+        
+        # Historical data for bootstrap
+        self.historical_data_cache = []
+        self.current_market_data = {}
+        
+        # Setup core systems
+        self._setup_dependency_injection()
+        self._setup_state_coordination()
+        self._setup_event_system()
+        self._setup_tcp_server()
+        
+        # Initialize personality system
+        self._setup_personality_system()
+        
+        # Load previous state if available using state coordinator
+        self._load_coordinated_state()
+        
+        logger.info("Unified trading system orchestrator initialized successfully")
+    
+    def _setup_tcp_server(self):
+        """Setup TCP server for NinjaTrader communication"""
+        try:
+            self.tcp_server = TCPServer(
+                data_port=self.config.get('tcp_data_port', 5556),
+                signal_port=self.config.get('tcp_signal_port', 5557)
+            )
+            self.tcp_server.on_market_data = self._process_market_data
+            self.tcp_server.on_trade_completion = self._process_trade_completion
+            self.tcp_server.on_historical_data = self._process_historical_data
+            
+            logger.info("TCP server configured for NinjaTrader communication")
+        except Exception as e:
+            logger.error(f"Failed to setup TCP server: {e}")
+            raise
+    
+    def _setup_event_system(self):
+        """Setup event-driven architecture"""
+        try:
+            # Register core event handlers
+            self.event_bus.register_handler(
+                'system_events',
+                self._handle_system_events,
+                [EventType.SYSTEM_STARTED, EventType.SYSTEM_STOPPED, EventType.SYSTEM_ERROR],
+                priority=9
+            )
+            
+            self.event_bus.register_handler(
+                'market_events',
+                self._handle_market_events,
+                [EventType.MARKET_DATA_RECEIVED, EventType.PRICE_CHANGE],
+                priority=8
+            )
+            
+            self.event_bus.register_handler(
+                'trading_events',
+                self._handle_trading_events,
+                [EventType.TRADE_SIGNAL_GENERATED, EventType.POSITION_OPENED, EventType.POSITION_CLOSED],
+                priority=7
+            )
+            
+            logger.info("Event system initialized")
+        except Exception as e:
+            logger.error(f"Failed to setup event system: {e}")
+    
+    def _setup_personality_system(self):
+        """Setup AI trading personality integration"""
         self.personality = None
         self.personality_integration = None
+        
         if PERSONALITY_AVAILABLE:
             try:
                 personality_config_manager = PersonalityConfigManager()
                 integration_config = personality_config_manager.get_integration_config()
                 if integration_config.enabled:
-                    # Use enhanced PersonalityIntegration for better context
                     integration_config_obj = PersonalityIntegrationConfig(
                         enabled=True,
                         personality_name=integration_config.personality_name,
@@ -80,18 +188,14 @@ class TradingSystem:
                         llm_api_key=integration_config.llm_api_key
                     )
                     self.personality_integration = PersonalityIntegration(integration_config_obj)
-                    # Keep backward compatibility
                     self.personality = self.personality_integration.personality
-                    logger.info(f"Enhanced AI Trading Personality '{integration_config.personality_name}' initialized")
+                    logger.info(f"AI Trading Personality '{integration_config.personality_name}' initialized")
                 else:
                     logger.info("AI Trading Personality disabled in configuration")
             except Exception as e:
                 logger.error(f"Failed to initialize AI Trading Personality: {e}")
                 self.personality = None
                 self.personality_integration = None
-        
-        # Load previous state if available using state coordinator
-        self._load_coordinated_state()
     
     def _setup_dependency_injection(self):
         """Setup dependency injection to break circular imports"""
@@ -114,6 +218,7 @@ class TradingSystem:
             
         except Exception as e:
             logger.error(f"Failed to setup dependency injection: {e}")
+            raise
     
     def _setup_state_coordination(self):
         """Setup coordinated state management for all components"""
@@ -149,6 +254,7 @@ class TradingSystem:
             
         except Exception as e:
             logger.error(f"Failed to setup state coordination: {e}")
+            raise
     
     def _load_coordinated_state(self):
         """Load state using state coordinator"""
@@ -229,7 +335,7 @@ class TradingSystem:
             logger.info("Processing historical data for pattern learning...")
             
             # Validate historical data quality
-            if not self.market_data_processor.validate_historical_data(historical_data):
+            if not self.data_processor.validate_historical_data(historical_data):
                 logger.error("Historical data validation failed - system not ready for trading")
                 return
             
@@ -449,11 +555,11 @@ class TradingSystem:
             logger.info(f"Historical bars processed: {bootstrap_stats['total_bars_processed']}")
             logger.info(f"Patterns discovered: {bootstrap_stats['patterns_discovered']}")
             logger.info(f"Bootstrap time: {bootstrap_stats['bootstrap_time']:.1f}s")
-            logger.info(f"Subsystem Patterns: DNA={intelligence_stats['dna_patterns']}, "
-                       f"Micro={intelligence_stats['micro_patterns']}, "
-                       f"Temporal={intelligence_stats['temporal_patterns']}, "
-                       f"Immune={intelligence_stats['immune_patterns']}, "
-                       f"Dopamine={intelligence_stats['dopamine_patterns']}")
+            logger.info(f"Subsystem Patterns: DNA={intelligence_stats['dna_patterns']} (sequences), "
+                       f"Micro={intelligence_stats['micro_patterns']} (analyzed), "
+                       f"Temporal={intelligence_stats['temporal_patterns']} (cycles), "
+                       f"Immune={intelligence_stats['immune_patterns']} (antibodies), "
+                       f"Dopamine={intelligence_stats['dopamine_patterns']} (updates)")
             logger.info("System ready for live trading with pre-learned patterns")
             logger.info("=" * 30)
             
@@ -789,6 +895,18 @@ class TradingSystem:
             
         logger.info("Trading system shutdown complete")
 
+    def _handle_system_events(self, event):
+        """Handle system-level events"""
+        logger.debug(f"System event received: {event}")
+        
+    def _handle_market_events(self, event):
+        """Handle market-related events"""
+        logger.debug(f"Market event received: {event}")
+        
+    def _handle_trading_events(self, event):
+        """Handle trading-related events"""
+        logger.debug(f"Trading event received: {event}")
+
     def _trigger_personality_commentary(self, event, features, market_data, order=None, decision=None):
         """Trigger AI personality commentary for trading events"""
         if not self.personality:
@@ -1028,3 +1146,31 @@ class TradingSystem:
             
         except Exception as e:
             logger.error(f"Error in 4H analysis: {e}")
+
+
+# Legacy synchronous entry point for backward compatibility
+def main():
+    """Main entry point for backward compatibility"""
+    try:
+        # Setup logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+        
+        # Create and start trading system
+        system = TradingSystem()
+        
+        # Run the trading system
+        system.start()
+        
+    except KeyboardInterrupt:
+        logger.info("Received interrupt signal, shutting down...")
+    except Exception as e:
+        logger.error(f"Critical error in main: {e}")
+        import sys
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

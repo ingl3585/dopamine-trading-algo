@@ -1,9 +1,12 @@
-# Core module - removing conflicting imports that cause dependency issues
-from .config import Config
+# Core module - unified configuration and data processing
+from .config_manager import Config, ConfigurationManager
+from .trading_system import TradingSystem
 
-# Modernized components available via direct imports
-# from .system_integration_orchestrator import SystemIntegrationOrchestrator
+# Market data processor available via direct import to avoid numpy dependency issues
+# from .market_data_processor import MarketDataProcessor, MarketData
+
+# Additional components available via direct imports
 # from .component_integrator import ComponentIntegrator
 # from .event_bus import EventBus
 
-__all__ = ['Config']
+__all__ = ['Config', 'ConfigurationManager', 'TradingSystem']

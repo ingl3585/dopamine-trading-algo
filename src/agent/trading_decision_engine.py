@@ -21,7 +21,7 @@ from typing import Dict, Any, Optional, Tuple
 from dataclasses import dataclass
 
 from src.shared.types import Features
-from src.market_analysis.data_processor import MarketData
+from src.core.market_data_processor import MarketData
 from src.agent.confidence import ConfidenceManager
 from src.agent.meta_learner import MetaLearner
 

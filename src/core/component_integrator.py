@@ -25,12 +25,12 @@ from src.agent.dopamine_pathway import DopaminePathway
 from src.agent.multi_objective_optimizer import MultiObjectiveOptimizer
 
 # System Components
-from src.core.trading_system_orchestrator import TradingSystemOrchestrator
+from src.core.trading_system import TradingSystem
 from src.core.market_data_processor import MarketDataProcessor
 from src.core.system_state_manager import SystemStateManager
 from src.core.analysis_trigger_manager import AnalysisTriggerManager, AnalysisType
 # from src.core.personality_integration_manager import PersonalityIntegrationManager  # Removed - file deleted
-from src.core.configuration_manager import ConfigurationManager
+from src.core.config_manager import ConfigurationManager
 
 # Portfolio Components
 from src.portfolio.position_tracker import PositionTracker
@@ -67,7 +67,7 @@ class ComponentRegistry:
     multi_objective_optimizer: Optional[MultiObjectiveOptimizer] = None
     
     # System Components
-    trading_system_orchestrator: Optional[TradingSystemOrchestrator] = None
+    trading_system: Optional[TradingSystem] = None
     market_data_processor: Optional[MarketDataProcessor] = None
     system_state_manager: Optional[SystemStateManager] = None
     analysis_trigger_manager: Optional[AnalysisTriggerManager] = None
@@ -175,7 +175,7 @@ class ComponentIntegrator:
             # self.components.personality_integration_manager = PersonalityIntegrationManager(self.config)
             
             # Trading System Orchestrator (depends on other components)
-            self.components.trading_system_orchestrator = TradingSystemOrchestrator(self.config)
+            self.components.trading_system = TradingSystem()
             
             logger.info("System components initialized")
             return True

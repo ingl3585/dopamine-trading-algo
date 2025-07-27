@@ -28,7 +28,7 @@ except (ImportError, AttributeError):
     # Ignore if torch is not available or older version
     pass
 
-from src.core.system_integration_orchestrator import SystemIntegrationOrchestrator
+from src.core.trading_system import TradingSystem
 
 def setup_logging():
     logging.basicConfig(
@@ -90,12 +90,12 @@ def main():
 
     setup_logging()
     
-    system = SystemIntegrationOrchestrator()
+    system = TradingSystem()
     
     def shutdown_handler(signum, frame):
         # Create async wrapper for shutdown
         async def async_shutdown():
-            await system.shutdown_system()
+            await system.shutdown()
         
         import asyncio
         asyncio.run(async_shutdown())
@@ -105,17 +105,8 @@ def main():
     signal.signal(signal.SIGTERM, shutdown_handler)
 
     try:
-        # Create async wrapper for the modernized system
-        async def run_system():
-            await system.initialize_system()
-            await system.start_system()
-            
-            # Keep the system running
-            while True:
-                await asyncio.sleep(1.0)
-        
-        import asyncio
-        asyncio.run(run_system())
+        # Use the unified trading system
+        system.start()
     except Exception as e:
         logging.error(f"System failed: {e}")
         sys.exit(1)

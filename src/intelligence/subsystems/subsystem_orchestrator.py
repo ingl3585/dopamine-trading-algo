@@ -548,3 +548,165 @@ class EnhancedIntelligenceOrchestrator:
             
         except Exception as e:
             logger.warning(f"Error closing progress bars: {e}")
+    
+    # ========================================
+    # INTELLIGENCE SIGNAL ANALYSIS METHODS
+    # ========================================
+    
+    def analyze_dna_patterns(self, features, market_data) -> Optional[Dict]:
+        """
+        Analyze DNA patterns and return intelligence signal data
+        
+        Args:
+            features: Market features
+            market_data: Current market data
+            
+        Returns:
+            Dict with signal, confidence, and pattern information
+        """
+        try:
+            # Extract relevant data
+            prices = getattr(market_data, 'prices_1m', []) or []
+            volumes = getattr(market_data, 'volumes_1m', []) or []
+            
+            if len(prices) < 10:
+                return None
+            
+            # Get volatility and momentum from features
+            volatility = getattr(features, 'volatility', 0.02)
+            momentum = getattr(features, 'price_momentum', 0.0)
+            
+            # Encode market state as DNA sequence
+            dna_sequence = self.dna_subsystem.encode_market_state(
+                prices[-20:], volumes[-20:], volatility, momentum
+            )
+            
+            if not dna_sequence:
+                return None
+            
+            # Analyze DNA sequence for patterns
+            dna_signal = self.dna_subsystem.analyze_sequence(dna_sequence)
+            
+            # Calculate confidence based on pattern strength and sequence length
+            confidence = min(1.0, abs(dna_signal) * 2.0 + len(dna_sequence) / 100.0)
+            
+            # Determine pattern type
+            if dna_signal > 0.1:
+                pattern_type = 'bullish_pattern'
+            elif dna_signal < -0.1:
+                pattern_type = 'bearish_pattern'
+            else:
+                pattern_type = 'neutral_pattern'
+            
+            return {
+                'signal': float(dna_signal),
+                'confidence': float(confidence),
+                'pattern_type': pattern_type,
+                'sequence_length': len(dna_sequence),
+                'volatility_context': volatility,
+                'momentum_context': momentum
+            }
+            
+        except Exception as e:
+            logger.error(f"Error analyzing DNA patterns: {e}")
+            return None
+    
+    def analyze_temporal_cycles(self, features, market_data) -> Optional[Dict]:
+        """
+        Analyze temporal cycles and return intelligence signal data
+        
+        Args:
+            features: Market features
+            market_data: Current market data
+            
+        Returns:
+            Dict with signal, confidence, and cycle information
+        """
+        try:
+            # Extract time-based data
+            prices = getattr(market_data, 'prices_1m', []) or []
+            timestamps = getattr(market_data, 'timestamps', []) or []
+            
+            if len(prices) < 20:
+                return None
+            
+            # Analyze temporal patterns using FFT
+            temporal_signal = self.temporal_subsystem.analyze_temporal_patterns(
+                prices, timestamps
+            )
+            
+            # Get cycle phase from temporal analysis
+            cycle_analysis = self.temporal_subsystem.detect_cycles(prices)
+            
+            # Calculate confidence based on cycle strength and consistency
+            confidence = min(1.0, abs(temporal_signal) * 1.5 + 0.3)
+            
+            # Determine cycle phase
+            if len(cycle_analysis) > 0:
+                dominant_cycle = cycle_analysis[0]  # Get strongest cycle
+                cycle_phase = dominant_cycle.get('phase', 'unknown')
+            else:
+                cycle_phase = 'unclear'
+            
+            return {
+                'signal': float(temporal_signal),
+                'confidence': float(confidence),
+                'cycle_phase': cycle_phase,
+                'cycle_count': len(cycle_analysis),
+                'dominant_frequency': cycle_analysis[0].get('frequency', 0) if cycle_analysis else 0
+            }
+            
+        except Exception as e:
+            logger.error(f"Error analyzing temporal cycles: {e}")
+            return None
+    
+    def analyze_immune_threats(self, features, market_data) -> Optional[Dict]:
+        """
+        Analyze immune system threats and return intelligence signal data
+        
+        Args:
+            features: Market features
+            market_data: Current market data
+            
+        Returns:
+            Dict with signal, confidence, and threat information
+        """
+        try:
+            # Create market state for immune analysis
+            market_state = {
+                'volatility': getattr(features, 'volatility', 0.02),
+                'price_momentum': getattr(features, 'price_momentum', 0.0),
+                'volume_momentum': getattr(features, 'volume_momentum', 0.0),
+                'time_of_day': getattr(features, 'time_of_day', 0.5),
+                'price_position': getattr(features, 'price_position', 0.5),
+                'stress_indicator': getattr(features, 'volatility', 0.02) * 10
+            }
+            
+            # Analyze threats using immune system
+            threat_level = self.immune_subsystem.analyze_threats(market_state)
+            
+            # Get threat classification
+            threat_classification = self.immune_subsystem.classify_threat_level(threat_level)
+            
+            # Calculate signal (negative for threats, neutral for no threats)
+            if threat_level > 0.5:
+                immune_signal = -threat_level  # Strong threat = negative signal
+            elif threat_level > 0.3:
+                immune_signal = -threat_level * 0.5  # Moderate threat = mild negative
+            else:
+                immune_signal = 0.0  # No significant threat
+            
+            # Confidence based on threat detection certainty
+            confidence = min(1.0, threat_level + 0.3)
+            
+            return {
+                'signal': float(immune_signal),
+                'confidence': float(confidence),
+                'threat_level': threat_classification,
+                'threat_score': float(threat_level),
+                'antibody_count': len(getattr(self.immune_subsystem, 'antibodies', []))
+            }
+            
+        except Exception as e:
+            logger.error(f"Error analyzing immune threats: {e}")
+            return None

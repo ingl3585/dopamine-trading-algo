@@ -20,7 +20,7 @@ from typing import Dict, List, Any, Optional, Tuple
 from collections import deque
 
 from src.shared.types import Features
-from src.market_analysis.data_processor import MarketData
+from src.core.market_data_processor import MarketData
 from src.agent.confidence import ConfidenceManager
 from src.agent.meta_learner import MetaLearner
 from src.neural.adaptive_network import StateEncoder
