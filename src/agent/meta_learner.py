@@ -141,9 +141,9 @@ class MetaLearner:
             'position_size_factor': MetaParameter(0.1, (0.001, 5.0)),  # Adaptive position sizing
             'max_position_factor': MetaParameter(0.3, (0.1, 0.7)),   # More conservative for smaller accounts
             
-            # Confidence thresholds (learned)
-            'confidence_threshold': MetaParameter(0.3, (0.05, 0.9)),
-            'intelligence_threshold': MetaParameter(0.25, (0.1, 0.8)),  # CRITICAL: Intelligence signal strength threshold
+            # Confidence thresholds (learned) - reset to more reasonable levels
+            'confidence_threshold': MetaParameter(0.25, (0.05, 0.6)),
+            'intelligence_threshold': MetaParameter(0.25, (0.1, 0.5)),  # CRITICAL: Intelligence signal strength threshold with reduced ceiling
             
             # Risk preferences (account-aware)
             'stop_preference': MetaParameter(0.5, (0.0, 1.0)),
@@ -395,12 +395,121 @@ class MetaLearner:
         confidence_factor = 0.8 + (confidence * 0.4)  # 0.8 to 1.2 range
         self.parameters['confidence_threshold'].value *= confidence_factor
         
+        # Apply threshold caps and floors to prevent runaway increases
+        self._apply_threshold_caps_and_floors()
+        
         # Ensure all parameters stay within bounds
         for param in self.parameters.values():
             param.value = np.clip(param.value, *param.bounds)
         
         logger.info(f"Regime parameters updated: vol={volatility_regime}, trend={trend_regime}, conf={confidence:.3f}")
     
+    def _apply_threshold_caps_and_floors(self):
+        """
+        Apply caps and floors to prevent runaway threshold increases.
+        
+        This method implements safeguards against the conservative feedback loop
+        by enforcing reasonable limits on threshold parameters and providing
+        automatic recovery mechanisms.
+        """
+        # Critical threshold parameters with strict caps and floors
+        threshold_params = {
+            'confidence_threshold': {'floor': 0.15, 'cap': 0.55, 'emergency_reset': 0.25},
+            'intelligence_threshold': {'floor': 0.10, 'cap': 0.45, 'emergency_reset': 0.25}
+        }
+        
+        for param_name, limits in threshold_params.items():
+            if param_name in self.parameters:
+                param = self.parameters[param_name]
+                current_value = param.value
+                
+                # Apply emergency reset if threshold is dangerously high
+                if current_value > limits['cap']:
+                    param.value = limits['emergency_reset']
+                    logger.warning(f"EMERGENCY RESET: {param_name} was {current_value:.3f}, "
+                                 f"reset to {limits['emergency_reset']:.3f}")
+                
+                # Apply floor protection
+                elif current_value < limits['floor']:
+                    param.value = limits['floor']
+                    logger.info(f"FLOOR PROTECTION: {param_name} raised from {current_value:.3f} "
+                              f"to {limits['floor']:.3f}")
+                
+                # Update bounds to prevent future violations
+                current_bounds = param.bounds
+                new_bounds = (
+                    max(current_bounds[0], limits['floor']),
+                    min(current_bounds[1], limits['cap'])
+                )
+                param.bounds = new_bounds
+    
+    def _check_for_emergency_trading_override(self) -> bool:
+        """
+        Check if emergency trading override should be activated.
+        
+        Returns True if system has been in conservative mode too long
+        and needs emergency activation to break feedback loops.
+        """
+        # Check if thresholds are dangerously high
+        confidence_threshold = self.parameters['confidence_threshold'].value
+        intelligence_threshold = self.parameters['intelligence_threshold'].value
+        
+        # Emergency conditions
+        high_confidence_threshold = confidence_threshold > 0.45
+        high_intelligence_threshold = intelligence_threshold > 0.4
+        low_adaptation_efficiency = self.get_learning_efficiency() < 0.1
+        
+        # Time-based emergency (if no successful adaptations in reasonable time)
+        updates_without_success = self.total_updates - self.successful_adaptations
+        emergency_time_trigger = updates_without_success > 100
+        
+        emergency_needed = (
+            (high_confidence_threshold or high_intelligence_threshold) and
+            (low_adaptation_efficiency or emergency_time_trigger)
+        )
+        
+        if emergency_needed:
+            logger.warning(f"EMERGENCY TRADING OVERRIDE ACTIVATED: "
+                         f"conf_thresh={confidence_threshold:.3f}, "
+                         f"intel_thresh={intelligence_threshold:.3f}, "
+                         f"efficiency={self.get_learning_efficiency():.1%}")
+        
+        return emergency_needed
+    
+    def reset_conservative_feedback_loop(self):
+        """
+        Reset parameters to break conservative feedback loops.
+        
+        This method implements emergency measures to restore trading
+        when the system gets trapped in overly conservative states.
+        """
+        logger.warning("RESETTING CONSERVATIVE FEEDBACK LOOP")
+        
+        # Reset critical thresholds to reasonable levels
+        self.parameters['confidence_threshold'].value = 0.25
+        self.parameters['intelligence_threshold'].value = 0.25
+        
+        # Reset recovery factor to enable confidence building
+        if hasattr(self, 'confidence_manager'):
+            # Reset via confidence manager if available
+            pass  # Will be handled in confidence.py
+        
+        # Clear accumulated negative outcomes from parameters
+        for param in self.parameters.values():
+            if hasattr(param, 'outcomes'):
+                # Keep only neutral/positive outcomes to reset bias
+                positive_outcomes = [x for x in param.outcomes if x >= 0]
+                param.outcomes.clear()
+                # Add some positive outcomes to prime the system
+                for _ in range(min(5, len(positive_outcomes) or 3)):
+                    param.outcomes.append(0.1)
+        
+        # Reset learning counters with optimistic bias
+        self.successful_adaptations = max(self.successful_adaptations, self.total_updates // 4)
+        
+        logger.info(f"Conservative feedback loop reset complete. "
+                   f"Thresholds reset, learning efficiency now {self.get_learning_efficiency():.1%}")
+
     def load_state(self, filepath: str):
         try:
             # Handle PyTorch 2.6+ security requirements

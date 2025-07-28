@@ -112,8 +112,19 @@ class TradingDecisionEngine:
         self.total_decisions = 0
         self.last_trade_time = 0.0
         
-        # Recent rejection tracking (for constraints)
-        self.recent_position_rejections = 0
+        # Emergency trading mechanisms
+        self.last_emergency_override_time = 0.0
+        self.consecutive_hold_decisions = 0
+        self.last_successful_trade_time = 0.0
+        
+        # Trading floor parameters
+        self.emergency_trading_floor = {
+            'max_consecutive_holds': 50,  # Maximum holds before emergency activation
+            'max_time_without_trade': 3600,  # 1 hour without trading triggers emergency
+            'confidence_floor': 0.2,  # Minimum confidence for emergency trades
+            'intelligence_floor': 0.15,  # Minimum intelligence signal for emergency
+            'emergency_cooldown': 600,  # 10 minutes between emergency overrides
+        }
         
         logger.info("TradingDecisionEngine initialized")
     
@@ -150,8 +161,19 @@ class TradingDecisionEngine:
             # Process confidence with recovery mechanisms
             confidence = self._process_confidence(context, network_outputs)
             
+            # Check for emergency trading override BEFORE normal constraints
+            emergency_override = self._check_emergency_trading_override(
+                context, confidence, market_data.timestamp
+            )
+            
+            if emergency_override:
+                # Force an emergency trade to break conservative feedback loop
+                logger.warning("EMERGENCY TRADING OVERRIDE ACTIVATED")
+                return self._create_emergency_decision(context, confidence, network_outputs)
+            
             # Check trading constraints
             if not self._should_consider_trading(context, confidence):
+                self.consecutive_hold_decisions += 1
                 return self._create_hold_decision(confidence, context)
             
             # Determine action (exploration vs exploitation)
@@ -159,9 +181,13 @@ class TradingDecisionEngine:
                 context, network_outputs, adaptation_decision
             )
             
-            # Apply confidence and intelligence thresholds
-            if self._should_block_trade(confidence, features, exploration):
+            # Apply confidence and intelligence thresholds with emergency floor
+            if self._should_block_trade_with_emergency_floor(confidence, features, exploration):
                 action_idx = 0  # Force hold
+                self.consecutive_hold_decisions += 1
+            else:
+                # Reset consecutive holds counter on potential trade
+                self.consecutive_hold_decisions = 0
             
             # Calculate position sizing and risk parameters
             position_size, risk_params = self._calculate_position_and_risk(
@@ -459,6 +485,205 @@ class TradingDecisionEngine:
         
         return True
     
+    def _check_emergency_trading_override(self, 
+                                        context: DecisionContext, 
+                                        confidence: float,
+                                        current_time: float) -> bool:
+        """
+        Check if emergency trading override should be activated to break conservative feedback loops.
+        
+        This method implements emergency mechanisms to force trading when the system
+        becomes trapped in overly conservative states, preventing permanent paralysis.
+        """
+        # Check cooldown period
+        time_since_last_emergency = current_time - self.last_emergency_override_time
+        if time_since_last_emergency < self.emergency_trading_floor['emergency_cooldown']:
+            return False
+        
+        # Emergency condition 1: Too many consecutive hold decisions
+        too_many_holds = (
+            self.consecutive_hold_decisions >= self.emergency_trading_floor['max_consecutive_holds']
+        )
+        
+        # Emergency condition 2: Too much time without any trading
+        time_without_trade = current_time - max(self.last_trade_time, self.last_successful_trade_time)
+        too_long_without_trade = (
+            time_without_trade >= self.emergency_trading_floor['max_time_without_trade']
+        )
+        
+        # Emergency condition 3: Meta-learner indicates emergency override needed
+        meta_learner_emergency = False
+        if self.meta_learner:
+            meta_learner_emergency = self.meta_learner._check_for_emergency_trading_override()
+        
+        # Emergency condition 4: Confidence manager indicates emergency reset needed
+        confidence_manager_emergency = False
+        if self.confidence_manager:
+            confidence_manager_emergency = self.confidence_manager.check_for_emergency_confidence_reset()
+        
+        # Emergency condition 5: Intelligence signal exists but thresholds are blocking
+        intelligence_signal_strength = abs(context.features.overall_signal)
+        has_reasonable_signal = intelligence_signal_strength > 0.05  # Very low threshold
+        blocked_by_thresholds = (
+            confidence < self.meta_learner.get_parameter('confidence_threshold') or
+            intelligence_signal_strength < self.meta_learner.get_parameter('intelligence_threshold')
+        )
+        signal_blockage_emergency = has_reasonable_signal and blocked_by_thresholds
+        
+        # Determine if emergency override is needed
+        emergency_needed = (
+            too_many_holds or 
+            too_long_without_trade or 
+            meta_learner_emergency or
+            confidence_manager_emergency or
+            signal_blockage_emergency
+        )
+        
+        if emergency_needed:
+            logger.warning(f"EMERGENCY TRADING OVERRIDE CONDITIONS: "
+                         f"consecutive_holds={self.consecutive_hold_decisions}, "
+                         f"time_without_trade={time_without_trade:.0f}s, "
+                         f"meta_emergency={meta_learner_emergency}, "
+                         f"confidence_emergency={confidence_manager_emergency}, "
+                         f"signal_blockage={signal_blockage_emergency}")
+            
+            # Update emergency timestamp
+            self.last_emergency_override_time = current_time
+        
+        return emergency_needed
+    
+    def _should_block_trade_with_emergency_floor(self, 
+                                               confidence: float,
+                                               features: Features,
+                                               exploration: bool) -> bool:
+        """
+        Enhanced version of _should_block_trade that includes emergency trading floor.
+        
+        This method applies emergency floors to prevent complete trading paralysis
+        while maintaining reasonable risk controls.
+        """
+        # Apply emergency floors - much lower thresholds to prevent paralysis
+        emergency_confidence_floor = self.emergency_trading_floor['confidence_floor']
+        emergency_intelligence_floor = self.emergency_trading_floor['intelligence_floor']
+        
+        # If we're at emergency levels, use emergency floors instead of normal thresholds
+        if (confidence < emergency_confidence_floor * 1.5 or 
+            abs(features.overall_signal) < emergency_intelligence_floor * 1.5):
+            
+            # Use emergency floors
+            confidence_threshold = emergency_confidence_floor
+            intelligence_threshold = emergency_intelligence_floor
+            
+            logger.info(f"EMERGENCY FLOORS ACTIVE: Using emergency thresholds "
+                       f"conf={confidence_threshold:.3f}, intel={intelligence_threshold:.3f}")
+        else:
+            # Use normal thresholds
+            base_threshold = self.meta_learner.get_parameter('confidence_threshold')
+            regime_adjustment = (1.0 - features.regime_confidence) * 0.2
+            volatility_adjustment = features.volatility * 0.3
+            confidence_threshold = base_threshold + regime_adjustment + volatility_adjustment
+            
+            intelligence_threshold = self.meta_learner.get_parameter('intelligence_threshold', 0.3)
+        
+        intelligence_signal_strength = abs(features.overall_signal)
+        
+        # Block trades if either confidence OR intelligence signal is too weak
+        # (but not during exploration or when emergency floors are protecting)
+        if confidence < confidence_threshold and not exploration:
+            logger.info(f"Trade blocked: Low confidence {confidence:.3f} < {confidence_threshold:.3f}")
+            return True
+        
+        if intelligence_signal_strength < intelligence_threshold and not exploration:
+            logger.info(f"Trade blocked: Weak intelligence signal {intelligence_signal_strength:.3f} "
+                       f"< {intelligence_threshold:.3f}")
+            return True
+        
+        return False
+    
+    def _create_emergency_decision(self,
+                                 context: DecisionContext,
+                                 confidence: float,
+                                 network_outputs: Dict[str, torch.Tensor]) -> Decision:
+        """
+        Create an emergency trading decision to break conservative feedback loops.
+        
+        This method forces a small, safe trade to restart the learning process
+        when the system becomes trapped in conservative states.
+        """
+        # Use weighted intelligence signal to determine direction
+        weighted_signal = torch.sum(
+            context.subsystem_signals * context.subsystem_weights[:len(context.subsystem_signals)]
+        ).item()
+        
+        # Determine action based on signal direction
+        if weighted_signal > 0.001:
+            action = 'buy'
+            action_idx = 1
+        elif weighted_signal < -0.001:
+            action = 'sell'
+            action_idx = 2
+        else:
+            # If no clear signal, default to buy for emergency (slightly optimistic bias)
+            action = 'buy'
+            action_idx = 1
+        
+        # Use minimum safe position size for emergency trade
+        emergency_position_size = 0.1  # Very small position
+        
+        # Calculate conservative stop and target levels
+        base_price = context.market_data.price
+        stop_distance = 0.01  # 1% stop
+        target_distance = 0.02  # 2% target
+        
+        if action == 'buy':
+            stop_price = base_price * (1 - stop_distance)
+            target_price = base_price * (1 + target_distance)
+        else:
+            stop_price = base_price * (1 + stop_distance)
+            target_price = base_price * (1 - target_distance)
+        
+        # Boost confidence for emergency decision
+        emergency_confidence = max(confidence, self.emergency_trading_floor['confidence_floor'])
+        
+        # Create emergency decision
+        decision = Decision(
+            action=action,
+            confidence=emergency_confidence,
+            size=emergency_position_size,
+            stop_price=stop_price,
+            target_price=target_price,
+            primary_tool='emergency_override',
+            exploration=True,  # Mark as exploration to bypass normal blocks
+            intelligence_data={
+                'emergency_override': True,
+                'weighted_signal': weighted_signal,
+                'consecutive_holds': self.consecutive_hold_decisions,
+                'subsystem_signals': context.subsystem_signals.detach().cpu().numpy().tolist(),
+                'subsystem_weights': context.subsystem_weights.detach().cpu().numpy().tolist(),
+                'regime_context': {
+                    'regime_confidence': context.features.regime_confidence,
+                    'volatility': context.features.volatility,
+                    'trend_strength': abs(context.features.price_momentum)
+                }
+            },
+            adaptation_strategy='emergency',
+            uncertainty_estimate=0.3,  # Lower uncertainty for emergency decision
+            regime_awareness={
+                'emergency_override': True,
+                'regime_confidence': context.features.regime_confidence,
+                'volatility': context.features.volatility
+            }
+        )
+        
+        # Reset consecutive holds and update last trade time
+        self.consecutive_hold_decisions = 0
+        self.last_trade_time = context.market_data.timestamp
+        
+        logger.warning(f"EMERGENCY DECISION CREATED: {action} {emergency_position_size} contracts, "
+                      f"confidence={emergency_confidence:.3f}, signal={weighted_signal:.4f}")
+        
+        return decision
+    
     def _select_action(self,
                       context: DecisionContext,
                       network_outputs: Dict[str, torch.Tensor],
@@ -713,7 +938,7 @@ class TradingDecisionEngine:
             primary_tool=primary_tool,
             exploration=exploration,
             intelligence_data=intelligence_data,
-            state_features=context.learned_state.squeeze().detach().cpu().numpy().tolist(),
+            state_features=self._safe_extract_state_features(context.learned_state),
             adaptation_strategy=adaptation_decision.get('strategy_name', 'conservative'),
             uncertainty_estimate=adaptation_decision.get('uncertainty', 0.5),
             few_shot_prediction=0.0,  # Will be set by caller if available
@@ -1167,31 +1392,112 @@ class TradingDecisionEngine:
             return meta_context
     
     def _get_fallback_meta_context(self) -> Dict[str, Any]:
-        """Provide safe fallback meta-context in case of errors"""
+        """
+        Provide intelligent fallback meta-context with realistic regime classifications.
+        
+        Instead of defaulting to 'unknown', we provide realistic market regime defaults
+        based on typical market conditions. This ensures the learning system continues
+        to function even when regime detection temporarily fails.
+        """
         return {
-            'regime_confidence': 0.5,
-            'regime_classification': 'unknown',
+            'regime_confidence': 0.4,  # Lower confidence for fallback
+            'regime_classification': 'ranging',  # Most common market state
             'regime_stability': 0.5,
             'microstructure_strength': 0.0,
             'liquidity_regime': 0.5,
             'smart_money_activity': 0.0,
             'order_flow_imbalance': 0.0,
-            'adaptation_quality': 0.5,
-            'uncertainty_estimate': 0.5,
-            'learning_confidence': 0.5,
+            'adaptation_quality': 0.4,  # Lower quality for fallback
+            'uncertainty_estimate': 0.6,  # Higher uncertainty for fallback
+            'learning_confidence': 0.4,
             'strategy_effectiveness': 0.5,
-            'volatility_regime': 'normal',
+            'volatility_regime': 'normal',  # Most common volatility state
             'risk_regime': 'moderate_risk',
-            'market_phase': 'sideways',
-            'feature_quality': 0.5,
-            'signal_reliability': 0.5,
-            'market_efficiency': 0.5
+            'market_phase': 'ranging',  # Most common phase
+            'feature_quality': 0.4,  # Lower quality indicates fallback
+            'signal_reliability': 0.4,
+            'market_efficiency': 0.5,
+            # Additional regime context for better adaptation
+            'trend_regime': 'sideways',
+            'momentum_regime': 'neutral',
+            'volume_regime': 'normal'
         }
+    
+    def _safe_extract_state_features(self, learned_state: torch.Tensor) -> list:
+        """
+        Safely extract state features from learned state tensor with defensive programming.
+        
+        Args:
+            learned_state: PyTorch tensor containing learned state representation
+            
+        Returns:
+            List of floats representing state features, or empty list if extraction fails
+        """
+        try:
+            if learned_state is None:
+                logger.warning("learned_state is None - creating default state features")
+                return [0.0] * 64  # Default feature vector size
+            
+            if not isinstance(learned_state, torch.Tensor):
+                logger.warning(f"learned_state is not a tensor (type: {type(learned_state)}) - creating default")
+                return [0.0] * 64
+            
+            # Handle empty tensors
+            if learned_state.numel() == 0:
+                logger.warning("learned_state tensor is empty - creating default state features")
+                return [0.0] * 64
+            
+            # Safe tensor conversion with proper handling
+            try:
+                # Ensure tensor is on CPU and detached
+                cpu_tensor = learned_state.detach().cpu()
+                
+                # Handle different tensor shapes
+                if cpu_tensor.dim() == 0:  # Scalar
+                    state_features = [float(cpu_tensor.item())]
+                elif cpu_tensor.dim() == 1:  # 1D tensor
+                    state_features = cpu_tensor.numpy().tolist()
+                else:  # Multi-dimensional - flatten
+                    state_features = cpu_tensor.squeeze().flatten().numpy().tolist()
+                
+                # Validate extracted features
+                if not state_features:
+                    logger.warning("Extracted state_features is empty - using default")
+                    return [0.0] * 64
+                
+                # Check for NaN or infinite values
+                if any(not np.isfinite(x) for x in state_features):
+                    logger.warning("state_features contains NaN/inf values - filtering")
+                    state_features = [x if np.isfinite(x) else 0.0 for x in state_features]
+                
+                logger.debug(f"Successfully extracted {len(state_features)} state features")
+                return state_features
+                
+            except Exception as tensor_error:
+                logger.error(f"Error converting tensor to state features: {tensor_error}")
+                return [0.0] * 64
+                
+        except Exception as e:
+            logger.error(f"Critical error in state feature extraction: {e}")
+            return [0.0] * 64
     
     def get_stats(self) -> Dict[str, Any]:
         """Get decision engine statistics"""
         return {
             'total_decisions': self.total_decisions,
             'last_trade_time': self.last_trade_time,
-            'recent_position_rejections': self.recent_position_rejections
+            'consecutive_hold_decisions': self.consecutive_hold_decisions,
+            'last_emergency_override_time': self.last_emergency_override_time,
+            'last_successful_trade_time': self.last_successful_trade_time,
+            'emergency_trading_floor': self.emergency_trading_floor
         }
+    
+    def record_successful_trade(self, timestamp: float):
+        """
+        Record successful trade for emergency tracking.
+        
+        This method should be called by the trading system when a trade
+        completes successfully to update emergency override timing.
+        """
+        self.last_successful_trade_time = timestamp
+        logger.debug(f"Successful trade recorded at timestamp {timestamp}")

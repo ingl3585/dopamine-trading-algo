@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 class ConfidenceEvent(Enum):
     """Types of events that can affect confidence"""
     NEURAL_OUTPUT = "neural_output"
-    POSITION_REJECTION = "position_rejection"
     SUCCESSFUL_TRADE = "successful_trade"
     FAILED_TRADE = "failed_trade"
     MARKET_CHANGE = "market_change"
@@ -48,15 +47,12 @@ class ConfidenceState:
         self.recovery_factor: float = 1.0
         
         # Event tracking
-        self.recent_rejections: int = 0
         self.successful_trades: int = 0
         self.failed_trades: int = 0
-        self.last_rejection_time: float = 0.0
         self.last_success_time: float = 0.0
         
         # History for analysis
         self.adjustment_history: deque = deque(maxlen=1000)
-        self.violation_timestamps: deque = deque(maxlen=100)
         
         # NEW: Performance tracking
         self.trade_history: deque = deque(maxlen=200)  # Recent trade outcomes
@@ -95,26 +91,20 @@ class ConfidenceManager:
             'max_confidence': 1.00,
             'debug_mode': debug_mode,
             
-            # Enhanced Recovery parameters for faster scaling
-            'base_recovery_rate': 0.015,  # Increased for faster recovery
-            'max_recovery_time': 30.0,    # Faster recovery cycles
-            'success_boost': 0.06,        # Increased for better confidence building
-            'rejection_penalty': 0.03,    # Reduced to be less punitive
-            'failed_trade_penalty': 0.03, # Reduced to allow faster recovery
+            # Enhanced Recovery parameters for faster scaling - FURTHER IMPROVED
+            'base_recovery_rate': 0.025,  # Increased further for faster recovery
+            'max_recovery_time': 20.0,    # Even faster recovery cycles
+            'success_boost': 0.08,        # Increased more for better confidence building
+            'failed_trade_penalty': 0.02, # Reduced further to prevent compound penalties
             
             # Market Reality parameters (NEW)
             'drawdown_sensitivity': 0.3,   # Impact of unrealized losses
             'volatility_sensitivity': 3.0, # Market volatility impact factor
             'consensus_weight': 0.5,       # Subsystem agreement influence
             
-            # Protection parameters  
-            'violation_protection_threshold': 3,
-            'protection_floor_base': 0.25,
-            'protection_duration': 600,
-            
-            # Performance tracking (NEW)
-            'strategy_memory_length': 50,  # Trades to remember per strategy
-            'performance_window': 20,      # Recent trades for performance calc
+            # Performance tracking (NEW) - OPTIMIZED FOR RECOVERY
+            'strategy_memory_length': 30,  # Reduced memory to forget bad periods faster
+            'performance_window': 15,      # Smaller window for quicker adaptation
         }
         
         self.state = ConfidenceState()
@@ -162,9 +152,7 @@ class ConfidenceManager:
             adjusted, consensus_reasons = self._apply_subsystem_consensus(adjusted, market_context['subsystem_signals'])
             adjustment_reasons.extend(consensus_reasons)
         
-        # Apply protection mechanisms
-        adjusted, protection_reasons = self._apply_protection_mechanisms(adjusted)
-        adjustment_reasons.extend(protection_reasons)
+        # Protection mechanisms removed - no longer using violation-based protection
         
         # Apply bounds
         adjusted = self._apply_bounds(adjusted)
@@ -187,45 +175,6 @@ class ConfidenceManager:
         
         return adjusted
     
-    def handle_position_rejection(self, rejection_context: Dict = None) -> None:
-        """
-        Handle position rejection event
-        
-        Args:
-            rejection_context: Context about the rejection
-        """
-        current_time = time.time()
-        
-        # Update rejection tracking
-        self.state.recent_rejections += 1
-        self.state.last_rejection_time = current_time
-        self.state.violation_timestamps.append(current_time)
-        
-        # Clean old violations (older than protection duration)
-        cutoff_time = current_time - self.config['protection_duration']
-        while (self.state.violation_timestamps and 
-               self.state.violation_timestamps[0] < cutoff_time):
-            self.state.violation_timestamps.popleft()
-        
-        # Apply rejection penalty to recovery factor
-        penalty = self.config['rejection_penalty']
-        self.state.recovery_factor = max(0.5, self.state.recovery_factor - penalty)
-        
-        # Record the event
-        adjustment = ConfidenceAdjustment(
-            timestamp=current_time,
-            event_type=ConfidenceEvent.POSITION_REJECTION,
-            raw_confidence=self.state.current_confidence,
-            adjusted_confidence=self.state.current_confidence,  # No immediate adjustment
-            adjustment_reason=f"Rejection penalty applied to recovery factor: -{penalty:.3f}",
-            metadata=rejection_context or {}
-        )
-        self.state.adjustment_history.append(adjustment)
-        
-        if self.config['debug_mode']:
-            violation_count = len(self.state.violation_timestamps)
-            logger.warning(f"CONFIDENCE: Position rejection #{self.state.recent_rejections}, "
-                          f"recent violations: {violation_count}, recovery_factor: {self.state.recovery_factor:.3f}")
     
     def handle_trade_outcome(self, pnl: float, trade_context: Dict = None, dopamine_response = None) -> None:
         """
@@ -245,7 +194,7 @@ class ConfidenceManager:
             # Successful trade
             self.state.successful_trades += 1
             self.state.last_success_time = current_time
-            base_adjustment = self.config['success_boost']  # Now 0.04 instead of 0.02
+            base_adjustment = self.config['success_boost']  # Now 0.08 for better recovery
             
             # Boost recovery factor
             boost = 0.02
@@ -257,7 +206,7 @@ class ConfidenceManager:
         else:
             # Failed trade
             self.state.failed_trades += 1
-            base_adjustment = -self.config['failed_trade_penalty']  # Now -0.05 instead of -0.015
+            base_adjustment = -self.config['failed_trade_penalty']  # Now -0.02, less punitive
             
             # Small penalty to recovery factor
             penalty = 0.01
@@ -424,18 +373,13 @@ class ConfidenceManager:
             recovery_multiplier = 1.0
             performance_desc = "insufficient data"
         
-        # Time-based recovery from rejections
-        if self.state.recent_rejections > 0 and self.state.last_rejection_time > 0:
-            time_since_rejection = current_time - self.state.last_rejection_time
-            recovery_minutes = time_since_rejection / 60.0
+        # Apply performance-based recovery boost
+        if len(recent_trades) >= 5:
+            recovery_boost = base_rate * recovery_multiplier * self.state.recovery_factor
             
-            # Apply intelligent recovery rate with higher limits
-            max_recovery = base_rate * recovery_minutes * recovery_multiplier
-            recovery_boost = min(0.4, max_recovery) * self.state.recovery_factor  # Increased max for faster scaling
-            
-            if recovery_boost > 0.001:  # Lower threshold for more frequent boosts
+            if recovery_boost > 0.001:
                 adjusted = min(self.config['max_confidence'], adjusted + recovery_boost)
-                reasons.append(f"Smart recovery: +{recovery_boost:.3f} ({performance_desc} performance, {recovery_minutes:.1f}min)")
+                reasons.append(f"Performance recovery: +{recovery_boost:.3f} ({performance_desc} performance)")
         
         return adjusted, reasons
     
@@ -448,10 +392,17 @@ class ConfidenceManager:
         
         strategy_stats = self.state.strategy_performance[self.state.current_strategy]
         
-        if strategy_stats.get('trades', 0) > 5:  # Reduced requirement for faster scaling
+        if strategy_stats.get('trades', 0) > 3:  # Further reduced requirement for faster response
             strategy_win_rate = strategy_stats.get('win_rate', 0.5)
-            # Enhanced scaling: 0.6 to 1.6 range for better rewards
-            strategy_confidence_multiplier = 0.6 + (strategy_win_rate * 1.0)
+            
+            # FIXED: Less punitive scaling to prevent 0% win rate death spiral
+            # Range: 0.75 to 1.25 instead of 0.6 to 1.6 for more stable confidence
+            if strategy_win_rate == 0.0:
+                # Special handling for 0% win rate to prevent complete confidence collapse
+                strategy_confidence_multiplier = 0.85  # Less punitive
+                reasons.append(f"Strategy performance: mild penalty for 0% win rate (0.85x multiplier)")
+            else:
+                strategy_confidence_multiplier = 0.75 + (strategy_win_rate * 0.5)
             
             old_confidence = confidence
             confidence *= strategy_confidence_multiplier
@@ -569,18 +520,11 @@ class ConfidenceManager:
         reasons = []
         current_time = time.time()
         
-        # Time-based recovery from rejections
-        if self.state.recent_rejections > 0 and self.state.last_rejection_time > 0:
-            time_since_rejection = current_time - self.state.last_rejection_time
-            recovery_minutes = time_since_rejection / 60.0
-            
-            # Gradual recovery based on configured rate
-            max_recovery = self.config['base_recovery_rate'] * recovery_minutes
-            recovery_boost = min(0.3, max_recovery) * self.state.recovery_factor
-            
-            if recovery_boost > 0.005:  # Only apply meaningful boosts
-                adjusted = min(self.config['max_confidence'], adjusted + recovery_boost)
-                reasons.append(f"Time recovery: +{recovery_boost:.3f} ({recovery_minutes:.1f}min)")
+        # Base recovery mechanism (not rejection-based)
+        base_recovery = self.config['base_recovery_rate'] * self.state.recovery_factor
+        if base_recovery > 0.005:
+            adjusted = min(self.config['max_confidence'], adjusted + base_recovery)
+            reasons.append(f"Base recovery: +{base_recovery:.3f}")
         
         # Success-based recovery boost
         if self.state.last_success_time > 0:
@@ -595,25 +539,6 @@ class ConfidenceManager:
         
         return adjusted, reasons
     
-    def _apply_protection_mechanisms(self, confidence: float) -> Tuple[float, List[str]]:
-        """Apply protection mechanisms during high violation periods"""
-        reasons = []
-        current_time = time.time()
-        
-        # Count recent violations
-        recent_violations = len(self.state.violation_timestamps)
-        
-        if recent_violations >= self.config['violation_protection_threshold']:
-            # Calculate adaptive protection floor
-            violation_factor = recent_violations - self.config['violation_protection_threshold'] + 1
-            protection_floor = self.config['protection_floor_base'] - (0.02 * (violation_factor - 1))
-            protection_floor = max(self.config['min_confidence'], protection_floor)
-            
-            if confidence < protection_floor:
-                confidence = protection_floor
-                reasons.append(f"Violation protection: floor={protection_floor:.3f} (violations={recent_violations})")
-        
-        return confidence, reasons
     
     def _apply_bounds(self, confidence: float) -> float:
         """Apply hard bounds to confidence"""
@@ -627,7 +552,6 @@ class ConfidenceManager:
     def get_confidence_health(self) -> Dict:
         """Get comprehensive confidence health status"""
         current_time = time.time()
-        recent_violations = len(self.state.violation_timestamps)
         
         # Calculate health score
         health_factors = []
@@ -638,11 +562,7 @@ class ConfidenceManager:
         
         # Recovery factor health
         recovery_health = min(1.0, self.state.recovery_factor / 1.0)
-        health_factors.append(('recovery_factor', recovery_health, 0.3))
-        
-        # Violation health (inverse of recent violations)
-        violation_health = max(0.0, 1.0 - (recent_violations / 10.0))
-        health_factors.append(('violations', violation_health, 0.3))
+        health_factors.append(('recovery_factor', recovery_health, 0.6))
         
         # Calculate weighted health score
         health_score = sum(score * weight for _, score, weight in health_factors)
@@ -665,10 +585,8 @@ class ConfidenceManager:
             'current_confidence': self.state.current_confidence,
             'raw_neural_confidence': self.state.raw_neural_confidence,
             'recovery_factor': self.state.recovery_factor,
-            'recent_violations': recent_violations,
             'successful_trades': self.state.successful_trades,
             'failed_trades': self.state.failed_trades,
-            'time_since_last_rejection': (current_time - self.state.last_rejection_time) / 60.0 if self.state.last_rejection_time > 0 else 0,
             'health_factors': dict((name, score) for name, score, _ in health_factors)
         }
     
@@ -680,13 +598,11 @@ class ConfidenceManager:
                 'raw_neural_confidence': self.state.raw_neural_confidence,
                 'base_confidence': self.state.base_confidence,
                 'recovery_factor': self.state.recovery_factor,
-                'recent_rejections': self.state.recent_rejections,
                 'successful_trades': self.state.successful_trades,
                 'failed_trades': self.state.failed_trades,
             },
             'config': self.config,
-            'recent_adjustments': list(self.state.adjustment_history)[-10:],  # Last 10 adjustments
-            'violation_history': list(self.state.violation_timestamps)
+            'recent_adjustments': list(self.state.adjustment_history)[-10:]  # Last 10 adjustments
         }
     
     
@@ -706,3 +622,124 @@ class ConfidenceManager:
         self.state.adjustment_history.append(adjustment)
         
         logger.info(f"CONFIDENCE: Base confidence adjusted: {old_base:.3f} -> {self.state.base_confidence:.3f} ({reason})")
+    
+    def reset_conservative_penalties(self, reason: str = "Conservative feedback loop reset"):
+        """
+        Reset accumulated penalties that may be causing conservative feedback loops.
+        
+        This method implements emergency measures to restore confidence when the
+        system becomes trapped in overly conservative states due to compound penalties.
+        """
+        logger.warning(f"RESETTING CONSERVATIVE PENALTIES: {reason}")
+        
+        # Reset recovery factor to healthy level
+        old_recovery = self.state.recovery_factor
+        self.state.recovery_factor = 1.1  # Slightly optimistic for recovery
+        
+        # Reset base confidence to reasonable level
+        old_base = self.state.base_confidence
+        self.state.base_confidence = 0.6  # Healthy baseline
+        
+        # Reset current confidence to avoid being stuck
+        old_confidence = self.state.current_confidence
+        self.state.current_confidence = max(0.4, self.state.current_confidence)
+        
+        # Clear overly negative strategy performance tracking
+        for strategy, stats in self.state.strategy_performance.items():
+            if stats.get('win_rate', 0.5) < 0.3:  # If strategy is performing very poorly
+                # Reset to neutral with optimistic bias
+                stats['win_rate'] = 0.45
+                stats['wins'] = int(stats['trades'] * 0.45) if stats['trades'] > 0 else 0
+                logger.info(f"Reset strategy {strategy} win_rate from {stats.get('win_rate', 0.5):.1%} to 45%")
+        
+        # Add successful recovery event to history
+        adjustment = ConfidenceAdjustment(
+            timestamp=time.time(),
+            event_type=ConfidenceEvent.MANUAL_ADJUSTMENT,
+            raw_confidence=old_confidence,
+            adjusted_confidence=self.state.current_confidence,
+            adjustment_reason=f"Emergency penalty reset: {reason}",
+            metadata={
+                'old_recovery_factor': old_recovery,
+                'new_recovery_factor': self.state.recovery_factor, 
+                'old_base_confidence': old_base,
+                'new_base_confidence': self.state.base_confidence
+            }
+        )
+        self.state.adjustment_history.append(adjustment)
+        
+        logger.info(f"Conservative penalties reset: "
+                   f"recovery_factor {old_recovery:.3f} -> {self.state.recovery_factor:.3f}, "
+                   f"base_confidence {old_base:.3f} -> {self.state.base_confidence:.3f}, "
+                   f"current_confidence {old_confidence:.3f} -> {self.state.current_confidence:.3f}")
+    
+    def check_for_emergency_confidence_reset(self) -> bool:
+        """
+        Check if emergency confidence reset is needed due to conservative feedback loops.
+        
+        Returns True if confidence has been too low for too long, indicating
+        a feedback loop that requires intervention.
+        """
+        # Check recent confidence history
+        recent_adjustments = list(self.state.adjustment_history)[-20:]  # Last 20 adjustments
+        
+        if len(recent_adjustments) < 10:
+            return False
+        
+        # Check if confidence has been consistently low
+        recent_confidences = [adj.adjusted_confidence for adj in recent_adjustments]
+        avg_recent_confidence = sum(recent_confidences) / len(recent_confidences)
+        
+        # Check if recovery factor is too low
+        low_recovery_factor = self.state.recovery_factor < 0.8
+        
+        # Check for stagnant low confidence
+        consistently_low = avg_recent_confidence < 0.25
+        
+        # Check win rate tracking for all strategies
+        all_strategies_poor = True
+        for strategy, stats in self.state.strategy_performance.items():
+            if stats.get('trades', 0) > 5 and stats.get('win_rate', 0.5) > 0.35:
+                all_strategies_poor = False
+                break
+        
+        emergency_needed = (consistently_low and low_recovery_factor) or all_strategies_poor
+        
+        if emergency_needed:
+            logger.warning(f"EMERGENCY CONFIDENCE RESET NEEDED: "
+                         f"avg_confidence={avg_recent_confidence:.3f}, "
+                         f"recovery_factor={self.state.recovery_factor:.3f}, "
+                         f"all_strategies_poor={all_strategies_poor}")
+        
+        return emergency_needed
+    
+    def apply_emergency_confidence_boost(self, boost_amount: float = 0.15):
+        """
+        Apply emergency confidence boost to break feedback loops.
+        
+        Args:
+            boost_amount: Amount to boost confidence (default 0.15)
+        """
+        old_confidence = self.state.current_confidence
+        self.state.current_confidence = min(
+            self.config['max_confidence'], 
+            self.state.current_confidence + boost_amount
+        )
+        
+        # Also boost recovery factor
+        self.state.recovery_factor = min(1.2, self.state.recovery_factor + 0.1)
+        
+        adjustment = ConfidenceAdjustment(
+            timestamp=time.time(),
+            event_type=ConfidenceEvent.MANUAL_ADJUSTMENT,
+            raw_confidence=old_confidence,
+            adjusted_confidence=self.state.current_confidence,
+            adjustment_reason=f"Emergency confidence boost: +{boost_amount:.3f}",
+            metadata={'boost_amount': boost_amount}
+        )
+        self.state.adjustment_history.append(adjustment)
+        
+        logger.warning(f"EMERGENCY CONFIDENCE BOOST APPLIED: "
+                      f"{old_confidence:.3f} -> {self.state.current_confidence:.3f}")
+        
+        return self.state.current_confidence
