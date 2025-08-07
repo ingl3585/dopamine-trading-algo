@@ -55,6 +55,11 @@ class StateCoordinator:
         self._auto_save_interval = 300  # 5 minutes
         self._last_auto_save = 0
         
+        # Transactional state management
+        self._transaction_active = False
+        self._transaction_backup = None
+        self._transaction_id = None
+        
     def register_component(self, component: StateComponent):
         """Register a component for coordinated state management"""
         with self._state_lock:
@@ -85,6 +90,7 @@ class StateCoordinator:
                 return False
             
             self._save_in_progress = True
+            temp_filepath = None
             
             try:
                 # Get sorted components by priority (higher first)
@@ -120,20 +126,36 @@ class StateCoordinator:
                     }
                 )
                 
-                # Save to file with atomic write
+                # Save to file with atomic write - improved temp file handling
                 temp_filepath = filepath.with_suffix('.tmp')
                 
-                # Remove existing temp file if it exists
+                # Clean up any existing temp file
                 if temp_filepath.exists():
-                    temp_filepath.unlink()
+                    try:
+                        temp_filepath.unlink()
+                        logger.debug(f"Removed existing temp file: {temp_filepath}")
+                    except Exception as e:
+                        logger.warning(f"Failed to remove existing temp file {temp_filepath}: {e}")
                 
-                with open(temp_filepath, 'w') as f:
-                    json.dump(asdict(snapshot), f, indent=2, default=self._json_encoder)
+                # Write to temp file
+                try:
+                    with open(temp_filepath, 'w') as f:
+                        json.dump(asdict(snapshot), f, indent=2, default=self._json_encoder)
+                    logger.debug(f"State data written to temp file: {temp_filepath}")
+                except Exception as e:
+                    logger.error(f"Failed to write to temp file {temp_filepath}: {e}")
+                    raise
                 
                 # Atomic rename - handle existing file
-                if filepath.exists():
-                    filepath.unlink()
-                temp_filepath.rename(filepath)
+                try:
+                    if filepath.exists():
+                        filepath.unlink()
+                    temp_filepath.rename(filepath)
+                    logger.debug(f"Temp file successfully renamed to: {filepath}")
+                    temp_filepath = None  # Mark as successfully renamed
+                except Exception as e:
+                    logger.error(f"Failed to rename temp file {temp_filepath} to {filepath}: {e}")
+                    raise
                 
                 # Update history
                 self._state_history.append(snapshot)
@@ -153,6 +175,15 @@ class StateCoordinator:
                 
             except Exception as e:
                 logger.error(f"Critical error during state save: {e}")
+                
+                # Clean up temp file on error
+                if temp_filepath and temp_filepath.exists():
+                    try:
+                        temp_filepath.unlink()
+                        logger.debug(f"Cleaned up temp file after error: {temp_filepath}")
+                    except Exception as cleanup_error:
+                        logger.warning(f"Failed to clean up temp file {temp_filepath}: {cleanup_error}")
+                
                 return False
             
             finally:
@@ -252,6 +283,254 @@ class StateCoordinator:
             logger.debug("Triggering auto-save")
             self.save_state()
     
+    def begin_transaction(self, transaction_id: Optional[str] = None) -> str:
+        """
+        Begin a transactional state save operation.
+        
+        This creates a backup of the current state that can be rolled back to
+        if the transaction fails or is explicitly aborted.
+        
+        Args:
+            transaction_id: Optional transaction identifier
+            
+        Returns:
+            Transaction ID for tracking
+            
+        Raises:
+            RuntimeError: If a transaction is already active
+        """
+        with self._state_lock:
+            if self._transaction_active:
+                raise RuntimeError(f"Transaction {self._transaction_id} is already active")
+            
+            # Generate transaction ID if not provided
+            if transaction_id is None:
+                import uuid
+                transaction_id = str(uuid.uuid4())[:8]
+            
+            try:
+                logger.info(f"Beginning transaction: {transaction_id}")
+                
+                # Create backup of current state
+                self._transaction_backup = self._create_state_backup()
+                self._transaction_active = True
+                self._transaction_id = transaction_id
+                
+                logger.debug(f"Transaction {transaction_id} backup created successfully")
+                return transaction_id
+                
+            except Exception as e:
+                logger.error(f"Failed to begin transaction {transaction_id}: {e}")
+                self._cleanup_transaction()
+                raise
+    
+    def commit_transaction(self, transaction_id: str) -> bool:
+        """
+        Commit the current transaction and clear the backup.
+        
+        Args:
+            transaction_id: Transaction ID to commit
+            
+        Returns:
+            True if commit was successful
+            
+        Raises:
+            RuntimeError: If no transaction is active or ID mismatch
+        """
+        with self._state_lock:
+            if not self._transaction_active:
+                raise RuntimeError("No active transaction to commit")
+            
+            if self._transaction_id != transaction_id:
+                raise RuntimeError(f"Transaction ID mismatch: expected {self._transaction_id}, got {transaction_id}")
+            
+            try:
+                logger.info(f"Committing transaction: {transaction_id}")
+                
+                # Clear the backup as we're committing the changes
+                self._cleanup_transaction()
+                
+                # Optionally save the current state to disk
+                success = self.save_state()
+                
+                logger.info(f"Transaction {transaction_id} committed successfully")
+                return success
+                
+            except Exception as e:
+                logger.error(f"Failed to commit transaction {transaction_id}: {e}")
+                return False
+    
+    def rollback_transaction(self, transaction_id: str) -> bool:
+        """
+        Rollback the current transaction and restore the backup state.
+        
+        Args:
+            transaction_id: Transaction ID to rollback
+            
+        Returns:
+            True if rollback was successful
+            
+        Raises:
+            RuntimeError: If no transaction is active or ID mismatch
+        """
+        with self._state_lock:
+            if not self._transaction_active:
+                raise RuntimeError("No active transaction to rollback")
+            
+            if self._transaction_id != transaction_id:
+                raise RuntimeError(f"Transaction ID mismatch: expected {self._transaction_id}, got {transaction_id}")
+            
+            try:
+                logger.warning(f"Rolling back transaction: {transaction_id}")
+                
+                if self._transaction_backup is None:
+                    logger.error("No backup available for rollback")
+                    return False
+                
+                # Restore state from backup
+                success = self._restore_state_backup(self._transaction_backup)
+                
+                # Clear transaction state
+                self._cleanup_transaction()
+                
+                if success:
+                    logger.info(f"Transaction {transaction_id} rolled back successfully")
+                else:
+                    logger.error(f"Failed to rollback transaction {transaction_id}")
+                
+                return success
+                
+            except Exception as e:
+                logger.error(f"Error during rollback of transaction {transaction_id}: {e}")
+                self._cleanup_transaction()
+                return False
+    
+    def abort_transaction(self, transaction_id: str):
+        """
+        Abort the current transaction without rollback.
+        
+        This is used when you want to cancel a transaction but keep
+        any changes that have been made.
+        
+        Args:
+            transaction_id: Transaction ID to abort
+        """
+        with self._state_lock:
+            if not self._transaction_active:
+                logger.warning("No active transaction to abort")
+                return
+            
+            if self._transaction_id != transaction_id:
+                logger.warning(f"Transaction ID mismatch during abort: expected {self._transaction_id}, got {transaction_id}")
+                return
+            
+            logger.info(f"Aborting transaction: {transaction_id}")
+            self._cleanup_transaction()
+    
+    def _create_state_backup(self) -> Dict[str, Any]:
+        """Create a backup of the current state from all components"""
+        try:
+            # Get sorted components by priority (higher first)
+            components = sorted(
+                [(name, comp) for name, comp in self._components.items() if comp.enabled],
+                key=lambda x: x[1].priority,
+                reverse=True
+            )
+            
+            backup_data = {}
+            failed_components = []
+            
+            # Save each component's state
+            for name, component in components:
+                try:
+                    logger.debug(f"Creating backup for component: {name}")
+                    component_state = component.save_method()
+                    backup_data[name] = component_state
+                except Exception as e:
+                    logger.error(f"Failed to create backup for component {name}: {e}")
+                    failed_components.append(name)
+            
+            # Create backup metadata
+            backup = {
+                'timestamp': time.time(),
+                'version': self._current_version,
+                'components': backup_data,
+                'failed_components': failed_components,
+                'total_components': len(components),
+                'successful_components': len(components) - len(failed_components)
+            }
+            
+            logger.debug(f"State backup created: {len(backup_data)}/{len(components)} components")
+            return backup
+            
+        except Exception as e:
+            logger.error(f"Critical error creating state backup: {e}")
+            raise
+    
+    def _restore_state_backup(self, backup: Dict[str, Any]) -> bool:
+        """Restore state from backup to all components"""
+        try:
+            if not backup or 'components' not in backup:
+                logger.error("Invalid backup data structure")
+                return False
+            
+            # Get sorted components by priority (higher first for loading too)
+            components = sorted(
+                [(name, comp) for name, comp in self._components.items() if comp.enabled],
+                key=lambda x: x[1].priority,
+                reverse=True
+            )
+            
+            failed_components = []
+            restored_components = []
+            
+            # Restore each component's state
+            for name, component in components:
+                if name in backup['components']:
+                    try:
+                        logger.debug(f"Restoring backup for component: {name}")
+                        component.load_method(backup['components'][name])
+                        restored_components.append(name)
+                    except Exception as e:
+                        logger.error(f"Failed to restore backup for component {name}: {e}")
+                        failed_components.append(name)
+                else:
+                    logger.warning(f"No backup data found for component: {name}")
+            
+            logger.info(f"State backup restored: {len(restored_components)}/{len(components)} components")
+            
+            if failed_components:
+                logger.warning(f"Failed to restore components: {failed_components}")
+            
+            return len(failed_components) == 0
+            
+        except Exception as e:
+            logger.error(f"Critical error restoring state backup: {e}")
+            return False
+    
+    def _cleanup_transaction(self):
+        """Clean up transaction state"""
+        self._transaction_active = False
+        self._transaction_backup = None
+        self._transaction_id = None
+    
+    def get_transaction_status(self) -> Dict[str, Any]:
+        """Get current transaction status"""
+        with self._state_lock:
+            return {
+                'active': self._transaction_active,
+                'transaction_id': self._transaction_id,
+                'has_backup': self._transaction_backup is not None,
+                'backup_timestamp': (
+                    self._transaction_backup.get('timestamp') 
+                    if self._transaction_backup else None
+                ),
+                'backup_component_count': (
+                    self._transaction_backup.get('successful_components') 
+                    if self._transaction_backup else 0
+                )
+            }
+    
     def get_latest_state_file(self) -> Optional[Path]:
         """Get the most recent state file"""
         state_files = list(self.base_path.glob("system_state_*.json"))
@@ -281,12 +560,94 @@ class StateCoordinator:
             return obj.tolist()
         elif isinstance(obj, deque):
             return list(obj)
+        elif hasattr(obj, 'keys') and hasattr(obj, 'values') and hasattr(obj, '__getitem__'):
+            # Handle mappingproxy and other mapping-like objects
+            return dict(obj)
         elif hasattr(obj, 'isoformat'):  # datetime objects
             return obj.isoformat()
+        elif callable(obj):
+            # Handle functions, methods, and other callable objects
+            if hasattr(obj, '__name__'):
+                return f"<callable:{obj.__name__}>"
+            else:
+                return f"<callable:{type(obj).__name__}>"
         elif hasattr(obj, '__dict__'):  # Objects with attributes
-            return obj.__dict__
+            # Filter out callable attributes to prevent function serialization
+            filtered_dict = {}
+            for key, value in obj.__dict__.items():
+                if not callable(value):
+                    filtered_dict[key] = value
+                else:
+                    filtered_dict[key] = f"<callable:{getattr(value, '__name__', type(value).__name__)}>"
+            return filtered_dict
         
-        raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
+        # Last resort: convert to string representation
+        logger.warning(f"Converting non-serializable object {type(obj)} to string: {obj}")
+        return str(obj)
+    
+    def cleanup_orphaned_temp_files(self) -> int:
+        """
+        Clean up orphaned .tmp files in the base directory
+        
+        Returns:
+            Number of orphaned temp files cleaned up
+        """
+        with self._state_lock:
+            try:
+                cleaned_count = 0
+                
+                # Find all .tmp files in base directory
+                temp_files = list(self.base_path.glob("*.tmp"))
+                
+                for temp_file in temp_files:
+                    try:
+                        # Check if temp file is old (> 1 hour)
+                        stat = temp_file.stat()
+                        age_hours = (time.time() - stat.st_mtime) / 3600
+                        
+                        if age_hours > 1:
+                            # Check if corresponding main file exists
+                            main_file = temp_file.with_suffix('.json')
+                            
+                            # If main file doesn't exist or temp file is much older, it's orphaned
+                            if not main_file.exists() or age_hours > 24:
+                                temp_file.unlink()
+                                cleaned_count += 1
+                                logger.debug(f"Cleaned up orphaned temp file: {temp_file.name}")
+                    
+                    except Exception as e:
+                        logger.warning(f"Failed to process temp file {temp_file}: {e}")
+                
+                if cleaned_count > 0:
+                    logger.info(f"Cleaned up {cleaned_count} orphaned temp files")
+                
+                return cleaned_count
+                
+            except Exception as e:
+                logger.error(f"Error during orphaned temp file cleanup: {e}")
+                return 0
+    
+    def initialize_cleanup_system(self):
+        """
+        Initialize the state cleanup system integration
+        
+        This method sets up the cleanup system to work with this StateCoordinator
+        """
+        try:
+            # Import here to avoid circular imports
+            from .state_cleanup.coordinator import initialize_cleanup_system
+            
+            cleanup_coordinator = initialize_cleanup_system(
+                base_path=str(self.base_path),
+                state_coordinator=self
+            )
+            
+            logger.info("State cleanup system initialized")
+            return cleanup_coordinator
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize cleanup system: {e}")
+            return None
     
     def get_coordinator_status(self) -> Dict[str, Any]:
         """Get coordinator status for monitoring"""
@@ -300,7 +661,9 @@ class StateCoordinator:
                 'save_in_progress': self._save_in_progress,
                 'load_in_progress': self._load_in_progress,
                 'state_history_size': len(self._state_history),
-                'current_version': self._current_version
+                'current_version': self._current_version,
+                'transaction_active': self._transaction_active,
+                'transaction_id': self._transaction_id
             }
 
 # Global state coordinator instance

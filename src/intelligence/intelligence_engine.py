@@ -18,6 +18,10 @@ from src.shared.intelligence_types import (
     IntelligenceSignal, IntelligenceUpdate, IntelligenceContext,
     IntelligenceSignalType, create_intelligence_signal, create_intelligence_context
 )
+from src.core.state_coordinator import register_state_component
+from src.core.unified_serialization import unified_serializer, serialize_component_state, deserialize_component_state
+from src.core.storage_error_handler import storage_error_handler, handle_storage_operation
+from src.core.data_integrity_validator import data_integrity_validator, validate_component_data, ValidationLevel
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +118,13 @@ class IntelligenceEngine:
         # Signal history for consensus calculation
         self.recent_signals = deque(maxlen=100)
         
+        # Register with state coordinator for unified state management
+        self._register_state_management()
+        
+        # Load existing state if available
+        self._load_persisted_state()
+        
+        # Legacy load for backward compatibility
         self.load_patterns(self.memory_file)
 
     def _get_adaptation_engine(self):
@@ -158,8 +169,9 @@ class IntelligenceEngine:
         try:
             import os, numpy as np
             
-            def _np_encoder(obj):
-                """Convert NumPy scalars/arrays to vanilla Python types."""
+            def _enhanced_json_encoder(obj):
+                """Convert NumPy types, Trade objects, and other complex types to JSON-serializable formats."""
+                # Handle NumPy types
                 if isinstance(obj, (np.integer,)):
                     return int(obj)
                 if isinstance(obj, (np.floating,)):
@@ -168,12 +180,47 @@ class IntelligenceEngine:
                     return bool(obj)
                 if isinstance(obj, np.ndarray):
                     return obj.tolist()
-                raise TypeError(f"{type(obj)} is not JSON serializable")
+                
+                # Handle Trade objects
+                if hasattr(obj, '__class__') and 'Trade' in str(type(obj)):
+                    # Convert Trade to a simple dictionary with basic info
+                    try:
+                        return {
+                            'entry_time': getattr(obj, 'entry_time', 0),
+                            'exit_time': getattr(obj, 'exit_time', 0),
+                            'entry_price': getattr(obj, 'entry_price', 0.0),
+                            'exit_price': getattr(obj, 'exit_price', 0.0),
+                            'size': getattr(obj, 'size', 0),
+                            'pnl': getattr(obj, 'pnl', 0.0),
+                            'type_info': str(type(obj))
+                        }
+                    except Exception:
+                        return {'type_info': str(type(obj)), 'serialization_error': True}
+                
+                # Handle other complex objects by converting to string representation
+                if hasattr(obj, '__dict__'):
+                    try:
+                        # Try to convert to dict, but filter out complex nested objects
+                        simple_dict = {}
+                        for key, value in obj.__dict__.items():
+                            if isinstance(value, (str, int, float, bool, type(None))):
+                                simple_dict[key] = value
+                            else:
+                                simple_dict[key] = str(value)[:100]  # Truncate long strings
+                        return simple_dict
+                    except Exception:
+                        return {'type_info': str(type(obj)), 'serialization_fallback': True}
+                
+                # Final fallback - convert to string
+                try:
+                    return str(obj)
+                except Exception:
+                    return {'type_info': str(type(obj)), 'serialization_failed': True}
             
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
             
             with open(filepath, 'w') as f:
-                json.dump(data, f, indent=2, default=_np_encoder)
+                json.dump(data, f, indent=2, default=_enhanced_json_encoder)
                 
             logger.info("Enhanced patterns saved with all four subsystems")
         except Exception as e:
@@ -1102,6 +1149,79 @@ class IntelligenceEngine:
             
         except Exception as e:
             logger.error(f"Error in enhanced learning from outcome: {e}")
+    
+    def _validate_outcome_parameter(self, outcome) -> bool:
+        """Validate outcome parameter for learning operations"""
+        try:
+            # Check if outcome is a Trade object that needs numeric extraction
+            if hasattr(outcome, 'pnl'):
+                return True  # Trade object with PnL attribute
+            
+            # Check if outcome is already numeric
+            if isinstance(outcome, (int, float)):
+                import numpy as np
+                return not (np.isnan(outcome) or np.isinf(outcome))
+            
+            # Check if outcome can be converted to numeric
+            try:
+                float(outcome)
+                return True
+            except (ValueError, TypeError):
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error validating outcome parameter: {e}")
+            return False
+    
+    def _safe_convert_outcome(self, outcome):
+        """Safely convert Trade object or other outcome types to numeric value"""
+        try:
+            # Handle Trade objects - extract numeric PnL value
+            if hasattr(outcome, 'pnl'):
+                pnl_value = getattr(outcome, 'pnl', 0.0)
+                try:
+                    return float(pnl_value)
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Error converting Trade.pnl to float: {e}, pnl_value={pnl_value}")
+                    return 0.0
+            
+            # Handle other possible Trade attributes
+            if hasattr(outcome, 'profit_loss'):
+                try:
+                    return float(getattr(outcome, 'profit_loss', 0.0))
+                except (ValueError, TypeError):
+                    return 0.0
+                    
+            if hasattr(outcome, 'realized_pnl'):
+                try:
+                    return float(getattr(outcome, 'realized_pnl', 0.0))
+                except (ValueError, TypeError):
+                    return 0.0
+            
+            # Handle already numeric values
+            if isinstance(outcome, (int, float)):
+                import numpy as np
+                if np.isnan(outcome) or np.isinf(outcome):
+                    logger.warning(f"Invalid numeric outcome: {outcome}, using 0.0")
+                    return 0.0
+                return float(outcome)
+            
+            # Try direct conversion
+            try:
+                numeric_value = float(outcome)
+                import numpy as np
+                if np.isnan(numeric_value) or np.isinf(numeric_value):
+                    logger.warning(f"Converted outcome is invalid: {numeric_value}, using 0.0")
+                    return 0.0
+                return numeric_value
+            except (ValueError, TypeError) as e:
+                logger.error(f"Cannot convert outcome to numeric: {outcome} (type: {type(outcome)}), error: {e}")
+                return 0.0
+                
+        except Exception as e:
+            logger.error(f"Critical error in safe outcome conversion: {e}")
+            logger.error(f"Outcome type: {type(outcome)}, content: {str(outcome)[:100]}")
+            return 0.0
     
     def _create_pattern_id_from_context(self, learning_context: Dict, market_state: Dict) -> str:
         """Create pattern ID from learning context and market state"""
@@ -2511,9 +2631,15 @@ class IntelligenceEngine:
                 return None
             
             # Extract signal strength and confidence
-            signal_strength = dna_result.get('signal', 0.0)
+            raw_signal_strength = dna_result.get('signal', 0.0)
             confidence = dna_result.get('confidence', 0.5)
             pattern_type = dna_result.get('pattern_type', 'unknown')
+            
+            # Normalize signal strength to [-1.0, 1.0] range using tanh
+            signal_strength = float(np.tanh(raw_signal_strength))
+            
+            # Ensure bounds are strictly enforced
+            signal_strength = max(-1.0, min(1.0, signal_strength))
             
             # Determine direction based on signal strength
             if signal_strength > self.signal_generation_config['signal_threshold']:
@@ -2551,9 +2677,15 @@ class IntelligenceEngine:
             if not temporal_result or not isinstance(temporal_result, dict):
                 return None
             
-            signal_strength = temporal_result.get('signal', 0.0)
+            raw_signal_strength = temporal_result.get('signal', 0.0)
             confidence = temporal_result.get('confidence', 0.5)
             cycle_phase = temporal_result.get('cycle_phase', 'unknown')
+            
+            # Normalize signal strength to [-1.0, 1.0] range using tanh
+            signal_strength = float(np.tanh(raw_signal_strength))
+            
+            # Ensure bounds are strictly enforced
+            signal_strength = max(-1.0, min(1.0, signal_strength))
             
             # Determine direction
             if signal_strength > self.signal_generation_config['signal_threshold']:
@@ -2590,9 +2722,15 @@ class IntelligenceEngine:
             if not immune_result or not isinstance(immune_result, dict):
                 return None
             
-            signal_strength = immune_result.get('signal', 0.0)
+            raw_signal_strength = immune_result.get('signal', 0.0)
             confidence = immune_result.get('confidence', 0.5)
             threat_level = immune_result.get('threat_level', 'none')
+            
+            # Normalize signal strength to [-1.0, 1.0] range using tanh
+            signal_strength = float(np.tanh(raw_signal_strength))
+            
+            # Ensure bounds are strictly enforced
+            signal_strength = max(-1.0, min(1.0, signal_strength))
             
             # Immune signals are typically bearish (detecting threats) or neutral
             if signal_strength < -self.signal_generation_config['signal_threshold']:
@@ -2629,9 +2767,15 @@ class IntelligenceEngine:
             if not microstructure_result or not isinstance(microstructure_result, dict):
                 return None
             
-            signal_strength = microstructure_result.get('signal', 0.0)
+            raw_signal_strength = microstructure_result.get('signal', 0.0)
             confidence = microstructure_result.get('confidence', 0.5)
             liquidity_state = microstructure_result.get('liquidity_state', 'normal')
+            
+            # Normalize signal strength to [-1.0, 1.0] range using tanh
+            signal_strength = float(np.tanh(raw_signal_strength))
+            
+            # Ensure bounds are strictly enforced
+            signal_strength = max(-1.0, min(1.0, signal_strength))
             
             # Determine direction based on microstructure conditions
             if signal_strength > self.signal_generation_config['signal_threshold']:
@@ -2680,17 +2824,14 @@ class IntelligenceEngine:
             strengths = []
             
             for signal in recent_signals_list:
-                # Subsystem distribution
-                subsystem = signal.subsystem_id
+                subsystem = signal.get('subsystem_id')
                 subsystem_counts[subsystem] = subsystem_counts.get(subsystem, 0) + 1
-                
-                # Direction distribution
-                direction = signal.direction
+
+                direction = signal.get('direction')
                 direction_counts[direction] = direction_counts.get(direction, 0) + 1
-                
-                # Statistics
-                confidences.append(signal.confidence)
-                strengths.append(abs(signal.strength))
+
+                confidences.append(signal.get('confidence', 0.0))
+                strengths.append(abs(signal.get('strength', 0.0)))
             
             return {
                 'total_signals': len(recent_signals_list),
@@ -2734,3 +2875,168 @@ class IntelligenceEngine:
         except Exception as e:
             logger.error(f"Error getting intelligence health: {e}")
             return {'error': str(e), 'overall_status': 'error'}
+    
+    def _register_state_management(self):
+        """Register with state coordinator for unified state management"""
+        try:
+            register_state_component(
+                name="intelligence_engine",
+                save_method=self._save_state_data,
+                load_method=self._load_state_data,
+                priority=75  # High priority for intelligence data
+            )
+            logger.debug("IntelligenceEngine registered with state coordinator")
+        except Exception as e:
+            logger.error(f"Failed to register intelligence engine state management: {e}")
+    
+    @handle_storage_operation("intelligence_engine", "save_state")
+    def _save_state_data(self) -> Dict[str, Any]:
+        """
+        Save intelligence engine state data for state coordinator.
+        
+        Returns:
+            Dictionary containing all intelligence engine state data
+        """
+        try:
+            # Prepare state data
+            state_data = {
+                'patterns': dict(self.patterns),  # Convert defaultdict to regular dict
+                'recent_outcomes': list(self.recent_outcomes),
+                'recent_signals': list(self.recent_signals),
+                'historical_processed': self.historical_processed,
+                'bootstrap_stats': dict(self.bootstrap_stats),
+                'signal_generation_config': dict(self.signal_generation_config),
+                'subsystem_training_progress': dict(self.subsystem_training_progress),
+                'memory_file': self.memory_file,
+                'saved_at': time.time(),
+                'version': "2.0"  # Updated version for new state format
+            }
+            
+            # Get orchestrator state if available
+            try:
+                if hasattr(self.orchestrator, 'get_state_data'):
+                    state_data['orchestrator_state'] = self.orchestrator.get_state_data()
+                elif hasattr(self.orchestrator, 'get_comprehensive_stats'):
+                    state_data['orchestrator_stats'] = self.orchestrator.get_comprehensive_stats()
+            except Exception as e:
+                logger.warning(f"Error saving orchestrator state: {e}")
+            
+            # Get microstructure state if available
+            try:
+                if hasattr(self.microstructure_subsystem, 'get_state_data'):
+                    state_data['microstructure_state'] = self.microstructure_subsystem.get_state_data()
+                elif hasattr(self.microstructure_subsystem, 'get_microstructure_features'):
+                    state_data['microstructure_features'] = self.microstructure_subsystem.get_microstructure_features()
+            except Exception as e:
+                logger.warning(f"Error saving microstructure state: {e}")
+            
+            # Validate data integrity before saving
+            validation_report = validate_component_data(
+                component="intelligence_engine",
+                data=state_data,
+                data_type="intelligence_data",
+                level=ValidationLevel.STANDARD
+            )
+            
+            if not validation_report.is_valid:
+                logger.warning(f"Intelligence engine state validation issues: {len(validation_report.issues)} issues found")
+                for issue in validation_report.issues:
+                    if issue.severity == "error":
+                        logger.error(f"Intelligence engine state error: {issue.message}")
+            
+            logger.debug("Intelligence engine state data prepared for saving")
+            return state_data
+            
+        except Exception as e:
+            logger.error(f"Error preparing intelligence engine state data: {e}")
+            raise
+    
+    @handle_storage_operation("intelligence_engine", "load_state")
+    def _load_state_data(self, state_data: Dict[str, Any]):
+        """
+        Load intelligence engine state data from state coordinator.
+        
+        Args:
+            state_data: Dictionary containing intelligence engine state data
+        """
+        try:
+            # Validate loaded data
+            validation_report = validate_component_data(
+                component="intelligence_engine",
+                data=state_data,
+                data_type="intelligence_data",
+                level=ValidationLevel.STANDARD
+            )
+            
+            if validation_report.result.value == "corrupted":
+                logger.error("Intelligence engine state data is corrupted, cannot load")
+                return
+            
+            if not validation_report.is_valid:
+                logger.warning(f"Intelligence engine state validation issues during load: {len(validation_report.issues)} issues")
+            
+            # Load patterns with validation
+            if 'patterns' in state_data and isinstance(state_data['patterns'], dict):
+                self.patterns = defaultdict(list, state_data['patterns'])
+                logger.debug(f"Loaded {len(self.patterns)} pattern types")
+            
+            # Load recent outcomes
+            if 'recent_outcomes' in state_data and isinstance(state_data['recent_outcomes'], list):
+                self.recent_outcomes = deque(state_data['recent_outcomes'], maxlen=100)
+                logger.debug(f"Loaded {len(self.recent_outcomes)} recent outcomes")
+            
+            # Load recent signals
+            if 'recent_signals' in state_data and isinstance(state_data['recent_signals'], list):
+                self.recent_signals = deque(state_data['recent_signals'], maxlen=100)
+                logger.debug(f"Loaded {len(self.recent_signals)} recent signals")
+            
+            # Load bootstrap state
+            if 'historical_processed' in state_data:
+                self.historical_processed = state_data['historical_processed']
+            if 'bootstrap_stats' in state_data and isinstance(state_data['bootstrap_stats'], dict):
+                self.bootstrap_stats.update(state_data['bootstrap_stats'])
+            
+            # Load configuration
+            if 'signal_generation_config' in state_data and isinstance(state_data['signal_generation_config'], dict):
+                self.signal_generation_config.update(state_data['signal_generation_config'])
+            
+            # Load training progress
+            if 'subsystem_training_progress' in state_data and isinstance(state_data['subsystem_training_progress'], dict):
+                for subsystem, progress in state_data['subsystem_training_progress'].items():
+                    if subsystem in self.subsystem_training_progress and isinstance(progress, dict):
+                        self.subsystem_training_progress[subsystem].update(progress)
+            
+            # Load orchestrator state if available
+            if 'orchestrator_state' in state_data:
+                try:
+                    if hasattr(self.orchestrator, 'load_state_data'):
+                        self.orchestrator.load_state_data(state_data['orchestrator_state'])
+                        logger.debug("Loaded orchestrator state")
+                except Exception as e:
+                    logger.warning(f"Error loading orchestrator state: {e}")
+            
+            # Load microstructure state if available
+            if 'microstructure_state' in state_data:
+                try:
+                    if hasattr(self.microstructure_subsystem, 'load_state_data'):
+                        self.microstructure_subsystem.load_state_data(state_data['microstructure_state'])
+                        logger.debug("Loaded microstructure state")
+                except Exception as e:
+                    logger.warning(f"Error loading microstructure state: {e}")
+            
+            logger.info("Intelligence engine state loaded successfully from state coordinator")
+            
+        except Exception as e:
+            logger.error(f"Error loading intelligence engine state data: {e}")
+            raise
+    
+    def _load_persisted_state(self):
+        """Load persisted state if available"""
+        try:
+            # Try to load from unified serialization system
+            state_data = deserialize_component_state("intelligence_engine")
+            if state_data:
+                self._load_state_data(state_data)
+                logger.info("Intelligence engine state loaded from persistent storage")
+        except Exception as e:
+            logger.debug(f"No existing intelligence engine state found or failed to load: {e}")

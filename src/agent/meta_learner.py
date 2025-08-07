@@ -152,7 +152,6 @@ class MetaLearner:
             'target_distance_factor': MetaParameter(0.03, (0.01, 0.1)),   # Reasonable targets for MNQ
             
             # Account protection (adaptive based on account size)
-            'loss_tolerance_factor': MetaParameter(0.03, (0.001, 1.0)),    # Adaptive loss tolerance
             'consecutive_loss_tolerance': MetaParameter(5.0, (2.0, 15.0)),
             
             # New: Account size awareness
@@ -189,21 +188,18 @@ class MetaLearner:
                 # More conservative for small accounts
                 self.parameters['position_size_factor'].bounds = (0.01, 0.3)
                 self.parameters['max_position_factor'].bounds = (0.05, 0.5)
-                self.parameters['loss_tolerance_factor'].bounds = (0.005, 0.05)
                 self.parameters['small_account_mode'].value = 1.0
                 
             # Medium accounts ($10k - $50k)
             elif account_balance < 50000:
                 self.parameters['position_size_factor'].bounds = (0.02, 0.4)
                 self.parameters['max_position_factor'].bounds = (0.1, 0.6)
-                self.parameters['loss_tolerance_factor'].bounds = (0.01, 0.08)
                 self.parameters['small_account_mode'].value = 0.5
                 
             # Larger accounts (> $50k)
             else:
                 self.parameters['position_size_factor'].bounds = (0.05, 0.5)
                 self.parameters['max_position_factor'].bounds = (0.1, 0.7)
-                self.parameters['loss_tolerance_factor'].bounds = (0.02, 0.1)
                 self.parameters['small_account_mode'].value = 0.0
             
             self.last_account_balance = account_balance

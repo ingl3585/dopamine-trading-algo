@@ -1,12 +1,16 @@
 """
 Experience Manager - Centralized experience storage and sampling
 
-This module handles all experience-related operations:
+Enhanced with unified state management, error handling, and data integrity validation.
+This module handles all experience-related operations following clean architecture principles:
+
 1. Experience buffer management (regular and priority)
 2. Batch sampling for training
 3. Previous task memory for catastrophic forgetting prevention
 4. Experience validation and preprocessing
 5. Memory-efficient storage and retrieval
+6. Unified state management integration
+7. Comprehensive error handling and recovery
 
 Extracted from TradingAgent to centralize memory management and improve performance.
 """
@@ -19,6 +23,11 @@ from typing import Dict, List, Any, Optional, Tuple
 from collections import deque
 from queue import Queue
 import threading
+
+from src.core.state_coordinator import register_state_component
+from src.core.unified_serialization import unified_serializer, serialize_component_state, deserialize_component_state
+from src.core.storage_error_handler import storage_error_handler, handle_storage_operation
+from src.core.data_integrity_validator import data_integrity_validator, validate_component_data, ValidationLevel
 
 logger = logging.getLogger(__name__)
 
@@ -250,6 +259,12 @@ class ExperienceManager:
         self.cleanup_interval = 3600  # 1 hour
         self.max_reward_threshold = 10.0  # For priority classification
         self.min_uncertainty_threshold = 0.7  # For priority classification
+        
+        # Register with state coordinator for unified state management
+        self._register_state_management()
+        
+        # Load existing state if available
+        self._load_persisted_state() 
         
         logger.info(f"ExperienceManager initialized with buffers: "
                    f"experience={experience_maxsize}, priority={priority_maxsize}, "
@@ -560,9 +575,154 @@ class ExperienceManager:
         except Exception as e:
             logger.error(f"Error clearing buffers: {e}")
     
+    def _register_state_management(self):
+        """Register with state coordinator for unified state management"""
+        try:
+            register_state_component(
+                name="experience_manager", 
+                save_method=self._save_state_data,
+                load_method=self._load_state_data,
+                priority=90  # Very high priority for experience data
+            )
+            logger.debug("ExperienceManager registered with state coordinator")
+        except Exception as e:
+            logger.error(f"Failed to register experience manager state management: {e}")
+    
+    @handle_storage_operation("experience_manager", "save_state")
+    def _save_state_data(self) -> Dict[str, Any]:
+        """
+        Save experience manager state data for state coordinator.
+        
+        Returns:
+            Dictionary containing all experience manager state data
+        """
+        try:
+            # Prepare state data
+            state_data = {
+                'experience_buffer': self.experience_buffer.get_all(),
+                'priority_buffer': self.priority_buffer.get_all(),
+                'previous_task_buffer': self.previous_task_buffer.get_all(),
+                'buffer_sizes': {
+                    'experience': self.experience_buffer.maxsize,
+                    'priority': self.priority_buffer.maxsize,  
+                    'previous_task': self.previous_task_buffer.maxsize
+                },
+                'stats': dict(self.stats),
+                'config': {
+                    'cleanup_interval': self.cleanup_interval,
+                    'max_reward_threshold': self.max_reward_threshold,
+                    'min_uncertainty_threshold': self.min_uncertainty_threshold
+                },
+                'saved_at': time.time(),
+                'version': "2.0"  # Updated version for new state format
+            }
+            
+            # Validate data integrity before saving
+            validation_report = validate_component_data(
+                component="experience_manager",
+                data=state_data,
+                data_type="experience_data",
+                level=ValidationLevel.STANDARD
+            )
+            
+            if not validation_report.is_valid:
+                logger.warning(f"Experience manager state validation issues: {len(validation_report.issues)} issues found")
+                for issue in validation_report.issues:
+                    if issue.severity == "error":
+                        logger.error(f"Experience manager state error: {issue.message}")
+            
+            logger.debug("Experience manager state data prepared for saving")
+            return state_data
+            
+        except Exception as e:
+            logger.error(f"Error preparing experience manager state data: {e}")
+            raise
+    
+    @handle_storage_operation("experience_manager", "load_state")
+    def _load_state_data(self, state_data: Dict[str, Any]):
+        """
+        Load experience manager state data from state coordinator.
+        
+        Args:
+            state_data: Dictionary containing experience manager state data
+        """
+        try:
+            # Validate loaded data
+            validation_report = validate_component_data(
+                component="experience_manager",
+                data=state_data,
+                data_type="experience_data", 
+                level=ValidationLevel.STANDARD
+            )
+            
+            if validation_report.result.value == "corrupted":
+                logger.error("Experience manager state data is corrupted, cannot load")
+                return
+            
+            if not validation_report.is_valid:
+                logger.warning(f"Experience manager state validation issues during load: {len(validation_report.issues)} issues")
+            
+            # Load experience buffer
+            if 'experience_buffer' in state_data and isinstance(state_data['experience_buffer'], list):
+                experiences = state_data['experience_buffer']
+                for exp in experiences:
+                    if self.validator.validate_experience(exp):
+                        self.experience_buffer.append(exp)
+                logger.debug(f"Loaded {len(experiences)} experience buffer entries")
+            
+            # Load priority buffer  
+            if 'priority_buffer' in state_data and isinstance(state_data['priority_buffer'], list):
+                priority_experiences = state_data['priority_buffer']
+                for exp in priority_experiences:
+                    if self.validator.validate_experience(exp):
+                        self.priority_buffer.append(exp)
+                logger.debug(f"Loaded {len(priority_experiences)} priority buffer entries")
+            
+            # Load previous task buffer
+            if 'previous_task_buffer' in state_data and isinstance(state_data['previous_task_buffer'], list):
+                previous_task_experiences = state_data['previous_task_buffer']
+                for exp in previous_task_experiences:
+                    if self.validator.validate_experience(exp):
+                        self.previous_task_buffer.append(exp)
+                logger.debug(f"Loaded {len(previous_task_experiences)} previous task buffer entries")
+            
+            # Load statistics
+            if 'stats' in state_data and isinstance(state_data['stats'], dict):
+                self.stats.update(state_data['stats'])
+                logger.debug("Loaded experience manager statistics")
+            
+            # Load configuration
+            if 'config' in state_data and isinstance(state_data['config'], dict):
+                config = state_data['config']
+                self.cleanup_interval = config.get('cleanup_interval', self.cleanup_interval)
+                self.max_reward_threshold = config.get('max_reward_threshold', self.max_reward_threshold)
+                self.min_uncertainty_threshold = config.get('min_uncertainty_threshold', self.min_uncertainty_threshold)
+                logger.debug("Loaded experience manager configuration")
+            
+            logger.info("Experience manager state loaded successfully from state coordinator")
+            
+        except Exception as e:
+            logger.error(f"Error loading experience manager state data: {e}")
+            raise
+    
+    def _load_persisted_state(self):
+        """Load persisted state if available"""
+        try:
+            # Try to load from unified serialization system
+            state_data = deserialize_component_state("experience_manager")
+            if state_data:
+                self._load_state_data(state_data)
+                logger.info("Experience manager state loaded from persistent storage")
+        except Exception as e:
+            logger.debug(f"No existing experience manager state found or failed to load: {e}")
+    
+    @handle_storage_operation("experience_manager", "save_experiences_legacy")
     def save_experiences(self, filepath: str) -> bool:
         """
-        Save experiences to file
+        Save experiences to file using unified serialization system.
+        
+        This method provides backward compatibility while using the new
+        unified serialization framework with error handling and validation.
         
         Args:
             filepath: Path to save experiences
@@ -571,37 +731,38 @@ class ExperienceManager:
             True if save was successful
         """
         try:
-            import json
-            import os
+            # Get current state data
+            state_data = self._save_state_data()
             
-            # Ensure directory exists
-            dir_path = os.path.dirname(filepath)
-            if dir_path and not os.path.exists(dir_path):
-                os.makedirs(dir_path, exist_ok=True)
+            # Use unified serializer to save to specific file
+            metadata = unified_serializer.serialize_to_file(
+                data=state_data,
+                filepath=filepath,
+                validate_integrity=True
+            )
             
-            # Prepare data for saving
-            save_data = {
-                'experience_buffer': self.experience_buffer.get_all(),
-                'priority_buffer': self.priority_buffer.get_all(),
-                'previous_task_buffer': self.previous_task_buffer.get_all(),
-                'stats': self.stats.copy(),
-                'saved_at': time.time()
-            }
-            
-            # Save to file
-            with open(filepath, 'w') as f:
-                json.dump(save_data, f, indent=2, default=str)
-            
-            logger.info(f"Experiences saved to {filepath}")
+            logger.info(f"Experiences saved to {filepath} using unified serialization")
+            logger.debug(f"Saved data size: {metadata.size_bytes} bytes, format: {metadata.format.value}")
             return True
             
         except Exception as e:
-            logger.error(f"Error saving experiences: {e}")
+            logger.error(f"Error saving experiences to {filepath}: {e}")
+            # Log error through error handler for tracking
+            storage_error_handler.handle_error(
+                exception=e,
+                component="experience_manager",
+                operation="save_experiences_legacy",
+                context={"filepath": str(filepath)}
+            )
             return False
     
+    @handle_storage_operation("experience_manager", "load_experiences_legacy")
     def load_experiences(self, filepath: str) -> bool:
         """
-        Load experiences from file
+        Load experiences from file using unified serialization system.
+        
+        This method provides backward compatibility while using the new
+        unified serialization framework with error handling and validation.
         
         Args:
             filepath: Path to load experiences from
@@ -610,38 +771,44 @@ class ExperienceManager:
             True if load was successful
         """
         try:
-            import json
+            # Use unified serializer to load from specific file
+            state_data = unified_serializer.deserialize_from_file(
+                filepath=filepath,
+                validate_integrity=True
+            )
             
-            with open(filepath, 'r') as f:
-                load_data = json.load(f)
-            
-            # Clear existing buffers
-            self.clear_all_buffers()
-            
-            # Load experiences
-            for exp in load_data.get('experience_buffer', []):
-                self.experience_buffer.append(exp)
-            
-            for exp in load_data.get('priority_buffer', []):
-                self.priority_buffer.append(exp)
-            
-            for exp in load_data.get('previous_task_buffer', []):
-                self.previous_task_buffer.append(exp)
-            
-            # Load statistics
-            if 'stats' in load_data:
-                self.stats.update(load_data['stats'])
-            
-            logger.info(f"Experiences loaded from {filepath}")
-            logger.info(f"Loaded {self.experience_buffer.size()} regular, "
-                       f"{self.priority_buffer.size()} priority, "
-                       f"{self.previous_task_buffer.size()} previous task experiences")
-            
-            return True
+            if state_data:
+                # Clear existing buffers before loading
+                self.clear_all_buffers()
+                
+                # Load state data
+                self._load_state_data(state_data)
+                
+                logger.info(f"Experiences loaded from {filepath} using unified serialization")
+                logger.info(f"Loaded {self.experience_buffer.size()} regular, "
+                           f"{self.priority_buffer.size()} priority, "
+                           f"{self.previous_task_buffer.size()} previous task experiences")
+                return True
+            else:
+                logger.warning(f"No data found in {filepath}")
+                return False
             
         except FileNotFoundError:
             logger.info("No existing experience file found, starting fresh")
             return False
         except Exception as e:
-            logger.error(f"Error loading experiences: {e}")
-            return False
+            logger.error(f"Error loading experiences from {filepath}: {e}")
+            # Log error through error handler for tracking
+            error_info = storage_error_handler.handle_error(
+                exception=e,
+                component="experience_manager",
+                operation="load_experiences_legacy",
+                context={"filepath": str(filepath)}
+            )
+            
+            # Don't fail completely for minor errors
+            if error_info.severity.value in ["low", "medium"]:
+                logger.warning("Continuing with empty experience buffers due to load error")
+                return False
+            else:
+                return False

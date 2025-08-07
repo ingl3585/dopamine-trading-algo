@@ -76,7 +76,7 @@ class StateBuilder:
                 # Position limit awareness
                 float(getattr(market_data, 'total_position_size', 0) / 10.0),
                 float(abs(getattr(market_data, 'total_position_size', 0)) / 10.0),  # Position ratio placeholder
-                float(min(1.0, meta_context.get('recent_position_rejections', 0) / 10.0)),
+                0.0,  # Position rejection tracking removed
                 
                 # Time-based features
                 float(np.sin(2 * np.pi * features.time_of_day)),
@@ -155,7 +155,7 @@ class MetaContextBuilder:
                 'volatility_regime': min(1.0, features.volatility / 0.05),
                 'liquidity_regime': features.liquidity_depth,
                 'smart_money_activity': abs(features.smart_money_flow),
-                'recent_position_rejections': trading_stats.get('recent_position_rejections', 0)
+                # Position rejection tracking removed
             }
             
             return {**base_context, **enhanced_context}
@@ -198,19 +198,14 @@ class ConstraintsEvaluator:
             True if trading should be considered
         """
         try:
-            # Base constraints from meta-learner
-            loss_tolerance = self.meta_learner.get_parameter('loss_tolerance_factor')
-            max_loss = market_data.account_balance * loss_tolerance
+            # Daily P&L tracking preserved for analytics but no longer blocks trading
+            # This maintains system visibility while removing enforcement constraints
             
-            if market_data.daily_pnl <= -max_loss:
-                logger.info(f"Trading blocked: Daily loss limit reached ({market_data.daily_pnl:.2f} <= {-max_loss:.2f})")
-                return False
-            
-            # Consecutive loss limit
-            consecutive_limit = self.meta_learner.get_parameter('consecutive_loss_tolerance')
-            if meta_context['consecutive_losses'] >= consecutive_limit:
-                logger.info(f"Trading blocked: Consecutive loss limit ({meta_context['consecutive_losses']} >= {consecutive_limit})")
-                return False
+            # Consecutive loss limit removed - system should learn from losses instead of blocking trades
+            # consecutive_limit = self.meta_learner.get_parameter('consecutive_loss_tolerance')
+            # if meta_context['consecutive_losses'] >= consecutive_limit:
+            #     logger.info(f"Trading blocked: Consecutive loss limit ({meta_context['consecutive_losses']} >= {consecutive_limit})")
+            #     return False
             
             # Frequency constraints
             frequency_limit = self.meta_learner.get_parameter('trade_frequency_base')
@@ -281,7 +276,7 @@ class TradingStateManager:
         
         # State tracking
         self.last_trade_time = 0.0
-        self.recent_position_rejections = 0
+        # Position rejection tracking removed
         self.total_decisions = 0
         self.regime_transitions = 0
         self.adaptation_events = 0
@@ -318,7 +313,7 @@ class TradingStateManager:
                 'total_decisions': self.total_decisions,
                 'regime_transitions': self.regime_transitions,
                 'adaptation_events': self.adaptation_events,
-                'recent_position_rejections': self.recent_position_rejections,
+                # Position rejection tracking removed
                 'learning_efficiency': self.meta_learner.get_learning_efficiency(),
                 'architecture_generation': getattr(self.meta_learner.architecture_evolver, 'generations', 0)
             }
@@ -430,21 +425,6 @@ class TradingStateManager:
         """Update last trade timestamp"""
         self.last_trade_time = timestamp
     
-    def handle_position_rejection(self, rejection_data: Dict[str, Any]):
-        """Handle position limit rejection"""
-        try:
-            current_time = time.time()
-            
-            # Use confidence manager for rejection handling
-            self.confidence_manager.handle_position_rejection(rejection_data)
-            
-            # Update local tracking
-            self.recent_position_rejections += 1
-            
-            logger.info(f"Position rejection handled. Recent rejections: {self.recent_position_rejections}")
-            
-        except Exception as e:
-            logger.error(f"Error handling position rejection: {e}")
     
     def get_current_confidence(self) -> float:
         """Get current confidence level"""
@@ -488,7 +468,7 @@ class TradingStateManager:
                     'total_decisions': self.total_decisions,
                     'regime_transitions': self.regime_transitions,
                     'adaptation_events': self.adaptation_events,
-                    'recent_position_rejections': self.recent_position_rejections,
+                    # Position rejection tracking removed
                     'last_trade_time': self.last_trade_time
                 },
                 'state_management': self.state_management_stats.copy(),
@@ -506,7 +486,7 @@ class TradingStateManager:
                 'current_state': {
                     'current_confidence': self.get_current_confidence(),
                     'time_since_last_trade': time.time() - self.last_trade_time if self.last_trade_time > 0 else 0,
-                    'recent_rejection_rate': min(1.0, self.recent_position_rejections / 10.0)
+                    'recent_rejection_rate': 0.0  # Position rejection tracking removed
                 }
             }
             
@@ -521,7 +501,7 @@ class TradingStateManager:
             self.total_decisions = 0
             self.regime_transitions = 0
             self.adaptation_events = 0
-            self.recent_position_rejections = 0
+            # Position rejection tracking removed
             self.last_trade_time = 0.0
             
             # Reset statistics
@@ -562,7 +542,7 @@ class TradingStateManager:
                     'total_decisions': self.total_decisions,
                     'regime_transitions': self.regime_transitions,
                     'adaptation_events': self.adaptation_events,
-                    'recent_position_rejections': self.recent_position_rejections,
+                    # Position rejection tracking removed
                     'last_trade_time': self.last_trade_time
                 },
                 'state_management_stats': self.state_management_stats.copy(),
@@ -600,7 +580,7 @@ class TradingStateManager:
             self.total_decisions = tracking.get('total_decisions', 0)
             self.regime_transitions = tracking.get('regime_transitions', 0)
             self.adaptation_events = tracking.get('adaptation_events', 0)
-            self.recent_position_rejections = tracking.get('recent_position_rejections', 0)
+            # Position rejection tracking removed
             self.last_trade_time = tracking.get('last_trade_time', 0.0)
             
             # Load statistics

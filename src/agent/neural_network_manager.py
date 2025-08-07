@@ -18,6 +18,7 @@ import torch.optim as optim
 import torch.nn.functional as F
 import numpy as np
 import logging
+import time
 from typing import Dict, List, Any, Optional, Tuple
 from collections import deque
 
@@ -35,6 +36,10 @@ from src.neural.uncertainty_estimator import (
     UncertaintyEstimate
 )
 from src.agent.meta_learner import MetaLearner
+from src.core.state_coordinator import register_state_component
+from src.core.unified_serialization import unified_serializer, serialize_component_state, deserialize_component_state
+from src.core.storage_error_handler import storage_error_handler, handle_storage_operation
+from src.core.data_integrity_validator import data_integrity_validator, validate_component_data, ValidationLevel
 
 logger = logging.getLogger(__name__)
 
@@ -128,8 +133,60 @@ class NeuralNetworkManager:
         # State tracking
         self.training_steps = 0
         self.last_evolution_step = 0
+        self.last_save_time = time.time()
+        self.save_interval = 300  # 5 minutes
+        self.last_performance_time = time.time()
+        self.force_save_counter = 0  # Counter to force saves even without performance data
+        self.save_triggers = {
+            'periodic': True,
+            'performance_improvement': True,
+            'training_milestones': True,
+            'error_recovery': True,
+            'force_periodic': True  # New trigger for guaranteed periodic saves
+        }
         
-        logger.info("NeuralNetworkManager initialized")
+        # Start background timer for independent model saving
+        self._start_save_timer()
+        
+        # Register with state coordinator for unified state management
+        self._register_state_management()
+        
+        # Load existing state if available
+        self._load_persisted_state()
+        
+        logger.info("NeuralNetworkManager initialized with unified state management and periodic model saving")
+    
+    def _start_save_timer(self):
+        """Start background timer for independent periodic model saving"""
+        try:
+            import threading
+            
+            def save_timer_worker():
+                """Background worker that saves models every 5 minutes regardless of other conditions"""
+                while True:
+                    try:
+                        time.sleep(self.save_interval)  # Wait 5 minutes
+                        
+                        # Force save regardless of experience storage or other conditions
+                        if self.save_triggers['force_periodic']:
+                            logger.info("Background timer triggered - forcing periodic model save")
+                            self._force_save_models()
+                            self.force_save_counter += 1
+                        
+                    except Exception as e:
+                        logger.error(f"Error in background save timer: {e}")
+                        # Continue the timer even if saving fails
+                        continue
+            
+            # Start the timer thread as daemon so it doesn't prevent shutdown
+            save_timer_thread = threading.Thread(target=save_timer_worker, daemon=True)
+            save_timer_thread.start()
+            
+            logger.info(f"Background model save timer started - will save every {self.save_interval} seconds")
+            
+        except Exception as e:
+            logger.error(f"Failed to start background save timer: {e}")
+            # Continue without timer - fallback to manual saves
     
     def _initialize_networks(self):
         """Initialize all neural networks"""
@@ -279,6 +336,12 @@ class NeuralNetworkManager:
                     'timestamp': torch.tensor(self.training_steps)
                 })
                 
+                # Check for periodic model saves (but not too frequently)
+                if self.training_steps % 50 == 0:  # Only check every 50 forward passes
+                    save_result = self.check_and_save_models()
+                    if save_result:
+                        logger.debug(f"Periodic save completed during forward pass at step {self.training_steps}")
+                
                 return combined_outputs
                 
         except Exception as e:
@@ -391,6 +454,24 @@ class NeuralNetworkManager:
             if self.training_steps % 200 == 0:
                 self.target_network.load_state_dict(self.main_network.state_dict())
                 logger.debug("Target network updated")
+            
+            # Multiple independent save triggers (decoupled from experience storage)
+            save_triggered = False
+            
+            # 1. Check periodic saves
+            if self.check_and_save_models():
+                save_triggered = True
+            
+            # 2. Check training milestone triggers
+            if self.save_triggers['training_milestones'] and self.training_steps % 500 == 0:
+                logger.info(f"Training milestone reached: {self.training_steps} steps - forcing save")
+                if self._force_save_models():
+                    save_triggered = True
+            
+            # 3. Emergency save if no saves in a while
+            if not save_triggered and (time.time() - self.last_save_time) > (self.save_interval * 1.5):
+                logger.warning(f"Emergency save triggered - no saves for {time.time() - self.last_save_time:.0f} seconds")
+                self._force_save_models()
             
             return {k: float(v) for k, v in loss_breakdown.items()}
             
@@ -670,7 +751,7 @@ class NeuralNetworkManager:
             )
     
     def save_networks(self, filepath: str):
-        """Save all networks to file"""
+        """Save all networks to file using PyTorch's native serialization"""
         try:
             import os
             
@@ -679,6 +760,12 @@ class NeuralNetworkManager:
             if dir_path and not os.path.exists(dir_path):
                 os.makedirs(dir_path, exist_ok=True)
             
+            # Validate that networks are in the correct state
+            if not hasattr(self, 'main_network') or self.main_network is None:
+                logger.error("Main network not initialized, cannot save")
+                return
+            
+            # Create checkpoint with proper tensor preservation
             checkpoint = {
                 'main_network_state': self.main_network.state_dict(),
                 'target_network_state': self.target_network.state_dict(),
@@ -686,44 +773,116 @@ class NeuralNetworkManager:
                 'few_shot_learner_state': self.few_shot_learner.state_dict(),
                 'optimizer_state': self.unified_optimizer.state_dict(),
                 'scheduler_state': self.scheduler.state_dict(),
-                'importance_weights': self.importance_weights,
-                'training_steps': self.training_steps,
-                'evolution_stats': self.evolution_stats,
+                'importance_weights': self.importance_weights.tolist() if hasattr(self.importance_weights, 'tolist') else self.importance_weights,
+                'training_steps': int(self.training_steps),
+                'evolution_stats': dict(self.evolution_stats),
                 'config': {
-                    'input_size': self.config.input_size,
-                    'feature_dim': self.config.feature_dim,
-                    'learning_rate': self.config.learning_rate,
-                    'weight_decay': self.config.weight_decay
-                }
+                    'input_size': int(self.config.input_size),
+                    'feature_dim': int(self.config.feature_dim),
+                    'learning_rate': float(self.config.learning_rate),
+                    'weight_decay': float(self.config.weight_decay)
+                },
+                'version': '1.0',
+                'pytorch_version': torch.__version__
             }
             
+            # Save using PyTorch's native serialization (bypasses unified serialization)
             torch.save(checkpoint, filepath)
-            logger.info(f"Networks saved to {filepath}")
+            
+            # Verify the save worked by checking file size
+            if os.path.exists(filepath):
+                file_size = os.path.getsize(filepath)
+                logger.info(f"Networks saved to {filepath} ({file_size:,} bytes)")
+            else:
+                logger.error(f"Save verification failed - file {filepath} not found")
             
         except Exception as e:
             logger.error(f"Error saving networks: {e}")
+            import traceback
+            logger.error(f"Save traceback: {traceback.format_exc()}")
     
     def load_networks(self, filepath: str) -> bool:
         """
-        Load networks from file
+        Load networks from file with enhanced corruption detection and recovery
         
         Returns:
             True if loading was successful
         """
         try:
+            logger.info(f"Loading neural networks from {filepath}")
+            
             # Handle PyTorch version compatibility
             try:
                 checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
-            except Exception:
-                checkpoint = torch.load(filepath, map_location=self.device)
+            except Exception as load_error:
+                logger.warning(f"Failed to load with weights_only=False, trying compatibility mode: {load_error}")
+                try:
+                    checkpoint = torch.load(filepath, map_location=self.device)
+                except Exception as compat_error:
+                    logger.error(f"Failed to load checkpoint in compatibility mode: {compat_error}")
+                    return False
+            
+            # Validate checkpoint structure
+            if not isinstance(checkpoint, dict):
+                logger.error(f"Invalid checkpoint format: expected dict, got {type(checkpoint)}")
+                return False
+            
+            # Check for required network states
+            required_states = ['main_network_state', 'target_network_state', 'feature_learner_state']
+            missing_states = [state for state in required_states if state not in checkpoint]
+            if missing_states:
+                logger.error(f"Missing network states in checkpoint: {missing_states}")
+                return False
+            
+            # Validate that network states are proper state_dicts (not corrupted to dicts)
+            network_validation_errors = []
+            for state_name in required_states:
+                state_dict = checkpoint[state_name]
+                if not isinstance(state_dict, dict):
+                    network_validation_errors.append(f"{state_name}: not a dict ({type(state_dict)})")
+                    continue
+                
+                # Check for tensor corruption: validate that values are tensors, not dicts
+                for param_name, param_value in state_dict.items():
+                    if isinstance(param_value, dict):
+                        network_validation_errors.append(f"{state_name}.{param_name}: corrupted tensor (saved as dict)")
+                    elif not torch.is_tensor(param_value):
+                        network_validation_errors.append(f"{state_name}.{param_name}: not a tensor ({type(param_value)})")
+            
+            if network_validation_errors:
+                logger.error("Detected corrupted network states:")
+                for error in network_validation_errors[:10]:  # Show first 10 errors
+                    logger.error(f"  - {error}")
+                if len(network_validation_errors) > 10:
+                    logger.error(f"  ... and {len(network_validation_errors) - 10} more errors")
+                
+                # Backup corrupted file for analysis
+                try:
+                    import shutil
+                    import os
+                    import time
+                    backup_path = filepath + '.corrupted.' + str(int(time.time()))
+                    shutil.move(filepath, backup_path)
+                    logger.warning(f"Corrupted checkpoint moved to: {backup_path}")
+                except Exception as backup_error:
+                    logger.warning(f"Failed to backup corrupted checkpoint: {backup_error}")
+                
+                logger.error("Starting with fresh neural networks due to corruption")
+                return False
             
             # Load network states with architecture compatibility check
             try:
+                logger.debug("Loading main network state...")
                 self.main_network.load_state_dict(checkpoint['main_network_state'])
+                
+                logger.debug("Loading target network state...")
                 self.target_network.load_state_dict(checkpoint['target_network_state'])
+                
+                logger.debug("Loading feature learner state...")
                 self.feature_learner.load_state_dict(checkpoint['feature_learner_state'])
                 
                 if 'few_shot_learner_state' in checkpoint:
+                    logger.debug("Loading few-shot learner state...")
                     self.few_shot_learner.load_state_dict(checkpoint['few_shot_learner_state'])
                 
                 # Ensure all networks use float32 after loading
@@ -733,32 +892,103 @@ class NeuralNetworkManager:
                 if hasattr(self, 'few_shot_learner'):
                     self.few_shot_learner.float()
                     
+                logger.debug("Network states loaded successfully")
+                    
             except Exception as arch_error:
-                logger.warning(f"Architecture mismatch detected: {arch_error}")
-                logger.warning("Starting with fresh neural networks")
+                logger.error(f"Architecture/compatibility error during network loading: {arch_error}")
+                import traceback
+                logger.error(f"Full traceback: {traceback.format_exc()}")
+                logger.warning("Starting with fresh neural networks due to architecture mismatch")
                 return False
             
-            # Load optimizer and scheduler states
-            self.unified_optimizer.load_state_dict(checkpoint['optimizer_state'])
-            
-            if 'scheduler_state' in checkpoint:
-                self.scheduler.load_state_dict(checkpoint['scheduler_state'])
-            
-            # Load importance weights and statistics
-            if 'importance_weights' in checkpoint:
-                self.importance_weights = checkpoint['importance_weights']
+            # Load optimizer and scheduler states with validation
+            try:
+                if 'optimizer_state' in checkpoint:
+                    logger.debug("Loading optimizer state...")
+                    optimizer_state = checkpoint['optimizer_state']
+                    if isinstance(optimizer_state, dict):
+                        self.unified_optimizer.load_state_dict(optimizer_state)
+                    else:
+                        logger.warning(f"Invalid optimizer state type: {type(optimizer_state)}")
                 
-            self.training_steps = checkpoint.get('training_steps', 0)
-            self.evolution_stats = checkpoint.get('evolution_stats', {'generations': 0, 'improvements': 0})
+                if 'scheduler_state' in checkpoint:
+                    logger.debug("Loading scheduler state...")
+                    scheduler_state = checkpoint['scheduler_state']
+                    if isinstance(scheduler_state, dict):
+                        self.scheduler.load_state_dict(scheduler_state)
+                    else:
+                        logger.warning(f"Invalid scheduler state type: {type(scheduler_state)}")
+                        
+            except Exception as opt_error:
+                logger.warning(f"Failed to load optimizer/scheduler state (continuing with fresh): {opt_error}")
+                # Not a critical error - networks are more important than optimizer state
             
+            # Load importance weights and statistics with validation
+            try:
+                if 'importance_weights' in checkpoint:
+                    weights = checkpoint['importance_weights']
+                    if isinstance(weights, (list, tuple)):
+                        self.importance_weights = weights
+                    elif torch.is_tensor(weights):
+                        self.importance_weights = weights.tolist()
+                    else:
+                        logger.warning(f"Invalid importance_weights type: {type(weights)}")
+                        
+                self.training_steps = int(checkpoint.get('training_steps', 0))
+                
+                evolution_stats = checkpoint.get('evolution_stats', {'generations': 0, 'improvements': 0})
+                if isinstance(evolution_stats, dict):
+                    self.evolution_stats = evolution_stats
+                else:
+                    logger.warning(f"Invalid evolution_stats type: {type(evolution_stats)}")
+                    self.evolution_stats = {'generations': 0, 'improvements': 0}
+                    
+            except Exception as stats_error:
+                logger.warning(f"Failed to load statistics (using defaults): {stats_error}")
+                self.training_steps = 0
+                self.evolution_stats = {'generations': 0, 'improvements': 0}
+            
+            # Validate networks are working after loading
+            try:
+                logger.debug("Validating loaded networks...")
+                test_input = torch.zeros(1, self.config.input_size, dtype=torch.float32, device=self.device)
+                with torch.no_grad():
+                    main_output = self.main_network(test_input)
+                    target_output = self.target_network(test_input)
+                    feature_output = self.feature_learner(test_input)
+                    
+                # Validate output tensors
+                if not torch.is_tensor(main_output):
+                    raise ValueError(f"Main network returned non-tensor: {type(main_output)}")
+                if not torch.is_tensor(target_output):  
+                    raise ValueError(f"Target network returned non-tensor: {type(target_output)}")
+                if not torch.is_tensor(feature_output):
+                    raise ValueError(f"Feature learner returned non-tensor: {type(feature_output)}")
+                    
+                logger.debug("Network validation successful")
+                    
+            except Exception as validation_error:
+                logger.error(f"Loaded networks failed validation: {validation_error}")
+                logger.error("Starting with fresh neural networks due to validation failure")
+                return False
+            
+            # Log checkpoint information
+            version = checkpoint.get('version', 'unknown')
+            pytorch_version = checkpoint.get('pytorch_version', 'unknown')
             logger.info(f"Networks loaded successfully from {filepath}")
+            logger.info(f"  - Version: {version}, PyTorch: {pytorch_version}")
+            logger.info(f"  - Training steps: {self.training_steps}")
+            logger.info(f"  - Evolution stats: {self.evolution_stats}")
+            
             return True
             
         except FileNotFoundError:
             logger.info("No existing network checkpoint found, starting fresh")
             return False
         except Exception as e:
-            logger.error(f"Error loading networks: {e}")
+            logger.error(f"Unexpected error loading networks: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             return False
     
     def get_stats(self) -> Dict[str, Any]:
@@ -784,6 +1014,148 @@ class NeuralNetworkManager:
         except Exception as e:
             logger.error(f"Error getting stats: {e}")
             return {'error': str(e)}
+    
+    def check_and_save_models(self) -> bool:
+        """
+        Check if models should be saved based on timer and save if needed.
+        This method provides multiple fallback mechanisms to ensure models are saved.
+        """
+        try:
+            current_time = time.time()
+            time_since_last_save = current_time - self.last_save_time
+            
+            # Primary check: periodic timer
+            should_save_periodic = time_since_last_save >= self.save_interval
+            
+            # Fallback check: if too much time has passed without any saves (emergency save)
+            should_save_emergency = time_since_last_save >= (self.save_interval * 2)  # 10 minutes
+            
+            # Force save trigger
+            should_save_force = self.force_save_counter > 0 and (time_since_last_save >= 60)  # At least 1 minute between saves
+            
+            if should_save_periodic or should_save_emergency or should_save_force:
+                # Save models with appropriate messaging
+                import os
+                models_dir = 'models'
+                os.makedirs(models_dir, exist_ok=True)
+                model_path = os.path.join(models_dir, 'neural_networks.pt')
+                
+                # Determine save reason
+                save_reason = "periodic"
+                if should_save_emergency:
+                    save_reason = "emergency"
+                elif should_save_force:
+                    save_reason = "force_triggered"
+                
+                self.save_networks(model_path)
+                self.last_save_time = current_time
+                
+                # Also save a backup with timestamp for critical saves
+                if should_save_emergency or should_save_force:
+                    timestamp = int(current_time)
+                    backup_path = os.path.join(models_dir, f'neural_networks_backup_{timestamp}.pt')
+                    self.save_networks(backup_path)
+                    logger.info(f"Models {save_reason} saved after {time_since_last_save:.0f} seconds with backup: {backup_path}")
+                else:
+                    logger.info(f"Models {save_reason} saved after {time_since_last_save:.0f} seconds")
+                
+                return True
+            else:
+                logger.debug(f"Models save check: {time_since_last_save:.0f}s elapsed, {self.save_interval - time_since_last_save:.0f}s remaining")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error in check_and_save_models: {e}")
+            # Emergency save attempt on error
+            try:
+                logger.info("Attempting emergency save due to check_and_save_models error")
+                self._force_save_models()
+                return True
+            except Exception as save_error:
+                logger.error(f"Emergency save also failed: {save_error}")
+                return False
+    
+    def record_performance(self, reward: float):
+        """Record performance metric for model saving trigger"""
+        try:
+            # Convert reward to performance metric (0-1 range)
+            performance = max(0.0, min(1.0, (reward + 1.0) / 2.0))  # Map [-1,1] to [0,1]
+            self.performance_history.append(performance)
+            self.last_performance_time = time.time()
+            
+            # Check for performance-based save triggers
+            should_save = self._check_save_triggers(performance, reward)
+            
+            if should_save:
+                logger.info(f"Performance-based save triggered: performance={performance:.3f}, reward={reward:.3f}")
+                self._force_save_models()
+            else:
+                # Always check periodic saves when recording performance
+                self.check_and_save_models()
+            
+            logger.debug(f"Performance recorded: {performance:.3f} (from reward: {reward:.3f})")
+            
+        except Exception as e:
+            logger.error(f"Error recording performance: {e}")
+            # Try to save models as error recovery
+            try:
+                if self.save_triggers['error_recovery']:
+                    logger.info("Attempting error recovery save after performance recording failure")
+                    self._force_save_models()
+            except Exception as save_error:
+                logger.error(f"Error recovery save also failed: {save_error}")
+    
+    def _check_save_triggers(self, performance: float, reward: float) -> bool:
+        """Check if any save triggers are activated"""
+        try:
+            # Performance improvement trigger
+            if self.save_triggers['performance_improvement'] and len(self.performance_history) >= 2:
+                recent_avg = sum(list(self.performance_history)[-5:]) / min(5, len(self.performance_history))
+                if performance > recent_avg + 0.1:  # Significant improvement
+                    logger.debug("Performance improvement trigger activated")
+                    return True
+            
+            # Training milestone trigger
+            if self.save_triggers['training_milestones'] and self.training_steps > 0:
+                if self.training_steps % 500 == 0:  # Every 500 training steps
+                    logger.debug("Training milestone trigger activated")
+                    return True
+            
+            # Exceptional performance trigger
+            if performance > 0.8 or abs(reward) > 0.5:
+                logger.debug("Exceptional performance trigger activated")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error checking save triggers: {e}")
+            return False
+    
+    def _force_save_models(self) -> bool:
+        """Force immediate model save regardless of timer"""
+        try:
+            import os
+            models_dir = 'models'
+            os.makedirs(models_dir, exist_ok=True)
+            
+            # Save with timestamp for forced saves
+            timestamp = int(time.time())
+            model_path = os.path.join(models_dir, f'neural_networks_forced_{timestamp}.pt')
+            
+            self.save_networks(model_path)
+            
+            # Also update the main model file
+            main_model_path = os.path.join(models_dir, 'neural_networks.pt')
+            self.save_networks(main_model_path)
+            
+            self.last_save_time = time.time()
+            logger.info(f"Models force-saved to {model_path} and {main_model_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error in force save models: {e}")
+            return False
     
     def get_evolution_stats(self) -> Dict[str, Any]:
         """Get network evolution statistics"""
@@ -907,3 +1279,216 @@ class NeuralNetworkManager:
         # Lower variance = higher stability
         stability = 1.0 / (1.0 + variance * 10)
         return max(0.0, min(1.0, stability))
+    
+    def _register_state_management(self):
+        """Register with state coordinator for unified state management"""
+        try:
+            register_state_component(
+                name="neural_network_manager",
+                save_method=self._save_state_data,
+                load_method=self._load_state_data,
+                priority=85  # High priority for neural network state
+            )
+            logger.debug("NeuralNetworkManager registered with state coordinator")
+        except Exception as e:
+            logger.error(f"Failed to register neural network manager state management: {e}")
+    
+    @handle_storage_operation("neural_network_manager", "save_state")
+    def _save_state_data(self) -> Dict[str, Any]:
+        """
+        Save neural network manager state data for state coordinator.
+        
+        Returns:
+            Dictionary containing all neural network manager state data
+        """
+        try:
+            # Prepare state data WITHOUT neural network states (save separately to avoid serialization issues)
+            state_data = {
+                'training_steps': self.training_steps,
+                'last_evolution_step': self.last_evolution_step,
+                'evolution_stats': dict(self.evolution_stats),
+                'performance_history': list(self.performance_history),
+                'training_times': list(self.training_times),
+                'memory_usage_history': list(self.memory_usage_history),
+                'config': {
+                    'input_size': self.config.input_size,
+                    'feature_dim': self.config.feature_dim,
+                    'learning_rate': self.config.learning_rate,
+                    'enable_few_shot': self.config.enable_few_shot,
+                    'memory_efficient': self.config.memory_efficient,
+                    'max_memory_gb': self.config.max_memory_gb
+                },
+                'saved_at': time.time(),
+                'version': "2.1"  # Updated version - no longer includes network states due to serialization issues
+            }
+            
+            # Save neural network weights separately using PyTorch's native serialization
+            # This avoids the unified serialization system converting tensors to dictionaries
+            try:
+                import os
+                models_dir = 'models'
+                os.makedirs(models_dir, exist_ok=True)
+                model_path = os.path.join(models_dir, 'neural_networks.pt')
+                
+                # Force save networks using PyTorch serialization during state save
+                self.save_networks(model_path)
+                state_data['networks_saved_to'] = model_path
+                logger.debug("Neural network weights saved separately using PyTorch serialization")
+                
+            except Exception as e:
+                logger.warning(f"Error saving network states to separate file: {e}")
+                # Continue without network weights if they can't be saved
+            
+            # Validate data integrity before saving
+            validation_report = validate_component_data(
+                component="neural_network_manager",
+                data=state_data,
+                data_type="neural_state",
+                level=ValidationLevel.STANDARD
+            )
+            
+            if not validation_report.is_valid:
+                logger.warning(f"Neural network manager state validation issues: {len(validation_report.issues)} issues found")
+                for issue in validation_report.issues:
+                    if issue.severity == "error":
+                        logger.error(f"Neural network manager state error: {issue.message}")
+            
+            logger.debug("Neural network manager state data prepared for saving")
+            return state_data
+            
+        except Exception as e:
+            logger.error(f"Error preparing neural network manager state data: {e}")
+            raise
+    
+    @handle_storage_operation("neural_network_manager", "load_state")
+    def _load_state_data(self, state_data: Dict[str, Any]):
+        """
+        Load neural network manager state data from state coordinator.
+        
+        Args:
+            state_data: Dictionary containing neural network manager state data
+        """
+        try:
+            # Validate loaded data
+            validation_report = validate_component_data(
+                component="neural_network_manager",
+                data=state_data,
+                data_type="neural_state",
+                level=ValidationLevel.STANDARD
+            )
+            
+            if validation_report.result.value == "corrupted":
+                logger.error("Neural network manager state data is corrupted, cannot load")
+                return
+            
+            if not validation_report.is_valid:
+                logger.warning(f"Neural network manager state validation issues during load: {len(validation_report.issues)} issues")
+            
+            # Load basic state
+            if 'training_steps' in state_data:
+                self.training_steps = state_data['training_steps']
+            if 'last_evolution_step' in state_data:
+                self.last_evolution_step = state_data['last_evolution_step']
+            if 'evolution_stats' in state_data and isinstance(state_data['evolution_stats'], dict):
+                self.evolution_stats.update(state_data['evolution_stats'])
+            
+            # Load performance history
+            if 'performance_history' in state_data and isinstance(state_data['performance_history'], list):
+                self.performance_history = deque(state_data['performance_history'], maxlen=200)
+                logger.debug(f"Loaded {len(self.performance_history)} performance history entries")
+            
+            if 'training_times' in state_data and isinstance(state_data['training_times'], list):
+                self.training_times = deque(state_data['training_times'], maxlen=100)
+                logger.debug(f"Loaded {len(self.training_times)} training time entries")
+            
+            if 'memory_usage_history' in state_data and isinstance(state_data['memory_usage_history'], list):
+                self.memory_usage_history = deque(state_data['memory_usage_history'], maxlen=100)
+                logger.debug(f"Loaded {len(self.memory_usage_history)} memory usage entries")
+            
+            # Load neural network weights from separate file (using PyTorch serialization)
+            try:
+                # Check if networks were saved to a separate file (version 2.1+)
+                if 'networks_saved_to' in state_data:
+                    model_path = state_data['networks_saved_to']
+                    logger.debug(f"Loading neural networks from separate file: {model_path}")
+                    if self.load_networks(model_path):
+                        logger.debug("Neural network weights loaded successfully from separate file")
+                    else:
+                        logger.warning("Failed to load neural networks from separate file")
+                
+                # Fallback: try to load from embedded state (older versions)
+                elif any(key.endswith('_state') for key in state_data.keys()):
+                    logger.warning("Detected embedded network states (old format) - attempting to load with corruption handling")
+                    
+                    if 'main_network_state' in state_data and hasattr(self, 'main_network') and self.main_network is not None:
+                        main_state = state_data['main_network_state']
+                        if isinstance(main_state, dict) and not any(isinstance(v, dict) for v in main_state.values()):
+                            self.main_network.load_state_dict(main_state)
+                            logger.debug("Loaded main network state (legacy)")
+                        else:
+                            logger.warning("Main network state appears corrupted (contains dict values instead of tensors)")
+                    
+                    if 'target_network_state' in state_data and hasattr(self, 'target_network') and self.target_network is not None:
+                        target_state = state_data['target_network_state']
+                        if isinstance(target_state, dict) and not any(isinstance(v, dict) for v in target_state.values()):
+                            self.target_network.load_state_dict(target_state)
+                            logger.debug("Loaded target network state (legacy)")
+                        else:
+                            logger.warning("Target network state appears corrupted (contains dict values instead of tensors)")
+                    
+                    if 'feature_learner_state' in state_data and hasattr(self, 'feature_learner') and self.feature_learner is not None:
+                        feature_state = state_data['feature_learner_state']
+                        if isinstance(feature_state, dict) and not any(isinstance(v, dict) for v in feature_state.values()):
+                            self.feature_learner.load_state_dict(feature_state)
+                            logger.debug("Loaded feature learner state (legacy)")
+                        else:
+                            logger.warning("Feature learner state appears corrupted (contains dict values instead of tensors)")
+                
+                else:
+                    logger.debug("No neural network states found in state data")
+                    
+            except Exception as e:
+                logger.warning(f"Error loading network states: {e}")
+                # Continue without loading network weights if they can't be loaded
+            
+            logger.info("Neural network manager state loaded successfully from state coordinator")
+            
+        except Exception as e:
+            logger.error(f"Error loading neural network manager state data: {e}")
+            raise
+    
+    def _load_persisted_state(self):
+        """Load persisted state if available"""
+        try:
+            # Try to load from unified serialization system
+            state_data = deserialize_component_state("neural_network_manager")
+            if state_data:
+                self._load_state_data(state_data)
+                logger.info("Neural network manager state loaded from persistent storage")
+        except Exception as e:
+            logger.debug(f"No existing neural network manager state found or failed to load: {e}")
+    
+    def disable_background_saves(self):
+        """Disable background periodic saves if needed"""
+        self.save_triggers['force_periodic'] = False
+        logger.info("Background periodic saves disabled")
+    
+    def enable_background_saves(self):
+        """Re-enable background periodic saves"""
+        self.save_triggers['force_periodic'] = True
+        logger.info("Background periodic saves enabled")
+    
+    def get_save_status(self) -> Dict[str, Any]:
+        """Get current save status and statistics"""
+        current_time = time.time()
+        time_since_last_save = current_time - self.last_save_time
+        
+        return {
+            'last_save_time': self.last_save_time,
+            'time_since_last_save_seconds': time_since_last_save,
+            'save_interval_seconds': self.save_interval,
+            'time_until_next_save_seconds': max(0, self.save_interval - time_since_last_save),
+            'force_save_counter': self.force_save_counter,
+            'save_triggers': dict(self.save_triggers),
+            'next_emergency_save_in_seconds': max(0, (self.save_interval * 2) - time_since_last_save)
+        }

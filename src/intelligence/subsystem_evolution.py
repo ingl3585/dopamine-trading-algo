@@ -44,6 +44,74 @@ except ImportError:
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)  # Show progress updates via log messages
 
+# Utility functions for safe numeric operations
+def safe_numeric_extraction(obj, default=0.0):
+    """Safely extract numeric value from any object, especially Trade objects"""
+    try:
+        # Handle Trade objects or objects with PnL-like attributes
+        if hasattr(obj, 'pnl'):
+            pnl_value = getattr(obj, 'pnl', default)
+            if hasattr(pnl_value, 'pnl'):  # Nested Trade object
+                return float(pnl_value.pnl)
+            return float(pnl_value)
+        elif hasattr(obj, 'profit_loss'):
+            return float(getattr(obj, 'profit_loss', default))
+        elif hasattr(obj, 'realized_pnl'):
+            return float(getattr(obj, 'realized_pnl', default))
+        elif hasattr(obj, 'value'):
+            return float(getattr(obj, 'value', default))
+        elif isinstance(obj, (int, float)):
+            if np.isnan(obj) or np.isinf(obj):
+                logger.warning(f"Invalid numeric value: {obj}, using default: {default}")
+                return default
+            return float(obj)
+        else:
+            # Try direct conversion
+            try:
+                numeric_val = float(obj)
+                if np.isnan(numeric_val) or np.isinf(numeric_val):
+                    return default
+                return numeric_val
+            except (ValueError, TypeError):
+                logger.debug(f"Cannot extract numeric value from {type(obj)}: {obj}, using default: {default}")
+                return default
+    except Exception as e:
+        logger.error(f"Error in safe numeric extraction: {e}, using default: {default}")
+        return default
+
+def safe_arithmetic_operation(operation_name, *args, default=0.0):
+    """Safely perform arithmetic operations with error handling"""
+    try:
+        # Extract numeric values from all arguments
+        numeric_args = [safe_numeric_extraction(arg, 0.0) for arg in args]
+        
+        if operation_name == 'multiply':
+            result = 1.0
+            for val in numeric_args:
+                result *= val
+            return result
+        elif operation_name == 'add':
+            return sum(numeric_args)
+        elif operation_name == 'subtract' and len(numeric_args) >= 2:
+            result = numeric_args[0]
+            for val in numeric_args[1:]:
+                result -= val
+            return result
+        elif operation_name == 'divide' and len(numeric_args) >= 2:
+            if numeric_args[1] != 0:
+                return numeric_args[0] / numeric_args[1]
+            else:
+                logger.warning("Division by zero prevented")
+                return default
+        elif operation_name == 'abs' and len(numeric_args) >= 1:
+            return abs(numeric_args[0])
+        else:
+            logger.warning(f"Unknown operation: {operation_name}")
+            return default
+    except Exception as e:
+        logger.error(f"Error in safe arithmetic operation {operation_name}: {e}")
+        return default
+
 # Simple progress tracking - no external dependencies
 class SimpleProgressTracker:
     def __init__(self):

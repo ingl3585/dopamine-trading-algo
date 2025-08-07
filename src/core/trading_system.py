@@ -91,7 +91,6 @@ class TradingSystem:
         self.event_handlers = {}
         
         # System state tracking
-        self.last_save = time.time()
         self.last_account_update = time.time()
         self.ready_for_trading = False
         self.total_decisions = 0
@@ -227,8 +226,8 @@ class TradingSystem:
             # Register portfolio state management
             register_state_component(
                 'portfolio',
-                lambda: self.portfolio.__dict__.copy(),
-                lambda state: setattr(self.portfolio, '__dict__', state),
+                lambda: self.portfolio.get_persistent_state(),
+                lambda state: self.portfolio.load_persistent_state(state),
                 priority=10
             )
             
@@ -293,11 +292,8 @@ class TradingSystem:
             while self.running and not stop_event.is_set():
                 current_time = time.time()
                 
-                # Check auto-save and save state every 5 minutes
+                # Check auto-save every 5 minutes (state coordinator handles the timing)
                 state_coordinator.check_auto_save()
-                if current_time - self.last_save > 300:
-                    self._save_coordinated_state()
-                    self.last_save = current_time
                 
                 # Wait with interruptible sleep
                 stop_event.wait(timeout=60)  # Check every minute instead of every 0.1s
@@ -419,15 +415,10 @@ class TradingSystem:
             
             # Additional confidence monitoring for problematic values
             if decision.confidence < 0.3:
-                recent_rejections = getattr(self.agent, 'recent_position_rejections', 0)
                 recovery_factor = getattr(self.agent, 'confidence_recovery_factor', 1.0)
                 logger.warning(f"LOW CONFIDENCE DETECTED: {decision.confidence:.3f} "
-                              f"(Recent rejections: {recent_rejections}, Recovery factor: {recovery_factor:.2f})")
-                
-                # Log confidence recovery status
-                if hasattr(self.agent, 'last_position_rejection_time') and self.agent.last_position_rejection_time > 0:
-                    time_since_rejection = time.time() - self.agent.last_position_rejection_time
-                    logger.info(f"Time since last rejection: {time_since_rejection/60:.1f} minutes")
+                              f"(Recovery factor: {recovery_factor:.2f})")
+                # Position rejection tracking removed
             
             # LLM commentary now handled by 15-minute bar triggers only
             # (Per-decision commentary disabled to avoid duplicate messages)

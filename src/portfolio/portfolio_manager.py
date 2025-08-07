@@ -1,20 +1,30 @@
 """
 Portfolio Manager - Portfolio tracking and optimization
+
+Enhanced with unified state management, error handling, and data integrity validation.
+Follows clean architecture principles with proper separation of concerns.
 """
 
 import numpy as np
 import logging
 import time
-from typing import Dict, List
+from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 from collections import deque
 from src.portfolio.performance_analyzer import PerformanceAnalyzer
+from src.core.state_coordinator import register_state_component
+from src.core.unified_serialization import unified_serializer, serialize_component_state, deserialize_component_state
+from src.core.storage_error_handler import storage_error_handler, handle_storage_operation
+from src.core.data_integrity_validator import data_integrity_validator, validate_component_data, ValidationLevel
 
 logger = logging.getLogger(__name__)
 
 class PortfolioManager:
     """
-    Portfolio management service for tracking and optimizing positions
+    Portfolio management service for tracking and optimizing positions.
+    
+    Enhanced with unified state management, data integrity validation,
+    and comprehensive error handling following clean architecture principles.
     """
     
     def __init__(self, config):
@@ -24,6 +34,17 @@ class PortfolioManager:
         self.performance_history = deque(maxlen=500)
         self.daily_returns = deque(maxlen=252)  # One year of daily returns
         self.performance_analyzer = PerformanceAnalyzer()
+        
+        # Initialize with empty pending orders dict
+        self.pending_orders = {}
+        
+        # Register with state coordinator for unified state management
+        self._register_state_management()
+        
+        # Load existing state if available
+        self._load_persisted_state()
+        
+        logger.info("PortfolioManager initialized with unified state management")
         
     def track_positions(self, positions_data: Dict) -> Dict:
         """Track and analyze current positions"""
@@ -613,53 +634,198 @@ class PortfolioManager:
             logger.error(f"Error completing trade: {e}")
             return None
     
-    def save_state(self, filepath: str):
-        """Save portfolio state to file"""
+    def _register_state_management(self):
+        """Register with state coordinator for unified state management"""
         try:
-            import json
-            import os
-            
-            # Prepare data for saving
+            register_state_component(
+                name="portfolio_manager",
+                save_method=self._save_state_data,
+                load_method=self._load_state_data,
+                priority=80  # High priority for portfolio data
+            )
+            logger.debug("PortfolioManager registered with state coordinator")
+        except Exception as e:
+            logger.error(f"Failed to register portfolio state management: {e}")
+    
+    @handle_storage_operation("portfolio_manager", "save_state")
+    def _save_state_data(self) -> Dict[str, Any]:
+        """
+        Save portfolio state data for state coordinator.
+        
+        Returns:
+            Dictionary containing all portfolio state data
+        """
+        try:
+            # Prepare state data
             state_data = {
-                'positions': self.positions,
-                'config': getattr(self.config, '__dict__', {}),
-                'pending_orders': getattr(self, 'pending_orders', {}),
-                'saved_at': datetime.now().isoformat()
+                'positions': dict(self.positions),  # Convert from potentially complex dict
+                'trade_history': list(self.trade_history),  # Convert deque to list
+                'performance_history': list(self.performance_history),
+                'daily_returns': list(self.daily_returns),
+                'pending_orders': dict(self.pending_orders),
+                'config': getattr(self.config, '__dict__', self.config),
+                'saved_at': datetime.now().isoformat(),
+                'version': "2.0"  # Updated version for new state format
             }
             
-            # Ensure directory exists
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            # Validate data integrity before saving
+            validation_report = validate_component_data(
+                component="portfolio_manager",
+                data=state_data,
+                data_type="portfolio_state",
+                level=ValidationLevel.STANDARD
+            )
             
-            # Save to file
-            with open(filepath, 'w') as f:
-                json.dump(state_data, f, indent=2, default=str)
+            if not validation_report.is_valid:
+                logger.warning(f"Portfolio state validation issues: {len(validation_report.issues)} issues found")
+                for issue in validation_report.issues:
+                    if issue.severity == "error":
+                        logger.error(f"Portfolio state error: {issue.message}")
             
-            logger.info(f"Portfolio state saved to {filepath}")
+            logger.debug("Portfolio state data prepared for saving")
+            return state_data
             
         except Exception as e:
-            logger.error(f"Error saving portfolio state: {e}")
+            logger.error(f"Error preparing portfolio state data: {e}")
+            raise
     
-    def load_state(self, filepath: str):
-        """Load portfolio state from file"""
+    @handle_storage_operation("portfolio_manager", "load_state")
+    def _load_state_data(self, state_data: Dict[str, Any]):
+        """
+        Load portfolio state data from state coordinator.
+        
+        Args:
+            state_data: Dictionary containing portfolio state data
+        """
         try:
-            import json
+            # Validate loaded data
+            validation_report = validate_component_data(
+                component="portfolio_manager",
+                data=state_data,
+                data_type="portfolio_state",
+                level=ValidationLevel.STANDARD
+            )
             
-            with open(filepath, 'r') as f:
-                state_data = json.load(f)
+            if validation_report.result.value == "corrupted":
+                logger.error("Portfolio state data is corrupted, cannot load")
+                return
             
-            # Restore positions
-            self.positions = state_data.get('positions', {})
+            if not validation_report.is_valid:
+                logger.warning(f"Portfolio state validation issues during load: {len(validation_report.issues)} issues")
             
-            # Restore pending orders if any
-            if 'pending_orders' in state_data:
+            # Load positions with validation
+            if 'positions' in state_data and isinstance(state_data['positions'], dict):
+                self.positions = state_data['positions']
+                logger.debug(f"Loaded {len(self.positions)} positions")
+            
+            # Load trade history
+            if 'trade_history' in state_data and isinstance(state_data['trade_history'], list):
+                self.trade_history = deque(state_data['trade_history'], maxlen=1000)
+                logger.debug(f"Loaded {len(self.trade_history)} trade history entries")
+            
+            # Load performance history
+            if 'performance_history' in state_data and isinstance(state_data['performance_history'], list):
+                self.performance_history = deque(state_data['performance_history'], maxlen=500)
+                logger.debug(f"Loaded {len(self.performance_history)} performance history entries")
+            
+            # Load daily returns
+            if 'daily_returns' in state_data and isinstance(state_data['daily_returns'], list):
+                self.daily_returns = deque(state_data['daily_returns'], maxlen=252)
+                logger.debug(f"Loaded {len(self.daily_returns)} daily returns")
+            
+            # Load pending orders
+            if 'pending_orders' in state_data and isinstance(state_data['pending_orders'], dict):
                 self.pending_orders = state_data['pending_orders']
+                logger.debug(f"Loaded {len(self.pending_orders)} pending orders")
             
-            logger.info(f"Portfolio state loaded from {filepath}")
+            logger.info("Portfolio state loaded successfully from state coordinator")
+            
+        except Exception as e:
+            logger.error(f"Error loading portfolio state data: {e}")
+            raise
+    
+    def _load_persisted_state(self):
+        """Load persisted state if available"""
+        try:
+            # Try to load from unified serialization system
+            state_data = deserialize_component_state("portfolio_manager")
+            if state_data:
+                self._load_state_data(state_data)
+                logger.info("Portfolio state loaded from persistent storage")
+        except Exception as e:
+            logger.debug(f"No existing portfolio state found or failed to load: {e}")
+    
+    @handle_storage_operation("portfolio_manager", "save_state_legacy")
+    def save_state(self, filepath: str):
+        """
+        Save portfolio state to file using unified serialization system.
+        
+        This method provides backward compatibility while using the new
+        unified serialization framework with error handling and validation.
+        """
+        try:
+            # Get current state data
+            state_data = self._save_state_data()
+            
+            # Use unified serializer to save to specific file
+            metadata = unified_serializer.serialize_to_file(
+                data=state_data,
+                filepath=filepath,
+                validate_integrity=True
+            )
+            
+            logger.info(f"Portfolio state saved to {filepath} using unified serialization")
+            logger.debug(f"Saved data size: {metadata.size_bytes} bytes, format: {metadata.format.value}")
+            
+        except Exception as e:
+            logger.error(f"Error saving portfolio state to {filepath}: {e}")
+            # Log error through error handler for tracking
+            storage_error_handler.handle_error(
+                exception=e,
+                component="portfolio_manager",
+                operation="save_state_legacy",
+                context={"filepath": str(filepath)}
+            )
+            raise
+    
+    @handle_storage_operation("portfolio_manager", "load_state_legacy")
+    def load_state(self, filepath: str):
+        """
+        Load portfolio state from file using unified serialization system.
+        
+        This method provides backward compatibility while using the new
+        unified serialization framework with error handling and validation.
+        """
+        try:
+            # Use unified serializer to load from specific file
+            state_data = unified_serializer.deserialize_from_file(
+                filepath=filepath,
+                validate_integrity=True
+            )
+            
+            if state_data:
+                self._load_state_data(state_data)
+                logger.info(f"Portfolio state loaded from {filepath} using unified serialization")
+            else:
+                logger.warning(f"No data found in {filepath}")
             
         except FileNotFoundError:
             logger.info("No existing portfolio state found, starting fresh")
         except Exception as e:
-            logger.error(f"Error loading portfolio state: {e}")
+            logger.error(f"Error loading portfolio state from {filepath}: {e}")
+            # Log error through error handler for tracking
+            error_info = storage_error_handler.handle_error(
+                exception=e,
+                component="portfolio_manager",
+                operation="load_state_legacy",
+                context={"filepath": str(filepath)}
+            )
+            
+            # Don't re-raise for file not found or minor errors
+            if error_info.severity.value in ["low", "medium"]:
+                logger.warning("Continuing with empty portfolio state due to load error")
+            else:
+                raise
     
     def get_account_performance(self) -> Dict:
         """Get account performance metrics"""

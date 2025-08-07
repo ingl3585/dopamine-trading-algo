@@ -44,6 +44,7 @@ class TradingDecisionContext:
     market_conditions: Dict[str, Any]     # Current market state
     intelligence_signals: List[IntelligenceSignal]  # Contributing signals
     risk_factors: Dict[str, float]        # Risk assessment factors
+    primary_tool: str = 'unknown'        # Tool that generated the decision
 
 
 @dataclass
@@ -394,9 +395,9 @@ class AgentDopamineManager(IntelligenceConsumer):
                 }
             
             return {
-                'dopamine_state': current_response.state.value,
+                'dopamine_state': current_response.state,
                 'dopamine_signal': current_response.signal,
-                'psychological_phase': current_response.phase.value,
+                'psychological_phase': current_response.phase,
                 'tolerance_level': current_response.tolerance_level,
                 'addiction_risk': current_response.addiction_risk,
                 'withdrawal_intensity': current_response.withdrawal_intensity,
@@ -614,9 +615,9 @@ class AgentDopamineManager(IntelligenceConsumer):
         
         if self.integration_stats['decisions_processed'] % 10 == 0:  # Log every 10th decision
             logger.info(f"Psychology adjustments: confidence={final_confidence:.3f} "
-                       f"(Δ{final_confidence - decision_context.confidence:+.3f}), "
+                       f"(change{final_confidence - decision_context.confidence:+.3f}), "
                        f"size={final_position_size:.3f} "
-                       f"(Δ{final_position_size - decision_context.position_size:+.3f})")
+                       f"(change{final_position_size - decision_context.position_size:+.3f})")
         
         return DopamineIntegratedDecision(
             base_decision=decision_context,

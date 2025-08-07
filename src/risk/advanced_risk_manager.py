@@ -310,12 +310,12 @@ class AdvancedRiskManager:
         
         account_balance = getattr(market_data, 'account_balance', 10000)
         
-        # 1. Learned drawdown protection (not hardcoded)
-        learned_drawdown_tolerance = self.meta_learner.get_parameter('loss_tolerance_factor')
+        # 1. Learned drawdown protection based on position sizing parameters
+        position_size_factor = self.meta_learner.get_parameter('position_size_factor', 0.1)
         current_drawdown = self._calculate_current_drawdown(market_data)
         
-        # Dynamic emergency threshold based on learning
-        dynamic_emergency_threshold = learned_drawdown_tolerance * 2.0  # 2x daily loss tolerance
+        # Dynamic emergency threshold based on position sizing (removing daily loss dependency)
+        dynamic_emergency_threshold = position_size_factor * 0.5  # Conservative emergency threshold
         
         if current_drawdown > dynamic_emergency_threshold:
             return False, 0, f"Learned emergency stop: Drawdown {current_drawdown:.2%} > {dynamic_emergency_threshold:.2%}"

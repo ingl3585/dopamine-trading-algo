@@ -92,16 +92,14 @@ class TradingAgentV2:
         self.last_adaptation_reason = 'none'
         self.last_reward_error = 0.0
         
-        # Rejection tracking attributes (initialized lazily in learn_from_rejection)
-        self.recent_position_rejections = 0
-        self.position_rejection_timestamps = deque(maxlen=100)
-        self.last_position_rejection_time = 0.0
-        self.last_processed_violation_time = 0.0
-        self.confidence_violations = deque(maxlen=50)
+        # Rejection tracking removed - no longer penalizing position rejections
         
         logger.info("TradingAgentV2 initialized with component-based architecture")
         logger.info(f"Components: DecisionEngine, NetworkManager, ExperienceManager, "
                    f"OutcomeProcessor, StateManager")
+        
+        # Sync decision engine timestamps with portfolio on initialization
+        self._sync_decision_engine_with_portfolio()
     
     def _initialize_core_components(self):
         """Initialize core trading components"""
@@ -275,7 +273,17 @@ class TradingAgentV2:
                     float(network_outputs['confidence'].detach().cpu().numpy()[0]),
                     self._build_market_context(features)
                 )
-                decision = Decision('hold', confidence, 0, regime_awareness=adaptation_decision)
+                # Create basic intelligence_data for hold decision
+                hold_intelligence_data = {
+                    'volatility': features.volatility,
+                    'price_momentum': features.price_momentum,
+                    'volume_momentum': 0.0,
+                    'regime_confidence': features.regime_confidence,
+                    'consensus_strength': 0.5,
+                    'regime': getattr(features, 'regime', 'normal')
+                }
+                decision = Decision('hold', confidence, 0, regime_awareness=adaptation_decision, 
+                                 intelligence_data=hold_intelligence_data)
                 logger.debug(f"Decision: HOLD (constraints blocked trading)")
                 return decision
             
@@ -315,8 +323,17 @@ class TradingAgentV2:
             logger.error(f"Error in decision making: {e}")
             self.agent_stats['failed_decisions'] += 1
             
-            # Return safe hold decision on error
-            return Decision('hold', 0.3, 0, regime_awareness={'error': True})
+            # Return safe hold decision on error with basic intelligence_data
+            error_intelligence_data = {
+                'volatility': 0.02,
+                'price_momentum': 0.0,
+                'volume_momentum': 0.0,
+                'regime_confidence': 0.5,
+                'consensus_strength': 0.5,
+                'regime': 'normal'
+            }
+            return Decision('hold', 0.3, 0, regime_awareness={'error': True}, 
+                          intelligence_data=error_intelligence_data)
     
     def learn_from_trade(self, trade) -> bool:
         """
@@ -370,6 +387,11 @@ class TradingAgentV2:
                 # Update state manager with trade information
                 if hasattr(trade, 'exit_time'):
                     self.state_manager.update_trade_time(trade.exit_time)
+                    # Sync decision engine timestamp to keep it aligned
+                    self.decision_engine.sync_timestamps(
+                        last_trade_time=trade.exit_time,
+                        last_successful_trade_time=trade.exit_time if trade.pnl > 0 else None
+                    )
                 
                 # Check if architecture should evolve
                 if self.network_manager.should_evolve_architecture():
@@ -398,118 +420,6 @@ class TradingAgentV2:
             logger.error(f"Full traceback: {traceback.format_exc()}")
             return False
     
-    def learn_from_rejection(self, rejection_type: str, rejection_data: Dict, reward: float):
-        """
-        Enhanced learning from order rejections with comprehensive tracking
-        
-        Args:
-            rejection_type: Type of rejection (e.g., 'position_limit')
-            rejection_data: Details about the rejection
-            reward: Negative reward for the rejection
-        """
-        try:
-            current_time = time.time()
-            
-            logger.info(f"Learning from {rejection_type} rejection with reward {reward:.3f}")
-            
-            if rejection_type == 'position_limit':
-                # Initialize rejection tracking attributes if they don't exist
-                if not hasattr(self, 'recent_position_rejections'):
-                    self.recent_position_rejections = 0
-                    self.position_rejection_timestamps = deque(maxlen=100)
-                    self.last_position_rejection_time = 0.0
-                    self.last_processed_violation_time = 0.0
-                    self.confidence_violations = deque(maxlen=50)
-                
-                # Prevent duplicate processing of the same violation
-                if current_time - self.last_processed_violation_time < 0.1:
-                    logger.debug("Skipping duplicate position limit violation")
-                    return
-                
-                # Enhanced confidence manager integration
-                self.confidence_manager.handle_position_rejection(rejection_data)
-                
-                # Update position rejection tracking
-                self.recent_position_rejections += 1
-                self.position_rejection_timestamps.append(current_time)
-                self.last_position_rejection_time = current_time
-                self.last_processed_violation_time = current_time
-                self.confidence_violations.append(current_time)
-                self.confidence_recovery_factor = max(0.1, self.confidence_recovery_factor - 0.001)
-                
-                # Adaptive memory window for violation tracking
-                cutoff_time = current_time - 60  # 60 second window
-                while (self.position_rejection_timestamps and 
-                       self.position_rejection_timestamps[0] < cutoff_time):
-                    self.position_rejection_timestamps.popleft()
-                
-                # Update recent count based on cleaned timestamps
-                self.recent_position_rejections = len(self.position_rejection_timestamps)
-                
-                # Create comprehensive learning experience
-                rejection_experience = {
-                    'state_features': rejection_data.get('state_features', [0.0] * 100),
-                    'action': 0,  # Hold action for rejections
-                    'reward': reward,
-                    'done': True,
-                    'trade_data': {
-                        'rejection_type': rejection_type,
-                        'current_position': rejection_data.get('current_position', 0),
-                        'max_contracts': rejection_data.get('max_contracts', 10),
-                        'tool_used': rejection_data.get('primary_tool', 'unknown'),
-                        'exploration_mode': rejection_data.get('exploration_mode', False),
-                        'rejection_count': self.recent_position_rejections,
-                        'negative_reward': reward,
-                        'timestamp': current_time,
-                        'severity': rejection_data.get('violation_severity', 1.0)
-                    },
-                    'uncertainty': 1.0,  # High uncertainty for rejections
-                    'regime_confidence': 0.5
-                }
-                
-                # Store as high-priority experience
-                self.experience_manager.store_experience(rejection_experience, force_priority=True)
-                
-                # Update meta-learner with negative feedback
-                if hasattr(self.meta_learner, 'learn_from_negative_feedback'):
-                    self.meta_learner.learn_from_negative_feedback(rejection_data, reward)
-                
-                # Apply penalty with adaptive learning
-                violation_severity = rejection_data.get('violation_severity', 1.0)
-                base_penalty = -0.01  # Light penalty for neuromorphic discovery
-                final_penalty = base_penalty * violation_severity
-                
-                logger.info(f"Position rejection processed: Count={self.recent_position_rejections}, "
-                           f"Penalty={final_penalty:.4f}, Recovery={self.confidence_recovery_factor:.3f}")
-            
-            else:
-                # Handle other rejection types
-                rejection_experience = {
-                    'state_features': rejection_data.get('state_features', [0.0] * 100),
-                    'action': 0,
-                    'reward': reward,
-                    'done': True,
-                    'trade_data': {
-                        'rejection_type': rejection_type,
-                        'severity': rejection_data.get('violation_severity', 1.0),
-                        'tool_used': rejection_data.get('primary_tool', 'unknown'),
-                        'exploration_mode': rejection_data.get('exploration_mode', False)
-                    },
-                    'uncertainty': 1.0,
-                    'regime_confidence': 0.5
-                }
-                
-                self.experience_manager.store_experience(rejection_experience, force_priority=True)
-                
-                # Delegate to state manager for other rejection types
-                self.state_manager.handle_position_rejection(rejection_data)
-            
-            logger.info(f"Rejection learning completed for {rejection_type}")
-            
-        except Exception as e:
-            logger.error(f"Error in learn_from_rejection: {e}")
-            import traceback
-            logger.error(f"Full traceback: {traceback.format_exc()}")
     
     def _get_intelligence_update(self, features: Features, market_data: MarketData) -> IntelligenceUpdate:
         """Get intelligence update from the 4 subsystems"""
@@ -589,7 +499,8 @@ class TradingAgentV2:
                 expected_outcome=self._estimate_expected_outcome(features, market_data),
                 market_conditions=market_conditions,
                 intelligence_signals=intelligence_signals,
-                risk_factors=risk_factors
+                risk_factors=risk_factors,
+                primary_tool=base_decision.primary_tool
             )
             
         except Exception as e:
@@ -602,18 +513,39 @@ class TradingAgentV2:
                 expected_outcome=0.0,
                 market_conditions={},
                 intelligence_signals=[],
-                risk_factors={'error': 1.0}
+                risk_factors={'error': 1.0},
+                primary_tool='error_fallback'
             )
     
     def _convert_integrated_decision_to_decision(self, integrated_decision) -> Decision:
         """Convert dopamine integrated decision back to standard Decision format"""
         try:
-            # Create Decision object with integrated values
+            # Extract intelligence_data from the original decision or create from context
+            intelligence_data = {}
+            if hasattr(integrated_decision.base_decision, 'intelligence_signals'):
+                # Create intelligence_data from the context signals and market conditions
+                signals = integrated_decision.base_decision.intelligence_signals
+                market_conditions = integrated_decision.base_decision.market_conditions
+                
+                intelligence_data = {
+                    'volatility': market_conditions.get('volatility', 0.02),
+                    'price_momentum': market_conditions.get('price_momentum', 0.0),
+                    'volume_momentum': market_conditions.get('volume_momentum', 0.0),
+                    'regime_confidence': market_conditions.get('regime_confidence', 0.5),
+                    'consensus_strength': len([s for s in signals if s.confidence > 0.5]) / max(1, len(signals)) if signals else 0.5,
+                    'regime': market_conditions.get('regime', 'normal'),
+                    'signal_count': len(signals) if signals else 0,
+                    'average_signal_strength': sum(abs(s.strength) for s in signals) / max(1, len(signals)) if signals else 0.0
+                }
+            
+            # Create Decision object with integrated values including intelligence_data
             decision = Decision(
                 action=integrated_decision.final_action,
                 confidence=integrated_decision.final_confidence,
                 size=integrated_decision.final_position_size,
-                regime_awareness=integrated_decision.base_decision.risk_factors
+                regime_awareness=integrated_decision.base_decision.risk_factors,
+                primary_tool=integrated_decision.base_decision.primary_tool,
+                intelligence_data=intelligence_data
             )
             
             # Add additional attributes for tracking
@@ -628,8 +560,18 @@ class TradingAgentV2:
             
         except Exception as e:
             logger.error(f"Error converting integrated decision: {e}")
-            # Return safe fallback decision
-            return Decision('hold', 0.3, 0, regime_awareness={'error': True})
+            # Return safe fallback decision with basic intelligence_data
+            fallback_intelligence_data = {
+                'volatility': 0.02,
+                'price_momentum': 0.0,
+                'volume_momentum': 0.0,
+                'regime_confidence': 0.5,
+                'consensus_strength': 0.5,
+                'regime': 'normal'
+            }
+            return Decision('hold', 0.3, 0, regime_awareness={'error': True}, 
+                          primary_tool='conversion_error_fallback', 
+                          intelligence_data=fallback_intelligence_data)
     
     def _create_trade_outcome_data(self, trade) -> Dict[str, Any]:
         """Create trade outcome data for dopamine processing"""
@@ -790,17 +732,48 @@ class TradingAgentV2:
             trade_outcome = self._create_trade_outcome_data(trade)
             reflection_result = self.dopamine_manager.process_trade_outcome(trade_outcome)
             
-            # Add reflection-specific processing if needed
-            reflection_result.update({
-                'reflection_phase': True,
-                'market_context': market_data
-            })
-            
-            return reflection_result
+            # Handle both object and dictionary responses safely
+            if hasattr(reflection_result, 'signal'):
+                # It's a DopamineResponse object - return as is
+                return reflection_result
+            elif isinstance(reflection_result, dict):
+                # It's a dictionary - convert to DopamineResponse object
+                from src.intelligence.subsystems.enhanced_dopamine_subsystem import DopamineResponse, DopamineState, DopaminePhase
+                try:
+                    return DopamineResponse.from_dict(reflection_result)
+                except Exception as convert_error:
+                    logger.warning(f"Failed to convert dict to DopamineResponse: {convert_error}")
+                    # Create a basic DopamineResponse with fallback values
+                    return DopamineResponse(
+                        signal=reflection_result.get('signal', 0.0),
+                        phase=DopaminePhase.MONITORING,
+                        state=DopamineState.BALANCED,
+                        tolerance_level=reflection_result.get('tolerance_level', 0.5),
+                        addiction_risk=reflection_result.get('addiction_risk', 0.0),
+                        withdrawal_intensity=reflection_result.get('withdrawal_intensity', 0.0),
+                        position_size_modifier=reflection_result.get('position_size_modifier', 1.0),
+                        risk_tolerance_modifier=reflection_result.get('risk_tolerance_modifier', 1.0),
+                        urgency_factor=reflection_result.get('urgency_factor', 0.5)
+                    )
+            else:
+                logger.error(f"Unexpected reflection_result type: {type(reflection_result)}")
+                # Return a safe default DopamineResponse
+                from src.intelligence.subsystems.enhanced_dopamine_subsystem import DopamineResponse, DopamineState, DopaminePhase
+                return DopamineResponse(
+                    signal=0.0, phase=DopaminePhase.MONITORING, state=DopamineState.BALANCED,
+                    tolerance_level=0.5, addiction_risk=0.0, withdrawal_intensity=0.0,
+                    position_size_modifier=1.0, risk_tolerance_modifier=1.0, urgency_factor=0.5
+                )
             
         except Exception as e:
             logger.error(f"Error processing dopamine reflection: {e}")
-            return {'signal': 0.0, 'state': 'neutral', 'tolerance_level': 0.5}
+            # Return a safe default DopamineResponse object instead of dictionary
+            from src.intelligence.subsystems.enhanced_dopamine_subsystem import DopamineResponse, DopamineState, DopaminePhase
+            return DopamineResponse(
+                signal=0.0, phase=DopaminePhase.MONITORING, state=DopamineState.BALANCED,
+                tolerance_level=0.5, addiction_risk=0.0, withdrawal_intensity=0.0,
+                position_size_modifier=1.0, risk_tolerance_modifier=1.0, urgency_factor=0.5
+            )
     
     def get_stats(self) -> Dict[str, Any]:
         """Get comprehensive agent statistics with enhanced legacy compatibility"""
@@ -861,7 +834,6 @@ class TradingAgentV2:
             key_parameters = {
                 'confidence_threshold': self.meta_learner.get_parameter('confidence_threshold'),
                 'position_size_factor': self.meta_learner.get_parameter('position_size_factor'),
-                'loss_tolerance_factor': self.meta_learner.get_parameter('loss_tolerance_factor'),
                 'stop_preference': self.meta_learner.get_parameter('stop_preference'),
                 'target_preference': self.meta_learner.get_parameter('target_preference'),
                 'current_learning_rate': getattr(self.network_manager, 'current_learning_rate', 0.001)
@@ -974,8 +946,58 @@ class TradingAgentV2:
             components_loaded = sum([network_loaded, experience_loaded, state_loaded, meta_loaded])
             logger.info(f"Agent model loaded: {components_loaded}/4 components successful")
             
+            # Sync decision engine timestamps with state manager
+            self._sync_decision_engine_timestamps()
+            
         except Exception as e:
             logger.error(f"Error loading agent model: {e}")
+    
+    def _sync_decision_engine_timestamps(self):
+        """
+        Sync decision engine timestamps with state manager to fix the 55.6-year time_without_trade issue.
+        
+        This method ensures that the decision engine's last_trade_time aligns with the actual
+        last trade time from saved state, preventing massive time differences from causing
+        inappropriate emergency overrides.
+        """
+        try:
+            # Get last trade time from state manager
+            state_last_trade_time = getattr(self.state_manager, 'last_trade_time', 0.0)
+            
+            if state_last_trade_time > 0:
+                logger.info(f"Syncing decision engine timestamps: state_manager.last_trade_time = {state_last_trade_time}")
+                self.decision_engine.sync_timestamps(
+                    last_trade_time=state_last_trade_time,
+                    last_successful_trade_time=state_last_trade_time  # Use same value as fallback
+                )
+            else:
+                logger.info("No last_trade_time found in state manager, decision engine keeps default timestamps")
+                
+        except Exception as e:
+            logger.error(f"Error syncing decision engine timestamps: {e}")
+    
+    def _sync_decision_engine_with_portfolio(self):
+        """
+        Sync decision engine timestamps with portfolio during initialization.
+        
+        This handles the case where portfolio has existing last_trade_time but
+        the decision engine starts fresh with 0.0 timestamps.
+        """
+        try:
+            # Get last trade time from portfolio
+            portfolio_last_trade_time = getattr(self.portfolio, 'last_trade_time', 0.0)
+            
+            if portfolio_last_trade_time > 0:
+                logger.info(f"Syncing decision engine with portfolio: portfolio.last_trade_time = {portfolio_last_trade_time}")
+                self.decision_engine.sync_timestamps(
+                    last_trade_time=portfolio_last_trade_time,
+                    last_successful_trade_time=portfolio_last_trade_time
+                )
+            else:
+                logger.info("No last_trade_time found in portfolio, decision engine uses default timestamps")
+                
+        except Exception as e:
+            logger.error(f"Error syncing decision engine with portfolio: {e}")
     
     def get_confidence_health(self) -> Dict[str, Any]:
         """Get confidence health status"""

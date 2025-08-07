@@ -123,8 +123,6 @@ class ConfigurationManager(IConfigurationProvider, IConfigurationValidator):
             # Risk Management
             ConfigurationSchema('max_position_size', float, 0.1, 0.01, 1.0,
                                description="Maximum position size as fraction of account"),
-            ConfigurationSchema('max_daily_loss', float, 0.02, 0.001, 0.1,
-                               description="Maximum daily loss as fraction of account"),
             ConfigurationSchema('leverage', float, 50.0, 1.0, 100.0,
                                description="Trading leverage"),
             ConfigurationSchema('kelly_lookback', int, 100, 10, 1000,
@@ -290,7 +288,6 @@ class ConfigurationManager(IConfigurationProvider, IConfigurationValidator):
             'TRADING_TCP_HOST': 'tcp_host',
             'TRADING_LOG_LEVEL': 'log_level',
             'TRADING_MAX_POSITION_SIZE': 'max_position_size',
-            'TRADING_MAX_DAILY_LOSS': 'max_daily_loss',
             'TRADING_LEVERAGE': 'leverage',
             'TRADING_INTERVAL_SECONDS': 'trading_interval_seconds',
             'TRADING_CLOSE_ON_SHUTDOWN': 'close_positions_on_shutdown',
@@ -468,7 +465,6 @@ class ConfigurationManager(IConfigurationProvider, IConfigurationValidator):
         """Get risk management configuration"""
         return {
             'max_position_size': self.get('max_position_size'),
-            'max_daily_loss': self.get('max_daily_loss'),
             'kelly_lookback': self.get('kelly_lookback'),
             'leverage': self.get('leverage'),
             'contract_value': self.get('contract_value'),
@@ -504,14 +500,12 @@ class ConfigurationManager(IConfigurationProvider, IConfigurationValidator):
     def get_learnable_parameters(self) -> List[str]:
         """Return parameters that should be meta-learned rather than hardcoded"""
         return [
-            'max_daily_loss_factor',
             'max_position_size_factor',
             'min_confidence_threshold',
             'risk_per_trade_factor',
             'max_trades_per_hour',
             'stop_preference',
             'target_preference',
-            'loss_tolerance_factor',
             'consecutive_loss_tolerance',
             'position_size_factor',
             'stop_distance_factor',
@@ -623,7 +617,7 @@ class Config(IConfigurationProvider):
         """Get a summary of current configuration for backward compatibility"""
         summary_keys = [
             'environment', 'tcp_data_port', 'tcp_signal_port', 
-            'max_position_size', 'max_daily_loss', 'leverage'
+            'max_position_size', 'leverage'
         ]
         summary = {k: self._config_manager.get(k) for k in summary_keys}
         return str(summary)

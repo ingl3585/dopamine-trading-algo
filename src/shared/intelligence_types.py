@@ -56,7 +56,18 @@ class IntelligenceSignal:
     def __post_init__(self):
         """Validate signal constraints"""
         if not -1.0 <= self.strength <= 1.0:
-            raise ValueError(f"Signal strength must be in [-1.0, 1.0], got {self.strength}")
+            import logging
+            import traceback
+            logger = logging.getLogger(__name__)
+            logger.error(f"Invalid signal strength {self.strength} from subsystem {self.subsystem_id}")
+            logger.error(f"Signal creation traceback:\n{''.join(traceback.format_stack())}")
+            
+            # Auto-normalize the signal instead of crashing
+            import numpy as np
+            self.strength = float(np.tanh(self.strength))
+            self.strength = max(-1.0, min(1.0, self.strength))
+            logger.warning(f"Auto-normalized signal strength to {self.strength}")
+            
         if not 0.0 <= self.confidence <= 1.0:
             raise ValueError(f"Confidence must be in [0.0, 1.0], got {self.confidence}")
         if self.direction not in ['bullish', 'bearish', 'neutral']:

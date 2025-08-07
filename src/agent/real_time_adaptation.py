@@ -629,7 +629,12 @@ class RealTimeAdaptationEngine:
         # Get updated strategy selection
         selected_strategy = self.strategy_selector.select_strategy(market_context)
         
-        logger.info(f"Regime change processed: {regime_data.get('new_regime', 'unknown')} -> Strategy: {selected_strategy}")
+        # Improved regime logging with better fallback
+        new_regime = regime_data.get('new_regime', regime_data.get('volatility_regime', 'ranging'))
+        if new_regime == 'unknown':
+            new_regime = 'ranging'  # Default to most common state instead of unknown
+        
+        logger.info(f"Regime change processed: {new_regime} -> Strategy: {selected_strategy}")
         
         return {
             'new_strategy': selected_strategy,

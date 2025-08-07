@@ -3,22 +3,30 @@ Consolidated Dopamine Subsystem - The Central Nervous System of Trading
 Combines simple and enhanced dopamine pathways for comprehensive trading psychology
 with backward compatibility for legacy interfaces.
 
+Enhanced with unified state management, error handling, and data integrity validation.
 This module provides:
 - Complete neurological dopamine pathway simulation
 - Multiple trading phases (anticipation, execution, monitoring, realization, reflection)
 - Advanced psychological modeling (tolerance, addiction, withdrawal)
 - Backward compatibility with simple dopamine interfaces
 - Clean architecture with SOLID principles
+- Unified state management integration
+- Comprehensive error handling and recovery
 """
 
 import numpy as np
 import time
 import logging
-from typing import Dict, List, Optional, Tuple, Protocol
+from typing import Dict, List, Optional, Tuple, Protocol, Any
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from enum import Enum
 from abc import ABC, abstractmethod
+
+from src.core.state_coordinator import register_state_component
+from src.core.unified_serialization import unified_serializer, serialize_component_state, deserialize_component_state
+from src.core.storage_error_handler import storage_error_handler, handle_storage_operation
+from src.core.data_integrity_validator import data_integrity_validator, validate_component_data, ValidationLevel
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +214,11 @@ class DopamineResponse:
         except Exception as e:
             logger.error(f"Error safely updating DopamineResponse: {e}")
             return self.safe_copy()
+    
+    def update(self, **kwargs):
+        """Compatibility method - redirects to update_safe for backward compatibility"""
+        logger.warning("DopamineResponse.update() called - this method is deprecated. Use update_safe() instead.")
+        return self.update_safe(**kwargs)
 
 # Define protocols for clean architecture
 class DopamineSignalProvider(Protocol):
@@ -307,6 +320,14 @@ class ConsolidatedDopamineSubsystem(LegacyDopamineInterface):
         self.position_size_modifier = 1.0
         self.risk_tolerance_modifier = 1.0
         self.urgency_factor = 0.5  # 0 = very patient, 1 = urgent/impulsive
+        
+        # Register with state coordinator for unified state management
+        self._register_state_management()
+        
+        # Load existing state if available
+        self._load_persisted_state()
+        
+        logger.info("ConsolidatedDopamineSubsystem initialized with unified state management")
 
     def process_trading_event(self, event_type: str, market_data: Dict, 
                             context: Dict = None) -> DopamineResponse:
@@ -1461,6 +1482,284 @@ class ConsolidatedDopamineSubsystem(LegacyDopamineInterface):
         
         recent_accuracies = list(self._prediction_accuracy_history)[-10:]  # Last 10 predictions
         return np.mean(recent_accuracies)
+    
+    def adapt_parameters(self):
+        """
+        Adapt dopamine system parameters based on recent performance and learning outcomes.
+        
+        This method is called by the meta-learner to adjust dopamine sensitivity, 
+        tolerance thresholds, and other psychological parameters based on trading outcomes.
+        Implements clean architecture principle of dependency inversion - the dopamine
+        subsystem adapts its parameters without depending on external components.
+        """
+        try:
+            logger.info("DOPAMINE ADAPTATION: Adapting parameters based on recent performance")
+            
+            # Calculate recent performance metrics
+            recent_accuracy = self._calculate_recent_prediction_accuracy()
+            psychological_health = self._calculate_psychological_health()
+            
+            # Adaptive sensitivity adjustment
+            if recent_accuracy > 0.7:
+                # Good prediction accuracy - increase sensitivity for finer responses
+                self.base_sensitivity = min(0.2, self.base_sensitivity * 1.05)
+                logger.debug(f"Increased sensitivity to {self.base_sensitivity:.4f} due to high accuracy")
+            elif recent_accuracy < 0.3:
+                # Poor prediction accuracy - decrease sensitivity to reduce noise
+                self.base_sensitivity = max(0.01, self.base_sensitivity * 0.95)
+                logger.debug(f"Decreased sensitivity to {self.base_sensitivity:.4f} due to low accuracy")
+            
+            # Adaptive tolerance management based on psychological health
+            if psychological_health < 0.3:
+                # Poor psychological health - accelerate tolerance recovery
+                self.tolerance_decay_rate = min(0.3, self.tolerance_decay_rate * 1.1)
+                self.tolerance_buildup_rate = max(0.0005, self.tolerance_buildup_rate * 0.9)
+                logger.debug("Accelerated tolerance recovery due to poor psychological health")
+            elif psychological_health > 0.8:
+                # Good psychological health - normalize tolerance rates
+                self.tolerance_decay_rate = max(0.1, self.tolerance_decay_rate * 0.99)
+                self.tolerance_buildup_rate = min(0.002, self.tolerance_buildup_rate * 1.01)
+                
+            # Adaptive addiction threshold based on recent behavior
+            if hasattr(self, 'response_history') and len(self.response_history) > 10:
+                recent_signals = [r.signal for r in list(self.response_history)[-10:]]
+                signal_volatility = np.std(recent_signals) if len(recent_signals) > 1 else 0.5
+                
+                # High volatility suggests instability - lower addiction threshold
+                if signal_volatility > 1.0:
+                    self.addiction_threshold = max(5.0, self.addiction_threshold * 0.95)
+                elif signal_volatility < 0.3:
+                    # Low volatility suggests stability - raise addiction threshold
+                    self.addiction_threshold = min(15.0, self.addiction_threshold * 1.02)
+            
+            # Adaptive momentum factor based on consecutive patterns
+            if self.consecutive_positive > 5 or self.consecutive_negative > 5:
+                # Long streaks suggest momentum is too strong
+                self.momentum_factor = max(0.01, self.momentum_factor * 0.95)
+            elif abs(self.consecutive_positive - self.consecutive_negative) < 2:
+                # Balanced outcomes suggest momentum could be stronger
+                self.momentum_factor = min(0.1, self.momentum_factor * 1.02)
+            
+            # Therapeutic intervention for severe psychological states
+            if self.addiction_score > 0.8 or self.withdrawal_intensity > 0.8:
+                logger.warning("DOPAMINE ADAPTATION: Severe psychological state detected - applying therapeutic reset")
+                self.therapeutic_reset()
+            
+            # Update current sensitivity to match adapted base sensitivity
+            self.current_sensitivity = self.base_sensitivity * (1.0 - self.tolerance_level * 0.5)
+            
+            # Log adaptation summary
+            logger.info(f"DOPAMINE ADAPTATION COMPLETE: "
+                       f"sensitivity={self.base_sensitivity:.4f}, "
+                       f"tolerance_decay={self.tolerance_decay_rate:.3f}, "
+                       f"addiction_threshold={self.addiction_threshold:.1f}, "
+                       f"momentum_factor={self.momentum_factor:.3f}, "
+                       f"psychological_health={psychological_health:.3f}")
+            
+        except Exception as e:
+            logger.error(f"Error in dopamine parameter adaptation: {e}")
+            # Graceful degradation - reset to safe defaults
+            self.base_sensitivity = 0.1
+            self.tolerance_decay_rate = 0.2
+            self.tolerance_buildup_rate = 0.001
+            self.addiction_threshold = 10.0
+            self.momentum_factor = 0.05
+    
+    def _register_state_management(self):
+        """Register with state coordinator for unified state management"""
+        try:
+            register_state_component(
+                name="enhanced_dopamine_subsystem",
+                save_method=self._save_state_data,
+                load_method=self._load_state_data,
+                priority=70  # High priority for dopamine subsystem
+            )
+            logger.debug("ConsolidatedDopamineSubsystem registered with state coordinator")
+        except Exception as e:
+            logger.error(f"Failed to register dopamine subsystem state management: {e}")
+    
+    @handle_storage_operation("enhanced_dopamine_subsystem", "save_state")
+    def _save_state_data(self) -> Dict[str, Any]:
+        """
+        Save dopamine subsystem state data for state coordinator.
+        
+        Returns:
+            Dictionary containing all dopamine subsystem state data
+        """
+        try:
+            # Prepare state data
+            state_data = {
+                'pnl_history': list(self.pnl_history),
+                'response_history': [asdict(resp) for resp in self.response_history],
+                'phase_transitions': list(self.phase_transitions),
+                'current_phase': self.current_phase.value,
+                'current_state': self.current_state.value,
+                'current_response': asdict(self.current_response),
+                'parameters': {
+                    'base_sensitivity': self.base_sensitivity,
+                    'current_sensitivity': self.current_sensitivity,
+                    'momentum_factor': self.momentum_factor,
+                    'max_signal': self.max_signal,
+                    'tolerance_buildup_rate': self.tolerance_buildup_rate,
+                    'tolerance_decay_rate': self.tolerance_decay_rate,
+                    'addiction_threshold': self.addiction_threshold,
+                    'withdrawal_severity': self.withdrawal_severity,
+                    'anticipation_multiplier': self.anticipation_multiplier
+                },
+                'tracking_variables': {
+                    'consecutive_positive': self.consecutive_positive,
+                    'consecutive_negative': self.consecutive_negative,
+                    'peak_pnl': self.peak_pnl,
+                    'trough_pnl': self.trough_pnl,
+                    'session_peak_dopamine': self.session_peak_dopamine,
+                    'session_trough_dopamine': self.session_trough_dopamine,
+                    'tolerance_level': self.tolerance_level,
+                    'addiction_score': self.addiction_score,
+                    'withdrawal_intensity': self.withdrawal_intensity,
+                    'time_since_last_high': self.time_since_last_high,
+                    'recent_high_count': self.recent_high_count,
+                    'expected_pnl': self.expected_pnl,
+                    'expectation_confidence': self.expectation_confidence,
+                    'position_size_modifier': self.position_size_modifier,
+                    'risk_tolerance_modifier': self.risk_tolerance_modifier,
+                    'urgency_factor': self.urgency_factor
+                },
+                'prediction_accuracy': list(self.prediction_accuracy),
+                'config': dict(self.config),
+                'saved_at': time.time(),
+                'version': "2.0"  # Updated version for new state format
+            }
+            
+            # Validate data integrity before saving
+            validation_report = validate_component_data(
+                component="enhanced_dopamine_subsystem",
+                data=state_data,
+                data_type="intelligence_subsystem_state",
+                level=ValidationLevel.STANDARD
+            )
+            
+            if not validation_report.is_valid:
+                logger.warning(f"Dopamine subsystem state validation issues: {len(validation_report.issues)} issues found")
+                for issue in validation_report.issues:
+                    if issue.severity == "error":
+                        logger.error(f"Dopamine subsystem state error: {issue.message}")
+            
+            logger.debug("Dopamine subsystem state data prepared for saving")
+            return state_data
+            
+        except Exception as e:
+            logger.error(f"Error preparing dopamine subsystem state data: {e}")
+            raise
+    
+    @handle_storage_operation("enhanced_dopamine_subsystem", "load_state")
+    def _load_state_data(self, state_data: Dict[str, Any]):
+        """
+        Load dopamine subsystem state data from state coordinator.
+        
+        Args:
+            state_data: Dictionary containing dopamine subsystem state data
+        """
+        try:
+            # Validate loaded data
+            validation_report = validate_component_data(
+                component="enhanced_dopamine_subsystem",
+                data=state_data,
+                data_type="intelligence_subsystem_state",
+                level=ValidationLevel.STANDARD
+            )
+            
+            if validation_report.result.value == "corrupted":
+                logger.error("Dopamine subsystem state data is corrupted, cannot load")
+                return
+            
+            if not validation_report.is_valid:
+                logger.warning(f"Dopamine subsystem state validation issues during load: {len(validation_report.issues)} issues")
+            
+            # Load historical data
+            if 'pnl_history' in state_data:
+                pnl_data = state_data['pnl_history']
+                self.pnl_history = deque([
+                    DopamineSnapshot(**item) if isinstance(item, dict) else item 
+                    for item in pnl_data
+                ], maxlen=200)
+                logger.debug(f"Loaded {len(self.pnl_history)} PnL history entries")
+            
+            if 'response_history' in state_data:
+                response_data = state_data['response_history']
+                self.response_history = deque([
+                    DopamineResponse(**item) if isinstance(item, dict) else item
+                    for item in response_data
+                ], maxlen=100)
+                logger.debug(f"Loaded {len(self.response_history)} response history entries")
+            
+            if 'phase_transitions' in state_data:
+                self.phase_transitions = deque(state_data['phase_transitions'], maxlen=50)
+            
+            # Load current state
+            if 'current_phase' in state_data:
+                self.current_phase = DopaminePhase(state_data['current_phase'])
+            if 'current_state' in state_data:
+                self.current_state = DopamineState(state_data['current_state'])
+            if 'current_response' in state_data:
+                response_data = state_data['current_response']
+                if isinstance(response_data, dict):
+                    self.current_response = DopamineResponse(**response_data)
+            
+            # Load parameters
+            if 'parameters' in state_data:
+                params = state_data['parameters']
+                self.base_sensitivity = params.get('base_sensitivity', self.base_sensitivity)
+                self.current_sensitivity = params.get('current_sensitivity', self.current_sensitivity)
+                self.momentum_factor = params.get('momentum_factor', self.momentum_factor)
+                self.max_signal = params.get('max_signal', self.max_signal)
+                self.tolerance_buildup_rate = params.get('tolerance_buildup_rate', self.tolerance_buildup_rate)
+                self.tolerance_decay_rate = params.get('tolerance_decay_rate', self.tolerance_decay_rate)
+                self.addiction_threshold = params.get('addiction_threshold', self.addiction_threshold)
+                self.withdrawal_severity = params.get('withdrawal_severity', self.withdrawal_severity)
+                self.anticipation_multiplier = params.get('anticipation_multiplier', self.anticipation_multiplier)
+                logger.debug("Loaded dopamine subsystem parameters")
+            
+            # Load tracking variables
+            if 'tracking_variables' in state_data:
+                tracking = state_data['tracking_variables']
+                self.consecutive_positive = tracking.get('consecutive_positive', 0)
+                self.consecutive_negative = tracking.get('consecutive_negative', 0)
+                self.peak_pnl = tracking.get('peak_pnl', 0.0)
+                self.trough_pnl = tracking.get('trough_pnl', 0.0)
+                self.session_peak_dopamine = tracking.get('session_peak_dopamine', 0.0)
+                self.session_trough_dopamine = tracking.get('session_trough_dopamine', 0.0)
+                self.tolerance_level = tracking.get('tolerance_level', 0.5)
+                self.addiction_score = tracking.get('addiction_score', 0.0)
+                self.withdrawal_intensity = tracking.get('withdrawal_intensity', 0.0)
+                self.time_since_last_high = tracking.get('time_since_last_high', 0.0)
+                self.recent_high_count = tracking.get('recent_high_count', 0)
+                self.expected_pnl = tracking.get('expected_pnl', 0.0)
+                self.expectation_confidence = tracking.get('expectation_confidence', 0.5)
+                self.position_size_modifier = tracking.get('position_size_modifier', 1.0)
+                self.risk_tolerance_modifier = tracking.get('risk_tolerance_modifier', 1.0)
+                self.urgency_factor = tracking.get('urgency_factor', 0.5)
+                logger.debug("Loaded dopamine subsystem tracking variables")
+            
+            # Load prediction accuracy
+            if 'prediction_accuracy' in state_data:
+                self.prediction_accuracy = deque(state_data['prediction_accuracy'], maxlen=20)
+            
+            logger.info("Dopamine subsystem state loaded successfully from state coordinator")
+            
+        except Exception as e:
+            logger.error(f"Error loading dopamine subsystem state data: {e}")
+            raise
+    
+    def _load_persisted_state(self):
+        """Load persisted state if available"""
+        try:
+            # Try to load from unified serialization system
+            state_data = deserialize_component_state("enhanced_dopamine_subsystem")
+            if state_data:
+                self._load_state_data(state_data)
+                logger.info("Dopamine subsystem state loaded from persistent storage")
+        except Exception as e:
+            logger.debug(f"No existing dopamine subsystem state found or failed to load: {e}")
 
 
 # ========================================

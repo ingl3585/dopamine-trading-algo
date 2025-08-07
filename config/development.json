@@ -6,16 +6,73 @@
     "tcp_timeout": 30,
     "trading_interval_seconds": 30,
     "min_trade_interval_seconds": 60,
-    "max_position_size": 0.10,
-    "max_daily_loss": 0.05,
+    "max_position_size": 0.25,
     "kelly_lookback": 50,
     "max_hold_time_hours": 4,
-    "max_daily_trades": 5,
+    "max_daily_trades": 500,
     "close_positions_on_shutdown": true,
     "emergency_max_margin_usage": 0.70,
-    "emergency_max_drawdown": 0.10,
+    "emergency_max_drawdown": 0.90,
     "historical_data_timeout": 120,
     "dopamine_sensitivity": 0.15,
     "momentum_factor": 0.08,
-    "max_dopamine_signal": 2.0
+    "max_dopamine_signal": 2.0,
+    "emergency_override": {
+        "startup_grace_period_seconds": 7200,
+        "max_consecutive_holds": 100,
+        "max_time_without_trade_seconds": 1800,
+        "confidence_floor": 0.15,
+        "intelligence_floor": 0.10,
+        "emergency_cooldown_seconds": 300
+    },
+    "state_cleanup": {
+        "enabled": true,
+        "base_path": "data",
+        "retention": {
+            "enabled": true,
+            "hierarchical_enabled": true,
+            "hierarchical_recent_hours": 4.0,
+            "hierarchical_hourly_days": 2,
+            "hierarchical_daily_days": 7,
+            "count_based_enabled": true,
+            "count_limits": {
+                "critical": 50,
+                "high": 25,
+                "medium": 15,
+                "low": 5
+            },
+            "size_based_enabled": true,
+            "size_limit_mb": 100.0
+        },
+        "safety": {
+            "max_files_per_cleanup": 100,
+            "max_size_per_cleanup_mb": 50.0,
+            "max_deletion_percentage": 70.0,
+            "require_recent_files": true,
+            "recent_files_threshold_hours": 2.0,
+            "warn_deletion_percentage": 40.0,
+            "warn_size_threshold_mb": 25.0
+        },
+        "scheduling": {
+            "schedule": "hourly",
+            "interval_hours": 2.0,
+            "run_on_startup": false,
+            "run_on_shutdown": false,
+            "preferred_hour": 2,
+            "preferred_day_of_week": 0,
+            "auto_cleanup_orphaned": true,
+            "orphaned_cleanup_interval_hours": 0.5
+        },
+        "monitoring": {
+            "enable_detailed_logging": true,
+            "log_cleanup_plans": true,
+            "log_file_operations": true,
+            "keep_cleanup_history_count": 50,
+            "report_cleanup_statistics": true,
+            "alert_on_cleanup_failure": true,
+            "alert_on_large_deletions": true,
+            "alert_threshold_files": 50,
+            "alert_threshold_size_mb": 25.0
+        }
+    }
 }

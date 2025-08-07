@@ -110,23 +110,86 @@ class TradingDecisionEngine:
         
         # Decision tracking
         self.total_decisions = 0
-        self.last_trade_time = 0.0
+        
+        # Initialize timestamps intelligently to prevent cold-start emergency override
+        self.system_start_time = time.time()
+        self.last_trade_time = self._get_intelligent_default_timestamp()
         
         # Emergency trading mechanisms
         self.last_emergency_override_time = 0.0
         self.consecutive_hold_decisions = 0
-        self.last_successful_trade_time = 0.0
+        self.last_successful_trade_time = self._get_intelligent_default_timestamp()
         
-        # Trading floor parameters
+        # Cold-start protection
+        self.startup_grace_period = config.get('emergency_override', {}).get('startup_grace_period_seconds', 7200)  # 2 hours
+        self.is_cold_start = True  # Flag to track if we're in cold-start mode
+        
+        # Trading floor parameters - configurable emergency settings
+        emergency_config = config.get('emergency_override', {})
         self.emergency_trading_floor = {
-            'max_consecutive_holds': 50,  # Maximum holds before emergency activation
-            'max_time_without_trade': 3600,  # 1 hour without trading triggers emergency
-            'confidence_floor': 0.2,  # Minimum confidence for emergency trades
-            'intelligence_floor': 0.15,  # Minimum intelligence signal for emergency
-            'emergency_cooldown': 600,  # 10 minutes between emergency overrides
+            'max_consecutive_holds': emergency_config.get('max_consecutive_holds', 50),
+            'max_time_without_trade': emergency_config.get('max_time_without_trade_seconds', 3600),
+            'confidence_floor': emergency_config.get('confidence_floor', 0.2),
+            'intelligence_floor': emergency_config.get('intelligence_floor', 0.15),
+            'emergency_cooldown': emergency_config.get('emergency_cooldown_seconds', 600),
+            'startup_grace_period': self.startup_grace_period
         }
         
-        logger.info("TradingDecisionEngine initialized")
+        # Log initialization with cold-start information
+        logger.info(f"TradingDecisionEngine initialized with intelligent timestamps")
+        logger.info(f"System start time: {time.ctime(self.system_start_time)}")
+        logger.info(f"Default timestamp: {time.ctime(self.last_trade_time)} (startup grace period: {self.startup_grace_period}s)")
+        logger.info(f"Cold-start mode: {self.is_cold_start}")
+        logger.info(f"Emergency override config: {self.emergency_trading_floor}")
+    
+    def _get_intelligent_default_timestamp(self) -> float:
+        """
+        Get intelligent default timestamp for cold-start scenarios.
+        
+        Instead of using 0.0 which causes immediate emergency override,
+        we use current_time - startup_grace_period to provide reasonable
+        default that prevents false emergency activation.
+        
+        Returns:
+            float: Intelligent default timestamp (current_time - grace_period)
+        """
+        current_time = time.time()
+        grace_period = 7200  # 2 hours default
+        default_timestamp = current_time - grace_period
+        
+        logger.debug(f"Intelligent default timestamp: {time.ctime(default_timestamp)} "
+                    f"(current - {grace_period}s)")
+        
+        return default_timestamp
+    
+    def _is_cold_start(self, current_time: float) -> bool:
+        """
+        Detect if system is in cold-start mode.
+        
+        Cold-start is defined as the period immediately after system startup
+        where emergency trading mechanisms should be disabled to prevent
+        false activation due to uninitialized timestamps.
+        
+        Args:
+            current_time: Current system timestamp
+            
+        Returns:
+            bool: True if system is in cold-start grace period
+        """
+        time_since_startup = current_time - self.system_start_time
+        in_grace_period = time_since_startup < self.startup_grace_period
+        
+        if in_grace_period and self.is_cold_start:
+            logger.debug(f"Cold-start mode: {time_since_startup:.0f}s since startup "
+                        f"(grace period: {self.startup_grace_period}s)")
+            return True
+        elif not in_grace_period and self.is_cold_start:
+            # Exit cold-start mode
+            self.is_cold_start = False
+            logger.info(f"Exiting cold-start mode after {time_since_startup:.0f}s")
+            return False
+        
+        return False
     
     def decide(self, 
                features: Features, 
@@ -169,6 +232,9 @@ class TradingDecisionEngine:
             if emergency_override:
                 # Force an emergency trade to break conservative feedback loop
                 logger.warning("EMERGENCY TRADING OVERRIDE ACTIVATED")
+                logger.info(f"Emergency override context: cold_start={self.is_cold_start}, "
+                           f"consecutive_holds={self.consecutive_hold_decisions}, "
+                           f"time_since_startup={market_data.timestamp - self.system_start_time:.0f}s")
                 return self._create_emergency_decision(context, confidence, network_outputs)
             
             # Check trading constraints
@@ -457,33 +523,8 @@ class TradingDecisionEngine:
                                 context: DecisionContext,
                                 confidence: float) -> bool:
         """Evaluate whether trading should be considered given current constraints"""
-        
-        # Basic constraints from meta-learner
-        loss_tolerance = self.meta_learner.get_parameter('loss_tolerance_factor')
-        max_loss = context.market_data.account_balance * loss_tolerance
-        
-        if context.market_data.daily_pnl <= -max_loss:
-            logger.info(f"Trading blocked: Daily loss limit reached")
-            return False
-        
-        # Frequency constraints
-        frequency_limit = self.meta_learner.get_parameter('trade_frequency_base')
-        time_since_last = context.market_data.timestamp - self.last_trade_time
-        
-        if time_since_last < (1 / frequency_limit):
-            logger.info(f"Trading blocked: Frequency limit")
-            return False
-        
-        # Intelligence signal strength check
-        intelligence_threshold = self.meta_learner.get_parameter('intelligence_threshold', 0.3)
-        intelligence_signal_strength = abs(context.features.overall_signal)
-        
-        if intelligence_signal_strength < intelligence_threshold:
-            logger.info(f"Trading blocked: Intelligence signal {intelligence_signal_strength:.3f} "
-                       f"below threshold {intelligence_threshold:.3f}")
-            return False
-        
-        return True
+
+        return True 
     
     def _check_emergency_trading_override(self, 
                                         context: DecisionContext, 
@@ -494,10 +535,20 @@ class TradingDecisionEngine:
         
         This method implements emergency mechanisms to force trading when the system
         becomes trapped in overly conservative states, preventing permanent paralysis.
+        
+        Enhanced with cold-start protection to prevent false emergency activation
+        immediately after system startup when timestamps are uninitialized.
         """
+        # CRITICAL: Cold-start protection - disable emergency override during startup grace period
+        if self._is_cold_start(current_time):
+            logger.debug("Emergency override blocked: System in cold-start grace period")
+            return False
+        
         # Check cooldown period
         time_since_last_emergency = current_time - self.last_emergency_override_time
         if time_since_last_emergency < self.emergency_trading_floor['emergency_cooldown']:
+            logger.debug(f"Emergency override blocked: Cooldown period "
+                        f"({time_since_last_emergency:.0f}s < {self.emergency_trading_floor['emergency_cooldown']}s)")
             return False
         
         # Emergency condition 1: Too many consecutive hold decisions
@@ -506,10 +557,18 @@ class TradingDecisionEngine:
         )
         
         # Emergency condition 2: Too much time without any trading
-        time_without_trade = current_time - max(self.last_trade_time, self.last_successful_trade_time)
+        # Enhanced with intelligent timestamp validation
+        last_trade_timestamp = max(self.last_trade_time, self.last_successful_trade_time)
+        time_without_trade = current_time - last_trade_timestamp
         too_long_without_trade = (
             time_without_trade >= self.emergency_trading_floor['max_time_without_trade']
         )
+        
+        # Enhanced logging for debugging timestamp issues
+        logger.debug(f"Emergency timestamp check: current={time.ctime(current_time)}, "
+                    f"last_trade={time.ctime(self.last_trade_time)}, "
+                    f"last_successful={time.ctime(self.last_successful_trade_time)}, "
+                    f"time_without_trade={time_without_trade:.0f}s")
         
         # Emergency condition 3: Meta-learner indicates emergency override needed
         meta_learner_emergency = False
@@ -929,6 +988,10 @@ class TradingDecisionEngine:
         # Update last trade time
         self.last_trade_time = context.market_data.timestamp
         
+        # Extract and validate state_features before creating Decision
+        extracted_state_features = self._safe_extract_state_features(context.learned_state)
+        logger.debug(f"STATE_FEATURES_TRACE: Extracted {len(extracted_state_features) if extracted_state_features else 'None'} features from learned_state")
+        
         return Decision(
             action=action,
             confidence=confidence,
@@ -938,7 +1001,7 @@ class TradingDecisionEngine:
             primary_tool=primary_tool,
             exploration=exploration,
             intelligence_data=intelligence_data,
-            state_features=self._safe_extract_state_features(context.learned_state),
+            state_features=extracted_state_features,
             adaptation_strategy=adaptation_decision.get('strategy_name', 'conservative'),
             uncertainty_estimate=adaptation_decision.get('uncertainty', 0.5),
             few_shot_prediction=0.0,  # Will be set by caller if available
@@ -1501,3 +1564,75 @@ class TradingDecisionEngine:
         """
         self.last_successful_trade_time = timestamp
         logger.debug(f"Successful trade recorded at timestamp {timestamp}")
+    
+    def sync_timestamps(self, last_trade_time: float, last_successful_trade_time: Optional[float] = None):
+        """
+        Sync decision engine timestamps with external state (e.g., portfolio).
+        
+        Enhanced version that handles cold-start scenarios and validates timestamps
+        before synchronization to prevent emergency override issues.
+        
+        This method fixes the issue where decision engine starts with intelligent
+        default timestamps while portfolio/system may have restored different
+        timestamps from saved state.
+        
+        Args:
+            last_trade_time: Last trade timestamp from portfolio or state manager
+            last_successful_trade_time: Last successful trade timestamp (optional)
+        """
+        current_time = time.time()
+        
+        # Validate input timestamps
+        if last_trade_time < 0 or (last_successful_trade_time is not None and last_successful_trade_time < 0):
+            logger.warning(f"Invalid negative timestamps provided for sync: "
+                          f"last_trade_time={last_trade_time}, last_successful_trade_time={last_successful_trade_time}")
+            return
+        
+        # Check if timestamps are reasonable (not too far in future)
+        max_future_time = current_time + 3600  # Allow 1 hour in future
+        if last_trade_time > max_future_time:
+            logger.warning(f"last_trade_time {last_trade_time} ({time.ctime(last_trade_time)}) "
+                          f"is too far in future, ignoring sync")
+            return
+        
+        # Sync last_trade_time if valid and more recent than current
+        if last_trade_time > 0:
+            # Only sync if the external timestamp is more recent than our intelligent default
+            # or if we're still using the exact intelligent default
+            if (last_trade_time > self.last_trade_time or 
+                abs(self.last_trade_time - self._get_intelligent_default_timestamp()) < 60):
+                
+                old_time = self.last_trade_time
+                self.last_trade_time = last_trade_time
+                logger.info(f"Decision engine last_trade_time synced: "
+                           f"{time.ctime(old_time)} -> {time.ctime(last_trade_time)}")
+                
+                # Exit cold-start mode if we receive valid external timestamps
+                if self.is_cold_start:
+                    logger.info("Exiting cold-start mode due to timestamp sync from external state")
+                    self.is_cold_start = False
+            else:
+                logger.debug(f"External last_trade_time {time.ctime(last_trade_time)} is older than "
+                           f"current {time.ctime(self.last_trade_time)}, keeping current")
+        
+        # Sync last_successful_trade_time if provided and valid
+        if last_successful_trade_time is not None and last_successful_trade_time > 0:
+            if (last_successful_trade_time > self.last_successful_trade_time or
+                abs(self.last_successful_trade_time - self._get_intelligent_default_timestamp()) < 60):
+                
+                old_time = self.last_successful_trade_time
+                self.last_successful_trade_time = last_successful_trade_time
+                logger.info(f"Decision engine last_successful_trade_time synced: "
+                           f"{time.ctime(old_time)} -> {time.ctime(last_successful_trade_time)}")
+        
+        # Fallback logic: If no successful trade time provided, use last_trade_time
+        elif (last_trade_time > 0 and 
+              abs(self.last_successful_trade_time - self._get_intelligent_default_timestamp()) < 60):
+            self.last_successful_trade_time = last_trade_time
+            logger.info(f"Decision engine last_successful_trade_time set to last_trade_time fallback: "
+                       f"{time.ctime(last_trade_time)}")
+        
+        # Log final state for debugging
+        logger.debug(f"Timestamp sync complete - last_trade: {time.ctime(self.last_trade_time)}, "
+                    f"last_successful: {time.ctime(self.last_successful_trade_time)}, "
+                    f"cold_start: {self.is_cold_start}")

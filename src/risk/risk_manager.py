@@ -37,10 +37,8 @@ class RiskManager:
         self.advanced_risk = AdvancedRiskManager(meta_learner)
         self.risk_learning = RiskLearningEngine()
         
-        # Track violation history for escalating penalties
+        # Track violations for monitoring only (no penalties)
         self.violation_history = deque(maxlen=50)
-        self.recent_violations = 0  # Count of violations in recent time window
-        self.last_violation_time = 0.0  # Prevent duplicate violation processing
         
     def validate_order(self, decision: Decision, market_data: MarketData) -> Optional[Order]:
         if decision.action == 'hold':
@@ -49,12 +47,8 @@ class RiskManager:
         # Update advanced risk metrics
         self.advanced_risk.update_risk_metrics(market_data)
         
-        # Check learned loss tolerance using actual account balance
-        loss_tolerance = self.meta_learner.get_parameter('loss_tolerance_factor')
-        max_loss = market_data.account_balance * loss_tolerance
-        if market_data.daily_pnl <= -max_loss:
-            logger.info(f"Daily loss limit reached: {market_data.daily_pnl:.2f} <= -{max_loss:.2f}")
-            return None
+        # Daily P&L is tracked but no longer enforced as blocking constraint
+        # This preserves monitoring capabilities while removing trade blocking
         
         # Calculate position size using enhanced account data
         size = self._calculate_adaptive_position_size(decision, market_data)
@@ -65,8 +59,8 @@ class RiskManager:
             
             if abs(current_position) >= max_contracts:
                 logger.warning(f"Order REJECTED: Position limit reached ({current_position}/{max_contracts} contracts)")
-                # Provide negative learning feedback for position limit violations
-                self._learn_from_position_limit_rejection(decision, market_data, current_position, max_contracts)
+                # Position limit enforcement without learning penalties
+                self.violation_history.append(time.time())
             else:
                 logger.info("Position size calculated as 0 (other risk factors)")
             return None
@@ -105,6 +99,10 @@ class RiskManager:
         # Apply learned stop/target preferences
         stop_price, target_price = self._calculate_adaptive_levels(decision, market_data)
         
+        # Extract and validate state_features before creating Order
+        decision_state_features = getattr(decision, 'state_features', None)
+        logger.debug(f"STATE_FEATURES_TRACE: Decision has {len(decision_state_features) if decision_state_features else 'None'} state_features")
+        
         return Order(
             action=decision.action,
             size=final_size,
@@ -112,7 +110,18 @@ class RiskManager:
             stop_price=stop_price,
             target_price=target_price,
             timestamp=market_data.timestamp,
-            confidence=decision.confidence
+            confidence=decision.confidence,
+            features=decision_state_features,
+            market_data=market_data,
+            intelligence_data=getattr(decision, 'intelligence_data', None),
+            decision_data={
+                'state_features': decision_state_features,
+                'adaptation_strategy': getattr(decision, 'adaptation_strategy', 'conservative'),
+                'uncertainty_estimate': getattr(decision, 'uncertainty_estimate', 0.5),
+                'primary_tool': getattr(decision, 'primary_tool', 'unknown'),
+                'exploration': getattr(decision, 'exploration', False),
+                'regime_awareness': getattr(decision, 'regime_awareness', None)
+            }
         )
     
     def _alert_insufficient_margin(self, net_liquidation: float, margin_per_contract: float, max_affordable: int):
@@ -161,55 +170,17 @@ class RiskManager:
         except Exception as e:
             logger.error(f"Failed to log margin adjustment alert: {e}")
 
-    def _learn_from_position_limit_rejection(self, decision, market_data, current_position, max_contracts):
-        """Provide learning feedback when orders are rejected due to position limits"""
-        try:
-            # Prevent duplicate processing of the same violation
-            current_time = time.time()
-            if current_time - self.last_violation_time < 1.0:  # Within 1 second = duplicate
-                logger.debug("Skipping duplicate position limit violation processing")
-                return
-            
-            # Record this violation for escalating penalty tracking
-            self.violation_history.append(current_time)
-            self.last_violation_time = current_time
-            
-            # Count recent violations (last 10 minutes)
-            self.recent_violations = sum(1 for t in self.violation_history if current_time - t < 600)
-            
-            # Create violation data for tracking (NO PENALTY HERE - handled by trading agent)
-            violation_data = {
-                'decision_confidence': decision.confidence,
-                'current_position': current_position,
-                'max_contracts': max_contracts,
-                'violation_severity': abs(current_position) / max_contracts,
-                'primary_tool': getattr(decision, 'primary_tool', 'unknown'),
-                'exploration_mode': getattr(decision, 'exploration', False),
-                'recent_violations': self.recent_violations,
-                'account_balance': getattr(market_data, 'account_balance', 10000)
-            }
-            
-            # SINGLE PENALTY POINT: Only send to trading agent (consolidates all penalty logic)
-            if self.agent and hasattr(self.agent, 'learn_from_rejection'):
-                # Pass violation data to agent for unified penalty processing
-                violation_data['position_limit_violation'] = True
-                # Calculate negative reward for position limit violation
-                penalty_reward = -0.5  # Moderate penalty for hitting position limits
-                self.agent.learn_from_rejection('position_limit', violation_data, penalty_reward)
-            
-            # Track violation for risk learning (tracking only, no penalty)
-            if hasattr(self.risk_learning, 'track_violation'):
-                self.risk_learning.track_violation('position_limit', violation_data)
-            
-            logger.info(f"Learning from position limit violation: "
-                       f"recent_violations={self.recent_violations}, "
-                       f"tool={violation_data['primary_tool']}, exploration={violation_data['exploration_mode']}")
-            
-        except Exception as e:
-            logger.error(f"Error learning from position limit rejection: {e}")
     
     def _calculate_adaptive_position_size(self, decision: Decision, market_data: MarketData) -> int:
         """Enhanced position sizing with intelligent learning-based awareness"""
+        
+        # Initialize learned position sizing parameters first (CRITICAL: must be before any usage)
+        try:
+            max_contracts = int(self.meta_learner.get_parameter('max_contracts_limit'))  # Learned, starts at 10
+        except (AttributeError, ValueError, TypeError) as e:
+            logger.error(f"Failed to retrieve max_contracts_limit from meta_learner: {e}")
+            max_contracts = 10  # Safe fallback value
+            logger.warning(f"Using fallback max_contracts={max_contracts}")
         
         # Get current position exposure with validation
         ninja_position = getattr(market_data, 'total_position_size', None)
@@ -233,8 +204,8 @@ class RiskManager:
         # Debug logging for position tracking
         logger.debug(f"Position validated: NinjaTrader={ninja_position}, Portfolio={portfolio_position}, Using={current_position_size}")
         
-        # Learned position sizing parameters
-        max_contracts = int(self.meta_learner.get_parameter('max_contracts_limit'))  # Learned, starts at 10
+        # Log position limit analysis for transparency (now max_contracts is properly initialized)
+        logger.info(f"POSITION LIMIT ANALYSIS: Current={current_position_size}, Max={max_contracts}, Action={decision.action.upper()}")
         
         # Market conditions for risk learning with defensive null safety
         intelligence_data = getattr(decision, 'intelligence_data', None) or {}
@@ -302,16 +273,33 @@ class RiskManager:
         # Use learned size as primary, but cap with traditional methods
         base_size = min(learned_optimal_size, min(sizes[1:]))  # Learned size capped by traditional
         
-        # Apply position concentration limits
+        # Apply direction-aware position concentration limits
         remaining_capacity = max_contracts - abs(current_position_size)
         
-        if remaining_capacity <= 0:
-            logger.warning(f"POSITION LIMIT HIT: {current_position_size}/{max_contracts} contracts - BLOCKING TRADE")
-            # Trigger immediate learning feedback
-            self._learn_from_position_limit_rejection(decision, market_data, current_position_size, max_contracts)
-            return 0
+        # Check for emergency override flag
+        intelligence_data = getattr(decision, 'intelligence_data', None) or {}
+        is_emergency_override = intelligence_data.get('emergency_override', False)
         
-        # Intelligent exposure-based scaling
+        # Check if trade direction reduces or increases current position
+        is_position_reducing = self._is_position_reducing_trade(current_position_size, decision.action)
+        
+        if remaining_capacity <= 0:
+            if is_emergency_override:
+                # Always allow emergency override trades to bypass position limits
+                logger.warning(f"EMERGENCY OVERRIDE: {current_position_size}/{max_contracts} contracts - ALLOWING emergency {decision.action.upper()} trade")
+                # Don't return 0, continue with normal sizing logic
+            elif is_position_reducing:
+                # Always allow position-reducing trades regardless of limits
+                logger.info(f"POSITION LIMIT: {current_position_size}/{max_contracts} contracts - ALLOWING position-reducing {decision.action.upper()} trade")
+                # Don't return 0, continue with normal sizing logic
+            else:
+                # Block position-increasing trades when at limit
+                logger.warning(f"POSITION LIMIT HIT: {current_position_size}/{max_contracts} contracts - BLOCKING position-increasing {decision.action.upper()} trade")
+                # Record violation for monitoring (no learning penalties)
+                self.violation_history.append(time.time())
+                return 0
+        
+        # Intelligent exposure-based scaling with direction awareness
         exposure_ratio = abs(current_position_size) / max_contracts
         exposure_threshold = self.meta_learner.get_parameter('exposure_scaling_threshold')
         
@@ -319,11 +307,37 @@ class RiskManager:
             # Scale down based on exposure
             scaling_factor = 1.0 - ((exposure_ratio - exposure_threshold) / (1.0 - exposure_threshold)) * 0.7
             final_size = max(1, int(base_size * scaling_factor))
-            final_size = min(final_size, remaining_capacity)
+            
+            # For emergency overrides, position-reducing trades, or special handling
+            if is_emergency_override:
+                # Emergency overrides get priority - use calculated size but with safety limits
+                emergency_max_size = min(final_size, 2)  # Cap emergency trades at 2 contracts for safety
+                final_size = emergency_max_size
+                logger.warning(f"Emergency override: allowing {emergency_max_size} contracts (calculated: {final_size})")
+            elif is_position_reducing:
+                # Allow full position reduction, but don't exceed current position size
+                max_reduction_size = abs(current_position_size)
+                final_size = min(final_size, max_reduction_size)
+                logger.info(f"Position-reducing trade: allowing up to {max_reduction_size} contracts (current position: {current_position_size})")
+            else:
+                final_size = min(final_size, remaining_capacity)
+                
             logger.info(f"Exposure scaling applied: {exposure_ratio:.1%} > {exposure_threshold:.1%}, "
                        f"scaling factor: {scaling_factor:.2f}")
         else:
-            final_size = min(base_size, remaining_capacity)
+            # For emergency overrides, position-reducing trades, or normal trades
+            if is_emergency_override:
+                # Emergency overrides get priority - use base size but with safety limits
+                emergency_max_size = min(base_size, 2)  # Cap emergency trades at 2 contracts for safety
+                final_size = emergency_max_size
+                logger.warning(f"Emergency override: allowing {emergency_max_size} contracts (base: {base_size})")
+            elif is_position_reducing:
+                # Allow full position reduction, but don't exceed current position size
+                max_reduction_size = abs(current_position_size)
+                final_size = min(base_size, max_reduction_size)
+                logger.info(f"Position-reducing trade: allowing up to {max_reduction_size} contracts (current position: {current_position_size})")
+            else:
+                final_size = min(base_size, remaining_capacity)
         
         # CRITICAL: Margin requirement validation for MNQ intraday trading
         # Each MNQ contract requires $100 margin intraday
@@ -366,13 +380,61 @@ class RiskManager:
             decision_factors
         )
         
-        # Log sizing decision
+        # Log comprehensive sizing decision summary
         if final_size != agent_size:
             logger.info(f"Intelligent position sizing: Agent={agent_size}, Learned={learned_optimal_size}, "
                        f"Final={final_size} (Exposure: {current_position_size}/{max_contracts}, "
                        f"Confidence: {decision.confidence:.2f})")
         
+        # Log position limit decision summary
+        status_flags = []
+        if is_emergency_override:
+            status_flags.append("EMERGENCY")
+        if is_position_reducing:
+            status_flags.append("REDUCING")
+        if remaining_capacity <= 0:
+            status_flags.append("AT_LIMIT")
+        
+        status_str = f"[{','.join(status_flags)}]" if status_flags else "[NORMAL]"
+        logger.info(f"POSITION LIMIT DECISION {status_str}: "
+                   f"Position={current_position_size}/{max_contracts}, "
+                   f"Action={decision.action.upper()}, "
+                   f"Capacity={remaining_capacity}, "
+                   f"Final_Size={final_size}")
+        
         return final_size
+    
+    def _is_position_reducing_trade(self, current_position_size: int, trade_action: str) -> bool:
+        """
+        Determine if a trade reduces the current position size.
+        
+        Args:
+            current_position_size: Current position size (positive = long, negative = short, 0 = flat)
+            trade_action: Trade action ('buy' or 'sell')
+            
+        Returns:
+            True if the trade reduces position size, False if it increases it
+        """
+        is_reducing = False
+        position_type = "flat"
+        
+        if current_position_size == 0:
+            # No current position, any trade increases position
+            is_reducing = False
+            position_type = "flat"
+        elif current_position_size > 0:
+            # Currently long: sell reduces position, buy increases it
+            is_reducing = trade_action.lower() == 'sell'
+            position_type = "long"
+        else:
+            # Currently short: buy reduces position, sell increases it
+            is_reducing = trade_action.lower() == 'buy'
+            position_type = "short"
+        
+        logger.debug(f"TRADE DIRECTION ANALYSIS: Position={current_position_size} ({position_type}), "
+                    f"Action={trade_action.upper()}, Reduces={is_reducing}")
+        
+        return is_reducing
     
     def _calculate_adaptive_levels(self, decision: Decision, market_data: MarketData) -> tuple:
         """Intelligent stop/target calculation using risk learning"""
